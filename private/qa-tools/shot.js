@@ -19,6 +19,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       window.scrollTo(0, h()); await sleep(250);
       window.scrollTo(0, 0); await sleep(150);
     });
+    // FORCE-REVEAL: IntersectionObserver entrance animations are unreliable and can leave
+    // sections stuck at opacity:0. Reveal everything so the screenshot reflects the real,
+    // fully-loaded page (the live page has its own failsafe that does the same for users).
+    await page.evaluate(() => {
+      const e = document.querySelectorAll('.fade-up,.fade-in,.reveal,[data-reveal],.animate,.scroll-reveal');
+      e.forEach(el => { el.classList.add('visible','active','in-view','show'); el.style.opacity='1'; el.style.transform='none'; el.style.visibility='visible'; });
+    });
     // ensure all images finished loading/decoding
     await page.evaluate(async () => {
       const imgs = Array.from(document.images);
@@ -27,7 +34,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
         : new Promise(res => { img.addEventListener('load', res); img.addEventListener('error', res); setTimeout(res, 8000); })));
       if (document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch(e){} }
     });
-    await sleep(500);
+    await sleep(800);
     await page.screenshot({ path: out, fullPage: true, type: 'png' });
     console.log('OK');
   } catch (e) { console.error('ERR ' + e.message); process.exitCode = 2; }
