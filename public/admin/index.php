@@ -529,14 +529,17 @@ if ($tab === 'prospects') {
                 throw new Exception('No new sites to create. ' . ($dupes ? "$dupes already in the system. " : '') . ($invalid ? "$invalid marked invalid. " : '') . ($skipped ? "$skipped incomplete rows." : ''));
             }
             $_SESSION['pending_csv'] = $valid;
-            $est_per = (float)(ww_db()->query("SELECT value FROM settings WHERE key='est_cost_per_site_usd'")->fetchColumn() ?: 0.80);
+            $est_per  = (float)(ww_db()->query("SELECT value FROM settings WHERE key='est_cost_per_site_usd'")->fetchColumn() ?: 0.80);
+            $min_per  = (float)(ww_db()->query("SELECT value FROM settings WHERE key='est_minutes_per_site'")->fetchColumn() ?: 4);
             $confirm = [
-                'count'   => count($valid),
-                'dupes'   => $dupes,
-                'invalid' => $invalid,
-                'skipped' => $skipped,
-                'est'     => count($valid) * $est_per,
-                'est_per' => $est_per,
+                'count'    => count($valid),
+                'dupes'    => $dupes,
+                'invalid'  => $invalid,
+                'skipped'  => $skipped,
+                'est'      => count($valid) * $est_per,
+                'est_per'  => $est_per,
+                'min_per'  => $min_per,
+                'min_total'=> count($valid) * $min_per,
             ];
         } catch (Throwable $e) { $err = $e->getMessage(); }
     }
@@ -557,6 +560,9 @@ if ($tab === 'prospects') {
         echo '<h3>Confirm import</h3>';
         echo '<p style="font-size:15px;margin-bottom:6px;">This will create <strong>' . $n . ' new site' . ($n === 1 ? '' : 's') . '</strong>.</p>';
         echo '<p style="font-size:14px;opacity:0.85;margin-bottom:4px;">Estimated AI generation cost: <strong>~$' . number_format((float)$c['est'], 2) . '</strong> (' . $n . ' &times; ~$' . number_format((float)$c['est_per'], 2) . '/site).</p>';
+        $mt = (float)($c['min_total'] ?? 0);
+        $time_str = $mt >= 60 ? (number_format($mt/60, 1) . ' hours') : (round($mt) . ' min');
+        echo '<p style="font-size:14px;opacity:0.85;margin-bottom:4px;">&#9201; Estimated time: <strong>~' . round((float)($c['min_per'] ?? 4)) . ' min per site</strong>, generated one at a time &mdash; about <strong>' . $time_str . '</strong> for all ' . $n . '.</p>';
         $notes = [];
         if ($c['dupes'])   $notes[] = $c['dupes'] . ' already in the system';
         if ($c['invalid']) $notes[] = $c['invalid'] . ' marked invalid';
@@ -801,7 +807,7 @@ if ($tab === 'prospects') {
 
     <div class="form-card">
       <h3>Upload prospect CSV</h3>
-      <p style="font-size:13px;color:var(--navy);opacity:0.7;margin-bottom:10px;">Required: <code>business_name, current_url</code>. Optional: <code>email, name, result</code>. Rows where <code>result=invalid</code>, and sites already in the system, are skipped automatically.</p>
+      <p style="font-size:13px;color:var(--navy);opacity:0.7;margin-bottom:10px;">Required: <code>business_name, current_url</code>. Optional: <code>email, name, result</code>. Rows where <code>result=invalid</code>, and sites already in the system, are skipped automatically. You'll see a count + cost/time estimate to confirm before anything is created. Each site takes <strong>~3&ndash;5 min</strong> to generate (one at a time).</p>
       <form method="post" enctype="multipart/form-data">
         <label>CSV file</label>
         <input type="file" name="csv" accept=".csv,text/csv" required>
