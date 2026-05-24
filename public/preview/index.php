@@ -151,9 +151,8 @@ if ($current_url) {
 
   #wiz-bubble{position:fixed;bottom:22px;right:22px;width:78px;height:78px;border-radius:50%;background:var(--cream);border:4px solid var(--navy);box-shadow:6px 6px 0 var(--yellow);cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:200;transition:transform .2s;}
   #wiz-bubble:hover{transform:translate(-2px,-2px);}
-  #wiz-bubble img{width:64px;height:64px;}
-  #wiz-bubble.wave img{animation:wiz-wave 0.8s ease-in-out;}
-  @keyframes wiz-wave{0%,100%{transform:rotate(0);}25%{transform:rotate(-12deg);}75%{transform:rotate(12deg);}}
+  #wiz-bubble img{width:64px;height:64px;transform-origin:62% 78%;animation:wiz-wave 5s ease-in-out infinite;}
+  @keyframes wiz-wave{0%{transform:rotate(0);}3%{transform:rotate(-15deg);}6%{transform:rotate(12deg);}9%{transform:rotate(-9deg);}12%{transform:rotate(7deg);}16%{transform:rotate(0);}100%{transform:rotate(0);}}
 
   #wiz-chat{position:fixed;bottom:110px;right:22px;width:380px;max-width:calc(100vw - 30px);height:560px;max-height:calc(100vh - 140px);background:#fff;border:4px solid var(--navy);border-radius:22px;box-shadow:10px 10px 0 var(--navy);display:none;flex-direction:column;z-index:201;overflow:hidden;}
   #wiz-chat.open{display:flex;}

@@ -160,3 +160,48 @@ function anthropic_multi(string $model, array $requests, int $max_tokens = 12000
     curl_multi_close($mh);
     return $out;
 }
+
+/**
+ * Vision call: send image(s) + text, get text back.
+ * $images = [['media_type'=>'image/jpeg','data'=>base64], ...]
+ * Returns ['text','cost_usd','prompt_tokens','completion_tokens','model']. Throws on hard error.
+ */
+function anthropic_vision(string $model, string $system, string $user_text, array $images, int $max_tokens = 1200, ?float $temperature = 0.0, ?int $job_id = null): array {
+    $secrets = ww_secrets();
+    $api_key = $secrets['ANTHROPIC_API_KEY'] ?? '';
+    if (!$api_key) throw new Exception('ANTHROPIC_API_KEY not configured');
+
+    $content = [];
+    foreach ($images as $img) {
+        $content[] = ['type'=>'image','source'=>['type'=>'base64','media_type'=>$img['media_type'] ?? 'image/jpeg','data'=>$img['data']]];
+    }
+    $content[] = ['type'=>'text','text'=>$user_text];
+
+    $body = [
+        'model'      => $model,
+        'max_tokens' => $max_tokens,
+        'system'     => $system,
+        'messages'   => [['role'=>'user','content'=>$content]],
+    ];
+    if ($temperature !== null) $body['temperature'] = $temperature;
+
+    $ch = curl_init('https://api.anthropic.com/v1/messages');
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => json_encode($body),
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 120,
+        CURLOPT_HTTPHEADER => ['x-api-key: '.$api_key, 'anthropic-version: 2023-06-01', 'content-type: application/json'],
+    ]);
+    $raw = curl_exec($ch); $http = curl_getinfo($ch, CURLINFO_HTTP_CODE); $cerr = curl_error($ch); curl_close($ch);
+    if ($raw === false) throw new Exception("Anthropic vision curl error: $cerr");
+    $data = json_decode($raw, true);
+    if ($http >= 400) throw new Exception("Anthropic vision $http: ".($data['error']['message'] ?? substr((string)$raw,0,300)));
+    $text = '';
+    foreach (($data['content'] ?? []) as $blk) { if (($blk['type'] ?? '') === 'text') $text .= $blk['text']; }
+    $pt = (int)($data['usage']['input_tokens'] ?? 0); $ct = (int)($data['usage']['output_tokens'] ?? 0);
+    $price = ANTHROPIC_PRICING[$model] ?? ANTHROPIC_PRICING['claude-sonnet-4-6'];
+    $cost = ($pt/1_000_000)*$price['in'] + ($ct/1_000_000)*$price['out'];
+    try { ww_db()->prepare("INSERT INTO api_calls (job_id, provider, model, prompt_tokens, completion_tokens, cost_usd) VALUES (?, 'anthropic', ?, ?, ?, ?)")->execute([$job_id, $model.'-vision', $pt, $ct, $cost]); } catch (Throwable $e) {}
+    return ['text'=>$text, 'cost_usd'=>$cost, 'prompt_tokens'=>$pt, 'completion_tokens'=>$ct, 'model'=>$model];
+}

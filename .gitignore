@@ -24,3 +24,8 @@ public/api/_qa_*.txt
 # OS
 .DS_Store
 Thumbs.db
+
+# QA render tool deps
+private/qa-tools/node_modules/
+_probe_env.php
+public/_x.php

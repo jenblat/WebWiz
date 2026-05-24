@@ -8,6 +8,7 @@ declare(strict_types=1);
 require '/var/www/sites/trywebwiz/private/webwiz_lib.php';
 require '/var/www/sites/trywebwiz/private/lib/anthropic.php';
 require '/var/www/sites/trywebwiz/private/lib/scrape.php';
+require '/var/www/sites/trywebwiz/private/lib/qa.php';
 
 set_time_limit(0);
 
@@ -106,21 +107,87 @@ function process_job(PDO $db, array $row): void {
 
         $public_dir = '/var/www/sites/trywebwiz/public/preview/' . $row['token'];
         ksort($htmls);
-        foreach ($htmls as $v => $html) {
-            $variant_dir = $public_dir . '/v' . $v;
-            if (!is_dir($variant_dir)) @mkdir($variant_dir, 0755, true);
-            file_put_contents($variant_dir . '/index.html', $html);
-            $rel = '/preview/' . $row['token'] . '/v' . $v . '/index.html';
-            $db->prepare("INSERT INTO previews (job_id, variant_n, html_path) VALUES (?, ?, ?)")->execute([$job_id, $v, $rel]);
-        }
+        $write_variant = function (int $v, string $html) use ($public_dir, $row): void {
+            $dir = $public_dir . '/v' . $v;
+            if (!is_dir($dir)) @mkdir($dir, 0755, true);
+            file_put_contents($dir . '/index.html', $html);
+        };
+        foreach ($htmls as $v => $html) { $write_variant($v, $html); }
         $stub = $public_dir . '/index.php';
         if (!is_file($stub)) {
             file_put_contents($stub, "<?php\n\$_GET['t'] = basename(__DIR__);\nrequire __DIR__ . '/../index.php';\n");
         }
 
-        $db->prepare("UPDATE jobs SET status='ready', completed_at=datetime('now'), total_cost_cents=? WHERE id=?")
-           ->execute([(int)round($total_cost * 100), $job_id]);
-        echo "[worker] job #{$job_id} ready, cost \$" . number_format($total_cost, 4) . "\n";
+        // ---------- VISUAL QA LOOP ----------
+        $qa_enabled    = ((string)($db->query("SELECT value FROM settings WHERE key='visual_qa_enabled'")->fetchColumn()) === '1');
+        $qa_max_retries= (int)($db->query("SELECT value FROM settings WHERE key='qa_max_retries'")->fetchColumn() ?: 2);
+        $qa_block      = ((string)($db->query("SELECT value FROM settings WHERE key='qa_block_on_fail'")->fetchColumn()) === '1');
+        $qa_results = [];
+        if ($qa_enabled) {
+            for ($round = 0; $round <= $qa_max_retries; $round++) {
+                $urls = [];
+                foreach ($htmls as $v => $_) {
+                    $urls[$v] = 'https://trywebwiz.com/preview/' . $row['token'] . '/v' . $v . '/index.html?qa=' . time() . $round;
+                }
+                $warm = 0; foreach ($htmls as $_v => $_html) $warm += ww_prewarm_images($_html);
+                echo "[worker]  QA round {$round}: warmed {$warm} images, rendering " . count($urls) . " variant(s)\n";
+                $shots = ww_render_screenshots($urls, $job_id);
+                $fails = [];
+                foreach ($htmls as $v => $_) {
+                    $png = $shots[$v] ?? null;
+                    if (!$png) { $qa_results[$v] = ['pass'=>true,'score'=>-1,'issues'=>[],'summary'=>'render-failed']; echo "[worker]   v{$v}: render failed, skipping QA\n"; continue; }
+                    $verdict = ww_visual_inspect($png, $biz, $job_id);
+                    $qa_results[$v] = $verdict;
+                    echo "[worker]   v{$v}: " . ($verdict['pass']?'PASS':'FAIL') . " score={$verdict['score']} - {$verdict['summary']}\n";
+                    if (!$verdict['pass']) $fails[$v] = $verdict['issues'];
+                }
+                if (!$fails) break;
+                if ($round >= $qa_max_retries) break;
+                if ($total_cost >= $cap) { echo "[worker]  QA stop: cost cap reached\n"; break; }
+                $rreqs = [];
+                foreach ($fails as $v => $issues) {
+                    $fb = ww_qa_feedback($issues);
+                    $rreqs[$v] = ['system'=>$system, 'messages'=>[['role'=>'user','content'=>build_user_prompt($scrape, $biz, $industry, $v) . "\n\n" . $fb]]];
+                }
+                echo "[worker]  QA regenerating " . count($rreqs) . " variant(s)\n";
+                $rres = anthropic_multi($model, $rreqs, 14000, 0.6, $job_id, ['</html>']);
+                foreach ($rreqs as $v => $_) {
+                    $total_cost += (float)($rres[$v]['cost_usd'] ?? 0);
+                    $cand = finalize_html($rres[$v]['text'] ?? '');
+                    if ($cand && quality_gate($cand)['ok']) { $htmls[$v] = $cand; $write_variant($v, $cand); }
+                }
+            }
+            // block-on-fail: drop still-failing variants, but never drop to zero
+            if ($qa_block) {
+                $passing = [];
+                foreach ($htmls as $v => $html) { if ($qa_results[$v]['pass'] ?? true) $passing[$v] = $html; }
+                if ($passing && count($passing) < count($htmls)) {
+                    foreach ($htmls as $v => $_) {
+                        if (!($qa_results[$v]['pass'] ?? true)) {
+                            foreach ((glob($public_dir . '/v' . $v . '/*') ?: []) as $gf) @unlink($gf);
+                            @rmdir($public_dir . '/v' . $v);
+                            echo "[worker]   v{$v}: dropped (failed QA after retries)\n";
+                        }
+                    }
+                    $htmls = $passing;
+                }
+            }
+        }
+
+        $any_fail = false;
+        foreach ($htmls as $v => $_) { if (!($qa_results[$v]['pass'] ?? true)) $any_fail = true; }
+        $qa_status = !$qa_enabled ? 'disabled' : ($any_fail ? 'needs_review' : 'passed');
+
+        ksort($htmls);
+        foreach ($htmls as $v => $html) {
+            $rel = '/preview/' . $row['token'] . '/v' . $v . '/index.html';
+            $q = $qa_results[$v] ?? null;
+            $db->prepare("INSERT INTO previews (job_id, variant_n, html_path, qa_score, qa_pass, qa_issues) VALUES (?, ?, ?, ?, ?, ?)")
+               ->execute([$job_id, $v, $rel, $q['score'] ?? null, isset($q['pass']) ? ($q['pass']?1:0) : null, $q ? json_encode($q['issues']) : null]);
+        }
+        $db->prepare("UPDATE jobs SET status='ready', completed_at=datetime('now'), total_cost_cents=?, qa_status=? WHERE id=?")
+           ->execute([(int)round($total_cost * 100), $qa_status, $job_id]);
+        echo "[worker] job #{$job_id} ready ({$qa_status}), " . count($htmls) . " variant(s), cost \$" . number_format($total_cost, 4) . "\n";
 
     } catch (Throwable $e) {
         $msg = $e->getMessage();
@@ -134,6 +201,9 @@ function finalize_html(string $text): ?string {
     $cand = extract_html($text);
     if (!$cand || stripos($cand, '<html') === false) return null;
     if (stripos($cand, '</html>') === false) $cand = rtrim($cand) . "\n</html>";
+    // Force EAGER image loading: screenshot renderers (and full-page screenshots) do not scroll,
+    // so loading="lazy" leaves below-the-fold images unloaded = blank boxes. Strip it.
+    $cand = preg_replace('/\s*loading\s*=\s*([\x27"])lazy\1/i', '', $cand);
     return $cand;
 }
 
@@ -171,7 +241,7 @@ ABSOLUTE RULES
 2. ENTRANCE ANIMATIONS WRAPPED IN @media (prefers-reduced-motion: no-preference). Outside that, elements at final state.
 3. HTML COMPLETE - TOP PRIORITY. Close every tag and END WITH </html>. If running long, SHORTEN copy + CSS and DROP the FAQ section, but NEVER omit the <footer> or leave the document unclosed. A complete ~5000-token page beats a richer page that gets cut off. Keep CSS compact (group selectors, no redundant rules).
 4. IMAGES ARE MANDATORY. Use a MINIMUM of 4 DISTINCT images via the proxy. Every image MUST be wrapped exactly like:
-   <img src="/api/img.php?u=<URL-ENCODED-original>&l=<URL-ENCODED-short-label>" alt="..." loading="lazy">
+   <img src="/api/img.php?u=<URL-ENCODED-original>&l=<URL-ENCODED-short-label>" alt="...">  (do NOT add loading="lazy" - all images must load eagerly)
 5. {$img_note}
 6. EVERY image URL you use MUST come from the provided source data (images.photo / images.cutout / images.thumbnail / images.logo). All provided URLs are verified to load. Do NOT invent URLs. Do NOT reuse a URL twice.
 
@@ -180,8 +250,12 @@ IMAGE FRAMING - clients reject cropped people:
 - CUTOUT / PORTRAIT / PERSON images (images.cutout, or anyone on a transparent/plain background): NEVER crop. Render with object-fit:contain inside a fixed-height box (e.g. height:420px) with a soft brand-tint/neutral background and padding, so the whole person is visible. NEVER use a cutout person as a full-bleed hero. NEVER put a face in a tight 1:1 or 16/9 cover crop.
 - Hero: prefer a LANDSCAPE photo. If none exists, use a CSS gradient/SVG hero and put people photos lower in framed cards.
 
-NO EMPTY SPACE
-- Every section must contain visible content. Never leave a section taller than ~40vh with nothing in it. Never reserve a fixed-height image box and leave it empty.
+NO EMPTY SPACE / NO EMPTY IMAGE BOXES (clients reject these instantly)
+- Every section must contain visible content. Never leave a section taller than ~40vh with nothing in it.
+- NEVER create an image slot, card thumbnail, or photo box you cannot fill with a REAL provided image URL. An empty or solid-color/gray/tinted rectangle where a photo belongs is an AUTOMATIC REJECTION.
+- If you do not have enough distinct images for a layout (e.g. a 3-card services/insights/blog grid, or an about/team photo), then REDESIGN that section to need fewer images, or make it text/icon/stat based, or drop it. Fewer cards with real images beats more cards with blank image areas.
+- Do NOT build a "latest articles / insights / blog / news" card grid with image thumbnails unless you have a distinct real image for EVERY card.
+- The founder/CEO/about photo is optional: only include a person photo if a real provided image exists for it; otherwise use a text-forward about block. Never leave a labeled-but-empty portrait frame.
 
 HEADER
 - Sticky top nav: business name/logo left, 3-5 nav links (use scraped nav_links), 1-2 right-aligned CTAs.
@@ -269,7 +343,7 @@ REQUIREMENTS
 - Target ~5000 tokens. Completeness beats length.
 
 IMAGE TAG FORMAT - copy exactly:
-<img src="/api/img.php?u=<urlencoded-URL>&l=<urlencoded-label>" alt="..." loading="lazy">
+<img src="/api/img.php?u=<urlencoded-URL>&l=<urlencoded-label>" alt="...">  (NO loading="lazy")
 
 QUALITY GATE: <h1>, <footer>, 3+ <section>, 4+ DISTINCT /api/img.php URLs, no empty sections, no cropped people, no broken images.
 
