@@ -151,8 +151,7 @@ if ($current_url) {
 
   #wiz-bubble{position:fixed;bottom:22px;right:22px;width:78px;height:78px;border-radius:50%;background:var(--cream);border:4px solid var(--navy);box-shadow:6px 6px 0 var(--yellow);cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:200;transition:transform .2s;}
   #wiz-bubble:hover{transform:translate(-2px,-2px);}
-  #wiz-bubble img{width:64px;height:64px;transform-origin:62% 78%;animation:wiz-wave 5s ease-in-out infinite;}
-  @keyframes wiz-wave{0%{transform:rotate(0);}3%{transform:rotate(-15deg);}6%{transform:rotate(12deg);}9%{transform:rotate(-9deg);}12%{transform:rotate(7deg);}16%{transform:rotate(0);}100%{transform:rotate(0);}}
+  #wiz-bubble img{width:66px;height:66px;}
 
   #wiz-chat{position:fixed;bottom:110px;right:22px;width:380px;max-width:calc(100vw - 30px);height:560px;max-height:calc(100vh - 140px);background:#fff;border:4px solid var(--navy);border-radius:22px;box-shadow:10px 10px 0 var(--navy);display:none;flex-direction:column;z-index:201;overflow:hidden;}
   #wiz-chat.open{display:flex;}
@@ -235,7 +234,7 @@ if ($current_url) {
 
 <div class="nudge" id="nudge">Click anywhere on the preview to chat with Wizzy</div>
 
-<button id="wiz-bubble" class="wave" title="Chat with Wizzy"><img src="https://i.imgur.com/7OdNLrM.png" alt="Wizzy"></button>
+<button id="wiz-bubble" title="Chat with Wizzy"><img id="wiz-img" src="/preview/wizzy-wave.gif" alt="Wizzy"></button>
 <div id="wiz-chat" role="dialog" aria-label="Wizzy chat">
   <div class="wiz-head">
     <img src="https://i.imgur.com/7OdNLrM.png" alt="Wizzy">
@@ -335,6 +334,8 @@ const wizChat = document.getElementById('wiz-chat');
 const wizMsgs = document.getElementById('wizMsgs');
 const wizInput = document.getElementById('wizInput');
 document.getElementById('wiz-bubble').onclick = () => { wizChat.classList.add('open'); wizInput.focus(); };
+// Replay the Wizzy wave GIF every 5s: it plays once (~2.8s) then rests, restarting on each tick.
+(function(){var wi=document.getElementById('wiz-img');if(!wi)return;var base='/preview/wizzy-wave.gif';setInterval(function(){wi.src=base+'?t='+Date.now();},5000);})();
 function wizClose() { wizChat.classList.remove('open'); }
 function wizOpen() { wizChat.classList.add('open'); setTimeout(()=>wizInput.focus(),50); }
 
