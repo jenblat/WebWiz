@@ -55,7 +55,8 @@ curl_setopt_array($ch, [
     CURLOPT_RETURNTRANSFER => true,
     CURLOPT_FOLLOWLOCATION => true,
     CURLOPT_MAXREDIRS => 5,
-    CURLOPT_TIMEOUT => 15,
+    CURLOPT_TIMEOUT => 8,
+    CURLOPT_CONNECTTIMEOUT => 4,
     CURLOPT_SSL_VERIFYPEER => false,
     CURLOPT_USERAGENT => 'Mozilla/5.0 (compatible; WebWizImageProxy/1.0)',
     CURLOPT_HEADERFUNCTION => function ($_c, $hdr) use (&$content_type) {
