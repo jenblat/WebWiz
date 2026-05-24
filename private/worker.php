@@ -204,6 +204,18 @@ function finalize_html(string $text): ?string {
     // Force EAGER image loading: screenshot renderers (and full-page screenshots) do not scroll,
     // so loading="lazy" leaves below-the-fold images unloaded = blank boxes. Strip it.
     $cand = preg_replace('/\s*loading\s*=\s*([\x27"])lazy\1/i', '', $cand);
+    // FAILSAFE REVEAL: generated pages use IntersectionObserver entrance animations
+    // (.fade-up/.fade-in start at opacity:0). The observer is unreliable - in screenshots,
+    // inside the preview iframe, and for users who don't scroll - leaving whole sections
+    // permanently invisible (the "empty section" / blank-box defect). Inject a guaranteed
+    // reveal so no content is ever stuck hidden. The observer still gives the staggered
+    // effect for users who scroll within the first ~1.1s; this only rescues the rest.
+    $failsafe = "\n<script>/*ww-reveal-failsafe*/(function(){function r(){try{var e=document.querySelectorAll('.fade-up,.fade-in,.reveal,[data-reveal],.animate,.scroll-reveal');for(var i=0;i<e.length;i++){e[i].classList.add('visible','active','in-view','show');e[i].style.opacity='1';e[i].style.transform='none';e[i].style.visibility='visible';}}catch(x){}}var d=false;function g(){if(d)return;d=true;r();}window.addEventListener('load',function(){setTimeout(g,1100);});document.addEventListener('DOMContentLoaded',function(){setTimeout(g,2200);});setTimeout(g,3500);})();</script>\n";
+    if (stripos($cand, '</body>') !== false) {
+        $cand = preg_replace('/<\/body>/i', $failsafe . '</body>', $cand, 1);
+    } else {
+        $cand .= $failsafe;
+    }
     return $cand;
 }
 
