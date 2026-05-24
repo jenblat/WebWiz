@@ -85,3 +85,78 @@ function anthropic_chat(string $model, array $messages, ?string $system = null, 
         'model' => $model,
     ];
 }
+
+/**
+ * Fire multiple Anthropic Messages requests CONCURRENTLY via curl_multi.
+ * $requests is keyed (e.g. by variant number); each value is ['system'=>?string, 'messages'=>array].
+ * Returns same keys => ['text'=>string, 'cost_usd'=>float, 'http'=>int, 'prompt_tokens'=>int, 'completion_tokens'=>int].
+ * Each successful call is logged to api_calls. Never throws on individual failures (returns empty text).
+ */
+function anthropic_multi(string $model, array $requests, int $max_tokens = 12000, ?float $temperature = null, ?int $job_id = null, ?array $stop_sequences = null): array {
+    $secrets = ww_secrets();
+    $api_key = $secrets['ANTHROPIC_API_KEY'] ?? '';
+    if (!$api_key) throw new Exception('ANTHROPIC_API_KEY not configured');
+    if (!$requests) return [];
+
+    $mh = curl_multi_init();
+    $handles = [];
+    foreach ($requests as $k => $r) {
+        $body = [
+            'model'      => $model,
+            'max_tokens' => $max_tokens,
+            'messages'   => $r['messages'],
+        ];
+        if (!empty($r['system']))   $body['system'] = $r['system'];
+        if ($temperature !== null)  $body['temperature'] = $temperature;
+        if ($stop_sequences)        $body['stop_sequences'] = $stop_sequences;
+
+        $ch = curl_init('https://api.anthropic.com/v1/messages');
+        curl_setopt_array($ch, [
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => json_encode($body),
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT        => 240,
+            CURLOPT_HTTPHEADER     => [
+                'x-api-key: ' . $api_key,
+                'anthropic-version: 2023-06-01',
+                'content-type: application/json',
+            ],
+        ]);
+        curl_multi_add_handle($mh, $ch);
+        $handles[$k] = $ch;
+    }
+
+    do {
+        $status = curl_multi_exec($mh, $running);
+        if ($running) curl_multi_select($mh, 2.0);
+    } while ($running && $status === CURLM_OK);
+
+    $price = ANTHROPIC_PRICING[$model] ?? ANTHROPIC_PRICING['claude-sonnet-4-6'];
+    $out = [];
+    foreach ($handles as $k => $ch) {
+        $raw  = curl_multi_getcontent($ch);
+        $http = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_multi_remove_handle($mh, $ch);
+        curl_close($ch);
+
+        $text = ''; $pt = 0; $ct = 0; $cost = 0.0;
+        $data = is_string($raw) ? json_decode($raw, true) : null;
+        if ($http < 400 && is_array($data)) {
+            foreach (($data['content'] ?? []) as $blk) {
+                if (($blk['type'] ?? '') === 'text') $text .= $blk['text'];
+            }
+            $pt = (int)($data['usage']['input_tokens'] ?? 0);
+            $ct = (int)($data['usage']['output_tokens'] ?? 0);
+            $cost = ($pt / 1_000_000) * $price['in'] + ($ct / 1_000_000) * $price['out'];
+            try {
+                ww_db()->prepare("INSERT INTO api_calls (job_id, provider, model, prompt_tokens, completion_tokens, cost_usd) VALUES (?, 'anthropic', ?, ?, ?, ?)")
+                    ->execute([$job_id, $model, $pt, $ct, $cost]);
+            } catch (Throwable $e) { error_log('[anthropic_multi] log failed: ' . $e->getMessage()); }
+        } else {
+            error_log("[anthropic_multi] request $k failed http=$http: " . substr((string)$raw, 0, 300));
+        }
+        $out[$k] = ['text' => $text, 'cost_usd' => $cost, 'http' => $http, 'prompt_tokens' => $pt, 'completion_tokens' => $ct];
+    }
+    curl_multi_close($mh);
+    return $out;
+}
