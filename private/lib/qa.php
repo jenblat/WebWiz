@@ -116,6 +116,7 @@ CRITICAL defect types (ANY one => pass:false). BE STRICT - when unsure whether a
 - text_overflow: text clipped, cut off mid-word, or overflowing/colliding with other elements.
 - overlap: elements overlapping so text is hard to read.
 - placeholder_text: lorem ipsum, "TODO", or stand-in monogram letters used as a hero/feature image.
+- dead_section: a section introduced by a heading or eyebrow label (e.g. "Our Work", "Insights", "Results", "Team", "Reviews") that is then followed by a large empty band with no cards/images/text beneath it - a heading with nothing under it is ALWAYS critical. Also flag ANY near-full-width band taller than half a slice that is a single flat color (black, white, beige, brand-tint) with essentially no content; do NOT excuse it as breathing room or minimalism.
 
 MINOR (do NOT fail): small alignment, spacing, padding, or contrast nits on elements that otherwise have real content.
 
@@ -152,7 +153,7 @@ function ww_qa_feedback(array $issues): string {
     }
     if (!$lines) return '';
     return "VISUAL QA caught these defects in your previous render. FIX every one:\n" . implode("\n", $lines) .
-        "\nHARD RULES: never output an empty/gray placeholder box for a missing image (remove that slot or use a real provided image instead); never crop a person; if you lack enough images for a card grid, use fewer cards rather than leaving blank image areas; keep all text inside its container.";
+        "\nHARD RULES: never output an empty/gray placeholder box for a missing image (remove that slot or use a real provided image instead); never crop a person; if you lack enough images for a card grid, use fewer cards rather than leaving blank image areas; keep all text inside its container; every section that has a heading MUST have visible content beneath it (cards, images, or text) - never leave a heading followed by empty space.";
 }
 
 /** Pre-fetch every /api/img.php URL in the HTML (server-side, parallel) to warm the disk cache before rendering. */
