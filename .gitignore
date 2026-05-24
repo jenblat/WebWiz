@@ -1,0 +1,26 @@
+# Secrets — never commit
+secrets.php
+private/secrets.php
+
+# Local data + runtime
+data/
+*.db
+*.sqlite
+logs/
+*.log
+*.jsonl
+
+# Generated preview output
+public/preview/*/
+!public/preview/index.php
+
+# Backups + scratch
+*.bak
+*.bak.*
+public/api/_x_*.php
+public/api/_admin_*.php
+public/api/_qa_*.txt
+
+# OS
+.DS_Store
+Thumbs.db
