@@ -441,8 +441,15 @@ if ($tab === 'prospects') {
 
     // ---- Export results CSV (preview links + showcase image) ----
     if (($_GET['export'] ?? '') === 'csv') {
+        $idsParam = (string)($_GET['ids'] ?? '');
+        $ids = array_values(array_filter(array_map('intval', explode(',', $idsParam)), fn($x) => $x > 0));
         $bexp = (int)($_GET['batch'] ?? 0);
-        if ($bexp) {
+        if ($ids) {
+            $ph = implode(',', array_fill(0, count($ids), '?'));
+            $st = ww_db()->prepare("SELECT p.business_name, p.name, p.email, p.current_url, j.status AS job_status, j.token AS job_token FROM prospects p LEFT JOIN jobs j ON j.id = (SELECT MAX(id) FROM jobs WHERE prospect_id = p.id) WHERE p.id IN ($ph) ORDER BY p.id DESC");
+            $st->execute($ids);
+            $erows = $st->fetchAll(PDO::FETCH_ASSOC);
+        } elseif ($bexp) {
             $st = ww_db()->prepare("SELECT p.business_name, p.name, p.email, p.current_url, j.status AS job_status, j.token AS job_token FROM jobs j JOIN prospects p ON p.id = j.prospect_id WHERE j.upload_batch_id = ? ORDER BY j.id");
             $st->execute([$bexp]);
             $erows = $st->fetchAll(PDO::FETCH_ASSOC);
@@ -913,14 +920,36 @@ if ($tab === 'prospects') {
     </div>
     </div><!--/prospect-cols-->
     <?php
-    $rows = ww_db()->query('SELECT p.*, j.status AS job_status, j.token AS job_token, j.id AS job_id FROM prospects p LEFT JOIN jobs j ON j.id = (SELECT MAX(id) FROM jobs WHERE prospect_id = p.id) ORDER BY p.id DESC LIMIT 200')->fetchAll(PDO::FETCH_ASSOC);
-    if (!$rows) { echo '<div class="empty">No prospects imported yet.</div>'; }
+    $q = trim((string)($_GET['q'] ?? ''));
+    $sort = (($_GET['sort'] ?? 'created_desc') === 'created_asc') ? 'created_asc' : 'created_desc';
+    $order = $sort === 'created_asc' ? 'ASC' : 'DESC';
+    $pwhere = ''; $pparams = [];
+    if ($q !== '') {
+        $pwhere = "WHERE (p.business_name LIKE ? OR p.name LIKE ? OR p.email LIKE ? OR p.current_url LIKE ?)";
+        $like = '%' . $q . '%'; $pparams = [$like, $like, $like, $like];
+    }
+    $psql = "SELECT p.*, j.status AS job_status, j.token AS job_token, j.id AS job_id FROM prospects p LEFT JOIN jobs j ON j.id = (SELECT MAX(id) FROM jobs WHERE prospect_id = p.id) $pwhere ORDER BY p.created_at $order, p.id $order LIMIT 500";
+    $pst = ww_db()->prepare($psql); $pst->execute($pparams); $rows = $pst->fetchAll(PDO::FETCH_ASSOC);
+
+    // Toolbar: search + create-date sort + export-selected
+    $sortToggle = $sort === 'created_desc' ? 'created_asc' : 'created_desc';
+    echo '<form method="get" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px;">';
+    echo '<input type="hidden" name="tab" value="prospects"><input type="hidden" name="sort" value="' . ww_h($sort) . '">';
+    echo '<input type="text" name="q" value="' . ww_h($q) . '" placeholder="Search business, contact, email or URL…" style="flex:1;min-width:240px;padding:9px 12px;border:2px solid var(--navy);border-radius:10px;font-size:14px;font-family:var(--body);">';
+    echo '<button class="btn ghost" type="submit">Search</button>';
+    if ($q !== '') echo '<a class="btn ghost" href="/admin/?tab=prospects">Clear</a>';
+    echo '<a class="btn ghost" href="/admin/?tab=prospects&amp;q=' . urlencode($q) . '&amp;sort=' . $sortToggle . '">Created ' . ($sort === 'created_desc' ? '&darr; newest first' : '&uarr; oldest first') . '</a>';
+    echo '<button class="btn" type="button" id="exportSel" disabled>Export selected (0)</button>';
+    echo '</form>';
+
+    if (!$rows) { echo '<div class="empty">' . ($q !== '' ? 'No prospects match &ldquo;' . ww_h($q) . '&rdquo;.' : 'No prospects imported yet.') . '</div>'; }
     else {
-        echo '<table class="t"><thead><tr><th>Business</th><th>Contact</th><th>Email</th><th>Current site</th><th>Status</th><th>Created</th><th>Preview</th></tr></thead><tbody>';
+        echo '<table class="t" id="prospectsTable"><thead><tr><th style="width:28px;"><input type="checkbox" id="selAll" title="Select all"></th><th>Business</th><th>Contact</th><th>Email</th><th>Current site</th><th>Status</th><th>Created</th><th>Preview</th></tr></thead><tbody>';
         foreach ($rows as $r) {
             $st = $r['job_status'] ?? 'queued';
             $cls = ['queued'=>'muted','running'=>'warn','ready'=>'ok','sent'=>'ok','picked'=>'ok','failed'=>'err'][$st] ?? 'muted';
-            echo '<tr><td><strong>' . ww_h($r['business_name']) . '</strong></td>';
+            echo '<tr><td><input type="checkbox" class="psel" value="' . (int)$r['id'] . '"></td>';
+            echo '<td><strong>' . ww_h($r['business_name']) . '</strong></td>';
             echo '<td>' . ww_h($r['name']) . '</td>';
             echo '<td>' . ww_h($r['email']) . '</td>';
             echo '<td><a href="' . ww_h($r['current_url']) . '" target="_blank" style="font-size:13px;">' . ww_h(parse_url($r['current_url'], PHP_URL_HOST) ?: $r['current_url']) . '</a></td>';
@@ -940,6 +969,7 @@ if ($tab === 'prospects') {
             echo '</tr>';
         }
         echo '</tbody></table>';
+        echo '<script>(function(){var all=document.getElementById("selAll"),btn=document.getElementById("exportSel");function boxes(){return [].slice.call(document.querySelectorAll(".psel"));}function upd(){var n=boxes().filter(function(b){return b.checked;}).length;if(btn){btn.textContent="Export selected ("+n+")";btn.disabled=n===0;}}if(all)all.addEventListener("change",function(){boxes().forEach(function(b){b.checked=all.checked;});upd();});boxes().forEach(function(b){b.addEventListener("change",upd);});if(btn)btn.addEventListener("click",function(){var ids=boxes().filter(function(b){return b.checked;}).map(function(b){return b.value;});if(ids.length)window.location="/admin/?tab=prospects&export=csv&ids="+ids.join(",");});upd();})();</script>';
     }
     shell_close(); exit;
 }
