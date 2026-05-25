@@ -463,12 +463,16 @@ if ($tab === 'prospects') {
     // ---- CSV phase 2: user confirmed — create the staged sites ----
     if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['confirm_import'] ?? '')==='1' && !empty($_SESSION['pending_csv'])) {
         $staged = $_SESSION['pending_csv'];
-        unset($_SESSION['pending_csv']);
+        $label  = $_SESSION['pending_label'] ?? ('upload-' . date('Y-m-d_H:i'));
+        unset($_SESSION['pending_csv'], $_SESSION['pending_label']);
         $db = ww_db();
         $ins_pros = $db->prepare("INSERT INTO prospects (email, name, business_name, current_url, source, first_name, last_name, title, email_status, industry, city, state, country, street, apollo_data) VALUES (?, ?, ?, ?, 'csv', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        $ins_job  = $db->prepare("INSERT INTO jobs (type, prospect_id, customer_email, business_name, status, scheduled_for, token) VALUES ('outbound', ?, ?, ?, 'queued', datetime('now'), ?)");
+        $ins_job  = $db->prepare("INSERT INTO jobs (type, prospect_id, customer_email, business_name, status, scheduled_for, token, generation_mode, upload_batch_id, item_status) VALUES ('outbound', ?, ?, ?, 'queued', datetime('now'), ?, 'batch', ?, 'queued')");
         $added = 0;
         $db->beginTransaction();
+        // All CSV uploads generate via the Batch API (~50% cheaper, async). Group this upload as one batch row.
+        $db->prepare("INSERT INTO upload_batches (label, source_tag, created_at, total_count, status, generation_mode) VALUES (?, 'csv', datetime('now'), ?, 'queued', 'batch')")->execute([$label, count($staged)]);
+        $batch_id = (int)$db->lastInsertId();
         foreach ($staged as $r) {
             $raw = json_encode(array_filter([
                 'first_name'=>$r['first'] ?? '', 'last_name'=>$r['last'] ?? '', 'title'=>$r['title'] ?? '',
@@ -480,12 +484,12 @@ if ($tab === 'prospects') {
                 $r['city'] ?? '', $r['state'] ?? '', $r['country'] ?? '', $r['street'] ?? '', $raw]);
             $pid = (int)$db->lastInsertId();
             $token = bin2hex(random_bytes(12));
-            $ins_job->execute([$pid, $r['email'], $r['biz'], $token]);
+            $ins_job->execute([$pid, $r['email'], $r['biz'], $token, $batch_id]);
             $added++;
         }
         $db->commit();
         unset($_SESSION['pending_summary']);
-        $_SESSION['flash_msg'] = "Creating $added sites — they're generating now. Use \"Download results CSV\" once they're ready to get the preview links + showcase images.";
+        $_SESSION['flash_msg'] = "Queued $added sites for batch generation (Batch API, ~50% cheaper). They process in the background — check Batch history for progress and download results once a batch is done.";
         header('Location: /admin/?tab=prospects&imported=' . $added); exit;
     }
 
@@ -494,6 +498,7 @@ if ($tab === 'prospects') {
         try {
             $tmp = $_FILES['csv']['tmp_name'] ?? '';
             if (!$tmp || !is_uploaded_file($tmp)) throw new Exception('No file uploaded.');
+            $_SESSION['pending_label'] = trim((string)($_FILES['csv']['name'] ?? '')) ?: ('upload-' . date('Y-m-d_H:i'));
             $h = fopen($tmp, 'r');
             if (!$h) throw new Exception('Cannot read file.');
             $header = fgetcsv($h);
