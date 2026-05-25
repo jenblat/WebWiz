@@ -431,6 +431,13 @@ if ($tab === 'prospects') {
         }
     }
     $confirm = null; // staged-import summary, if a CSV was just parsed
+    // Post/Redirect/Get: surface one-shot flash messages + the staged-import summary from the
+    // session so refreshing the page never re-submits the upload/confirm forms.
+    if (!empty($_SESSION['flash_msg'])) { $msg = $_SESSION['flash_msg']; unset($_SESSION['flash_msg']); }
+    if (!empty($_SESSION['flash_err'])) { $err = $_SESSION['flash_err']; unset($_SESSION['flash_err']); }
+    if (($_GET['staged'] ?? '') === '1' && !empty($_SESSION['pending_csv']) && !empty($_SESSION['pending_summary'])) {
+        $confirm = $_SESSION['pending_summary'];
+    }
 
     // ---- Export results CSV (preview links + showcase image) ----
     if (($_GET['export'] ?? '') === 'csv') {
@@ -477,7 +484,9 @@ if ($tab === 'prospects') {
             $added++;
         }
         $db->commit();
-        $msg = "Creating $added sites — they're generating now. Use \"Download results CSV\" once they're ready to get the preview links + showcase images.";
+        unset($_SESSION['pending_summary']);
+        $_SESSION['flash_msg'] = "Creating $added sites — they're generating now. Use \"Download results CSV\" once they're ready to get the preview links + showcase images.";
+        header('Location: /admin/?tab=prospects&imported=' . $added); exit;
     }
 
     // ---- CSV phase 1: file uploaded — parse, filter, estimate, stage for confirmation ----
@@ -559,9 +568,14 @@ if ($tab === 'prospects') {
                 throw new Exception('No new sites to create. ' . ($dupes ? "$dupes already in the system. " : '') . ($invalid ? "$invalid marked invalid. " : '') . ($skipped ? "$skipped incomplete rows." : ''));
             }
             $_SESSION['pending_csv'] = $valid;
-            $est_per  = (float)(ww_db()->query("SELECT value FROM settings WHERE key='est_cost_per_site_usd'")->fetchColumn() ?: 0.80);
-            $min_per  = (float)(ww_db()->query("SELECT value FROM settings WHERE key='est_minutes_per_site'")->fetchColumn() ?: 4);
-            $confirm = [
+            // Self-calibrating estimates: use the REAL average of recently completed jobs so the
+            // quote reflects what generation (incl. the QA loop) actually costs. Fall back to the
+            // configured setting (then a default) until there's completed history.
+            $avg_cents = ww_db()->query("SELECT AVG(total_cost_cents) FROM (SELECT total_cost_cents FROM jobs WHERE status IN ('ready','sent','picked') AND total_cost_cents > 0 ORDER BY id DESC LIMIT 50)")->fetchColumn();
+            $est_per  = $avg_cents ? round(((float)$avg_cents) / 100, 2) : (float)(ww_db()->query("SELECT value FROM settings WHERE key='est_cost_per_site_usd'")->fetchColumn() ?: 0.80);
+            $avg_min  = ww_db()->query("SELECT AVG((julianday(completed_at)-julianday(started_at))*1440.0) FROM (SELECT started_at,completed_at FROM jobs WHERE status IN ('ready','sent','picked') AND started_at IS NOT NULL AND completed_at IS NOT NULL AND completed_at > started_at ORDER BY id DESC LIMIT 50)")->fetchColumn();
+            $min_per  = ($avg_min && $avg_min > 0) ? round((float)$avg_min, 1) : (float)(ww_db()->query("SELECT value FROM settings WHERE key='est_minutes_per_site'")->fetchColumn() ?: 4);
+            $_SESSION['pending_summary'] = [
                 'count'    => count($valid),
                 'dupes'    => $dupes,
                 'invalid'  => $invalid,
@@ -571,7 +585,8 @@ if ($tab === 'prospects') {
                 'min_per'  => $min_per,
                 'min_total'=> count($valid) * $min_per,
             ];
-        } catch (Throwable $e) { $err = $e->getMessage(); }
+            header('Location: /admin/?tab=prospects&staged=1'); exit;
+        } catch (Throwable $e) { $_SESSION['flash_err'] = $e->getMessage(); header('Location: /admin/?tab=prospects&uperr=1'); exit; }
     }
     $secrets_check = ww_secrets();
     $has_places_key = !empty($secrets_check['GOOGLE_PLACES_API_KEY']);
