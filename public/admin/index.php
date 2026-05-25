@@ -619,13 +619,17 @@ if ($tab === 'prospects') {
                 throw new Exception('No new sites to create. ' . ($dupes ? "$dupes already in the system. " : '') . ($invalid ? "$invalid marked invalid. " : '') . ($skipped ? "$skipped incomplete rows." : ''));
             }
             $_SESSION['pending_csv'] = $valid;
-            // Self-calibrating estimates: use the REAL average of recently completed jobs so the
-            // quote reflects what generation (incl. the QA loop) actually costs. Fall back to the
-            // configured setting (then a default) until there's completed history.
-            $avg_cents = ww_db()->query("SELECT AVG(total_cost_cents) FROM (SELECT total_cost_cents FROM jobs WHERE status IN ('ready','sent','picked') AND total_cost_cents > 0 ORDER BY id DESC LIMIT 50)")->fetchColumn();
-            $est_per  = $avg_cents ? round(((float)$avg_cents) / 100, 2) : (float)(ww_db()->query("SELECT value FROM settings WHERE key='est_cost_per_site_usd'")->fetchColumn() ?: 0.80);
-            $avg_min  = ww_db()->query("SELECT AVG((julianday(completed_at)-julianday(started_at))*1440.0) FROM (SELECT started_at,completed_at FROM jobs WHERE status IN ('ready','sent','picked') AND started_at IS NOT NULL AND completed_at IS NOT NULL AND completed_at > started_at ORDER BY id DESC LIMIT 50)")->fetchColumn();
-            $min_per  = ($avg_min && $avg_min > 0) ? round((float)$avg_min, 1) : (float)(ww_db()->query("SELECT value FROM settings WHERE key='est_minutes_per_site'")->fetchColumn() ?: 4);
+            // CSV uploads generate via the Batch API: parallel + ~50% cheaper than the sync path.
+            // Estimate cost from completed BATCH jobs; fall back to ~half the sync average, then a default.
+            $bavg = ww_db()->query("SELECT AVG(total_cost_cents) FROM (SELECT total_cost_cents FROM jobs WHERE generation_mode='batch' AND status IN ('ready','sent','picked') AND total_cost_cents > 0 ORDER BY id DESC LIMIT 100)")->fetchColumn();
+            if (!$bavg) {
+                $anyavg = ww_db()->query("SELECT AVG(total_cost_cents) FROM (SELECT total_cost_cents FROM jobs WHERE status IN ('ready','sent','picked') AND total_cost_cents > 0 ORDER BY id DESC LIMIT 50)")->fetchColumn();
+                $bavg = $anyavg ? ((float)$anyavg) * 0.5 : 30.0; // cents
+            }
+            $est_per = round(((float)$bavg) / 100, 2);
+            // Time: batch generation runs in PARALLEL (no per-site wait). The practical limiter is
+            // sequential site-scraping on the server; ~8s wall/site incl. the cron build budget.
+            $batch_sec_per = (float)(ww_db()->query("SELECT value FROM settings WHERE key='est_batch_sec_per_site'")->fetchColumn() ?: 8);
             $_SESSION['pending_summary'] = [
                 'count'    => count($valid),
                 'dupes'    => $dupes,
@@ -633,8 +637,8 @@ if ($tab === 'prospects') {
                 'skipped'  => $skipped,
                 'est'      => count($valid) * $est_per,
                 'est_per'  => $est_per,
-                'min_per'  => $min_per,
-                'min_total'=> count($valid) * $min_per,
+                'batch'    => true,
+                'min_total'=> (count($valid) * $batch_sec_per) / 60.0,
             ];
             header('Location: /admin/?tab=prospects&staged=1'); exit;
         } catch (Throwable $e) { $_SESSION['flash_err'] = $e->getMessage(); header('Location: /admin/?tab=prospects&uperr=1'); exit; }
@@ -655,10 +659,10 @@ if ($tab === 'prospects') {
         echo '<div class="form-card" style="max-width:none;border-color:var(--teal);box-shadow:8px 8px 0 var(--teal);margin-bottom:24px;">';
         echo '<h3>Confirm import</h3>';
         echo '<p style="font-size:15px;margin-bottom:6px;">This will create <strong>' . $n . ' new site' . ($n === 1 ? '' : 's') . '</strong>.</p>';
-        echo '<p style="font-size:14px;opacity:0.85;margin-bottom:4px;">Estimated AI generation cost: <strong>~$' . number_format((float)$c['est'], 2) . '</strong> (' . $n . ' &times; ~$' . number_format((float)$c['est_per'], 2) . '/site).</p>';
+        echo '<p style="font-size:14px;opacity:0.85;margin-bottom:4px;">Estimated AI cost: <strong>~$' . number_format((float)$c['est'], 2) . '</strong> (' . $n . ' &times; ~$' . number_format((float)$c['est_per'], 2) . '/site via the <strong>Batch API</strong> &mdash; ~50% cheaper than real-time).</p>';
         $mt = (float)($c['min_total'] ?? 0);
         $time_str = $mt >= 60 ? (number_format($mt/60, 1) . ' hours') : (round($mt) . ' min');
-        echo '<p style="font-size:14px;opacity:0.85;margin-bottom:4px;">&#9201; Estimated time: <strong>~' . round((float)($c['min_per'] ?? 4)) . ' min per site</strong>, generated one at a time &mdash; about <strong>' . $time_str . '</strong> for all ' . $n . '.</p>';
+        echo '<p style="font-size:14px;opacity:0.85;margin-bottom:4px;">&#9201; Generated in the <strong>background, in parallel</strong> (not one-at-a-time). Generation itself is fast; the limiter is scraping each site, so expect roughly <strong>' . $time_str . '</strong> end-to-end for all ' . $n . ' on the current server.</p>';
         $notes = [];
         if ($c['dupes'])   $notes[] = $c['dupes'] . ' already in the system';
         if ($c['invalid']) $notes[] = $c['invalid'] . ' marked invalid';
@@ -670,7 +674,8 @@ if ($tab === 'prospects') {
         echo '</div></div>';
     }
 
-    // ---- Batch history / monitoring (one row per CSV upload) ----
+    // ---- Batch history (buffered here, rendered BELOW the add forms) ----
+    ob_start();
     $batches = ww_db()->query("SELECT * FROM upload_batches ORDER BY id DESC LIMIT 100")->fetchAll(PDO::FETCH_ASSOC);
     $bcounts = [];
     foreach (ww_db()->query("SELECT upload_batch_id uid, COALESCE(item_status,'queued') st, COUNT(*) c FROM jobs WHERE upload_batch_id IS NOT NULL GROUP BY uid, st") as $cr) {
@@ -681,7 +686,7 @@ if ($tab === 'prospects') {
     echo '<div style="margin-bottom:26px;">';
     echo '<h3 style="font-family:var(--display);font-weight:900;font-size:18px;margin:0 0 10px;">Batch history</h3>';
     if (!$batches) {
-        echo '<div class="empty">No batch uploads yet. Upload a CSV below and it\'ll appear here while it generates.</div>';
+        echo '<div class="empty">No batch uploads yet. Upload a CSV above and it\'ll appear here while it generates.</div>';
     } else {
         echo '<table class="t"><thead><tr><th>List</th><th>Uploaded</th><th>Sites</th><th>Status</th><th>Progress</th><th>Results</th></tr></thead><tbody>';
         foreach ($batches as $b) {
@@ -711,6 +716,7 @@ if ($tab === 'prospects') {
     }
     echo '</div>';
     if ($active_batches) echo '<script>setTimeout(function(){location.reload();},5000);</script>';
+    $batch_history_html = ob_get_clean();
     ?>
     <style>
       .qa-card{background:#fff;border:3px solid var(--navy);border-radius:18px;padding:22px;box-shadow:8px 8px 0 var(--yellow);max-width:780px;margin-bottom:24px;position:relative;}
@@ -738,9 +744,12 @@ if ($tab === 'prospects') {
     </style>
 
     <style>
-      .prospect-cols{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(0,1fr);gap:22px;align-items:start;margin-bottom:24px;}
+      .prospect-cols{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(0,1fr);gap:22px;align-items:stretch;margin-bottom:24px;}
       @media(max-width:1000px){.prospect-cols{grid-template-columns:1fr;}}
       .prospect-cols .qa-card,.prospect-cols .form-card{max-width:none;margin-bottom:0;}
+      .prospect-cols .form-card{display:flex;flex-direction:column;}
+      #csvDrop{flex:1;min-height:150px;border:2px dashed var(--navy);border-radius:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;cursor:pointer;background:#fff;transition:background .15s,border-color .15s;}
+      #csvDrop:hover,#csvDrop.drag{background:#FFF8E7;border-color:var(--teal);}
     </style>
     <div class="prospect-cols">
     <div class="qa-card">
@@ -944,21 +953,33 @@ if ($tab === 'prospects') {
     <div class="form-card">
       <h3>Upload prospect CSV</h3>
       <p style="font-size:13px;color:var(--navy);opacity:0.7;margin-bottom:10px;">Drop in an Apollo (or any) export &mdash; columns are auto-detected, so headers don't need exact names. Only a <strong>company name</strong> and a <strong>website/URL</strong> are required; we also capture first/last name, title, email + verification status, industry, and city/state/country/street when present. Rows flagged <code>result=invalid</code> and sites already in the system are skipped. You'll see a count + cost/time estimate to confirm before anything is created.</p>
-      <form id="csvForm" method="post">
+      <form id="csvForm" method="post" style="display:flex;flex-direction:column;flex:1;">
         <label>CSV file</label>
-        <input type="file" id="csvFile" accept=".csv,text/csv" required>
+        <div id="csvDrop">
+          <div style="font-family:var(--display);font-weight:900;font-size:15px;">Drop your CSV here</div>
+          <div style="font-size:13px;opacity:0.65;margin-top:6px;">or click to choose a file</div>
+          <div id="csvFileName" style="font-size:13px;margin-top:12px;font-weight:700;color:var(--navy);word-break:break-all;"></div>
+        </div>
+        <input type="file" id="csvFile" accept=".csv,text/csv" style="display:none;">
         <input type="hidden" name="csv_sid" id="csvSid">
         <input type="hidden" name="csv_name" id="csvName">
         <div style="margin-top:14px;"><button class="btn" type="submit" id="csvBtn">Import &amp; queue generation &rarr;</button> <span id="csvProg" style="font-size:13px;opacity:0.75;margin-left:8px;"></span></div>
       </form>
       <script>(function(){
-        var form=document.getElementById('csvForm'),file=document.getElementById('csvFile'),btn=document.getElementById('csvBtn'),prog=document.getElementById('csvProg'),sidEl=document.getElementById('csvSid'),nameEl=document.getElementById('csvName');
+        var form=document.getElementById('csvForm'),file=document.getElementById('csvFile'),btn=document.getElementById('csvBtn'),prog=document.getElementById('csvProg'),sidEl=document.getElementById('csvSid'),nameEl=document.getElementById('csvName'),drop=document.getElementById('csvDrop'),fnEl=document.getElementById('csvFileName');
         if(!form) return;
+        var chosen=null;
+        function setFile(f){ chosen=f; fnEl.textContent=f?('Selected: '+f.name):''; if(prog)prog.textContent=''; }
+        drop.addEventListener('click',function(){ file.click(); });
+        file.addEventListener('change',function(){ if(file.files[0]) setFile(file.files[0]); });
+        ['dragenter','dragover'].forEach(function(ev){ drop.addEventListener(ev,function(e){ e.preventDefault(); drop.classList.add('drag'); }); });
+        ['dragleave','drop'].forEach(function(ev){ drop.addEventListener(ev,function(e){ e.preventDefault(); drop.classList.remove('drag'); }); });
+        drop.addEventListener('drop',function(e){ var f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0]; if(f) setFile(f); });
         form.addEventListener('submit',async function(e){
           if(sidEl.value) return; // chunks already uploaded -> let the normal POST go through
           e.preventDefault();
-          var f=file.files[0];
-          if(!f){prog.textContent='Choose a CSV first.';return;}
+          var f=chosen||file.files[0];
+          if(!f){prog.textContent='Choose or drop a CSV first.';return;}
           btn.disabled=true;
           var sid=(Date.now().toString(36)+Math.random().toString(36).slice(2,12)).replace(/[^a-z0-9]/g,'');
           var CHUNK=900*1024, total=Math.max(1,Math.ceil(f.size/CHUNK));
@@ -979,6 +1000,7 @@ if ($tab === 'prospects') {
     </div>
     </div><!--/prospect-cols-->
     <?php
+    echo $batch_history_html ?? '';
     $q = trim((string)($_GET['q'] ?? ''));
     $sort = (($_GET['sort'] ?? 'created_desc') === 'created_asc') ? 'created_asc' : 'created_desc';
     $order = $sort === 'created_asc' ? 'ASC' : 'DESC';
