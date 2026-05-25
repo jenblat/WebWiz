@@ -257,6 +257,15 @@ if ($tab === 'settings') {
     echo '<label style="display:block;margin-top:10px;">Default variants when not specified (1&ndash;3)</label><input type="number" name="magic_default_variants" min="1" max="3" value="'.ww_h($sget('magic_default_variants','1')).'" style="'.$instyle.'">';
     echo '<div style="margin-top:14px;"><button class="btn" type="submit">Save &rarr;</button></div></form></div>';
 
+    $b = 'https://trywebwiz.com/try/';
+    echo '<div class="form-card" style="max-width:680px;margin-top:16px;"><h3>Magic link URL &amp; examples</h3>';
+    echo '<p style="font-size:13px;opacity:0.8;margin-bottom:8px;">Point prospects at <code>' . $b . '</code> with these query params. It scrapes their site and builds a live preview behind a WebWiz loading screen.</p>';
+    echo '<p style="font-size:12px;opacity:0.7;margin-bottom:8px;"><code>website</code> (required) &middot; <code>name</code> (optional) &middot; <code>email</code> (optional) &middot; <code>v</code> = variants 1&ndash;3 (default ' . ww_h($sget('magic_default_variants','1')) . ')</p>';
+    echo '<div style="font-family:ui-monospace,monospace;font-size:12px;background:var(--paper);border:2px solid var(--navy);border-radius:10px;padding:10px 12px;line-height:1.7;word-break:break-all;">';
+    echo '1 variant (fastest):<br>' . ww_h($b . '?name=Jane+Doe&website=acme.com') . '<br><br>';
+    echo '3 variants:<br>' . ww_h($b . '?name=Jane+Doe&website=acme.com&v=3');
+    echo '</div></div>';
+
     shell_close(); exit;
 }
 
