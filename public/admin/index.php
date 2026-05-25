@@ -411,6 +411,21 @@ if ($tab === 'customers') {
 
 // ---------- PROSPECTS (Quick-add + CSV upload + list) ----------
 if ($tab === 'prospects') {
+    // Chunked CSV upload receiver: the browser posts the file in <1MB pieces (php://input, governed by
+    // post_max_size, NOT the 2M upload_max_filesize) so large Apollo lead lists upload reliably.
+    if (($_GET['csv_chunk'] ?? '') === '1' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        header('Content-Type: application/json');
+        $sid = preg_replace('/[^a-z0-9]/i', '', (string)($_GET['sid'] ?? ''));
+        if (strlen($sid) < 8) { http_response_code(400); echo json_encode(['error' => 'bad sid']); exit; }
+        $dir = '/var/www/sites/trywebwiz/data/csv_uploads';
+        if (!is_dir($dir)) @mkdir($dir, 0775, true);
+        foreach (glob($dir . '/*.csv') ?: [] as $old) { if (@filemtime($old) < time() - 7200) @unlink($old); }
+        $path = $dir . '/' . $sid . '.csv';
+        $idx = (int)($_GET['idx'] ?? 0);
+        $body = file_get_contents('php://input');
+        if (file_put_contents($path, $body, $idx === 0 ? 0 : FILE_APPEND) === false) { http_response_code(500); echo json_encode(['error' => 'write failed']); exit; }
+        echo json_encode(['ok' => true, 'total' => filesize($path)]); exit;
+    }
     $msg=''; $err='';
     // Retry a failed (or any) job from the prospects table
     if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['prospect_action'] ?? '')==='retry') {
@@ -514,11 +529,21 @@ if ($tab === 'prospects') {
     }
 
     // ---- CSV phase 1: file uploaded — parse, filter, estimate, stage for confirmation ----
-    if ($_SERVER['REQUEST_METHOD']==='POST' && !empty($_FILES['csv'])) {
+    $csv_sid = preg_replace('/[^a-z0-9]/i', '', (string)($_POST['csv_sid'] ?? ''));
+    $csv_chunked = ($_SERVER['REQUEST_METHOD']==='POST' && strlen($csv_sid) >= 8);
+    if (($_SERVER['REQUEST_METHOD']==='POST' && !empty($_FILES['csv'])) || $csv_chunked) {
+        $csv_tmp_to_unlink = null;
         try {
-            $tmp = $_FILES['csv']['tmp_name'] ?? '';
-            if (!$tmp || !is_uploaded_file($tmp)) throw new Exception('No file uploaded.');
-            $_SESSION['pending_label'] = trim((string)($_FILES['csv']['name'] ?? '')) ?: ('upload-' . date('Y-m-d_H:i'));
+            if ($csv_chunked) {
+                $tmp = '/var/www/sites/trywebwiz/data/csv_uploads/' . $csv_sid . '.csv';
+                if (!is_file($tmp) || filesize($tmp) === 0) throw new Exception('Upload not found or empty — please re-select the file and try again.');
+                $csv_tmp_to_unlink = $tmp;
+                $_SESSION['pending_label'] = trim((string)($_POST['csv_name'] ?? '')) ?: ('upload-' . date('Y-m-d_H:i'));
+            } else {
+                $tmp = $_FILES['csv']['tmp_name'] ?? '';
+                if (!$tmp || !is_uploaded_file($tmp)) throw new Exception('No file uploaded.');
+                $_SESSION['pending_label'] = trim((string)($_FILES['csv']['name'] ?? '')) ?: ('upload-' . date('Y-m-d_H:i'));
+            }
             $h = fopen($tmp, 'r');
             if (!$h) throw new Exception('Cannot read file.');
             $header = fgetcsv($h);
@@ -586,9 +611,10 @@ if ($tab === 'prospects') {
                     'city'=>$gv($row, $i_city), 'state'=>$gv($row, $i_state),
                     'country'=>$gv($row, $i_country), 'street'=>$gv($row, $i_street),
                 ];
-                if (count($valid) >= 2000) break; // staging safety cap (batch path handles larger lists)
+                if (count($valid) >= 10000) break; // staging safety cap (batch path handles larger lists)
             }
             fclose($h);
+            if ($csv_tmp_to_unlink) @unlink($csv_tmp_to_unlink);
             if (!$valid) {
                 throw new Exception('No new sites to create. ' . ($dupes ? "$dupes already in the system. " : '') . ($invalid ? "$invalid marked invalid. " : '') . ($skipped ? "$skipped incomplete rows." : ''));
             }
@@ -918,11 +944,38 @@ if ($tab === 'prospects') {
     <div class="form-card">
       <h3>Upload prospect CSV</h3>
       <p style="font-size:13px;color:var(--navy);opacity:0.7;margin-bottom:10px;">Drop in an Apollo (or any) export &mdash; columns are auto-detected, so headers don't need exact names. Only a <strong>company name</strong> and a <strong>website/URL</strong> are required; we also capture first/last name, title, email + verification status, industry, and city/state/country/street when present. Rows flagged <code>result=invalid</code> and sites already in the system are skipped. You'll see a count + cost/time estimate to confirm before anything is created.</p>
-      <form method="post" enctype="multipart/form-data">
+      <form id="csvForm" method="post">
         <label>CSV file</label>
-        <input type="file" name="csv" accept=".csv,text/csv" required>
-        <div style="margin-top:14px;"><button class="btn" type="submit">Import &amp; queue generation &rarr;</button></div>
+        <input type="file" id="csvFile" accept=".csv,text/csv" required>
+        <input type="hidden" name="csv_sid" id="csvSid">
+        <input type="hidden" name="csv_name" id="csvName">
+        <div style="margin-top:14px;"><button class="btn" type="submit" id="csvBtn">Import &amp; queue generation &rarr;</button> <span id="csvProg" style="font-size:13px;opacity:0.75;margin-left:8px;"></span></div>
       </form>
+      <script>(function(){
+        var form=document.getElementById('csvForm'),file=document.getElementById('csvFile'),btn=document.getElementById('csvBtn'),prog=document.getElementById('csvProg'),sidEl=document.getElementById('csvSid'),nameEl=document.getElementById('csvName');
+        if(!form) return;
+        form.addEventListener('submit',async function(e){
+          if(sidEl.value) return; // chunks already uploaded -> let the normal POST go through
+          e.preventDefault();
+          var f=file.files[0];
+          if(!f){prog.textContent='Choose a CSV first.';return;}
+          btn.disabled=true;
+          var sid=(Date.now().toString(36)+Math.random().toString(36).slice(2,12)).replace(/[^a-z0-9]/g,'');
+          var CHUNK=900*1024, total=Math.max(1,Math.ceil(f.size/CHUNK));
+          try{
+            for(var i=0;i<total;i++){
+              prog.textContent='Uploading '+(i+1)+' / '+total+'…';
+              var blob=f.slice(i*CHUNK,(i+1)*CHUNK);
+              var r=await fetch('/admin/?tab=prospects&csv_chunk=1&sid='+sid+'&idx='+i,{method:'POST',body:blob,headers:{'Content-Type':'application/octet-stream'}});
+              var j=await r.json().catch(function(){return {};});
+              if(!r.ok||j.error) throw new Error(j.error||('chunk '+(i+1)+' failed'));
+            }
+            prog.textContent='Processing…';
+            sidEl.value=sid; nameEl.value=f.name;
+            form.submit();
+          }catch(err){ prog.textContent='Upload failed: '+err.message; btn.disabled=false; }
+        });
+      })();</script>
     </div>
     </div><!--/prospect-cols-->
     <?php
