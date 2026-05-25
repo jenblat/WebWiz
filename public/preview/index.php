@@ -73,7 +73,7 @@ foreach ($previews as $idx => $p) {
         'key'   => 'v' . $v,
         'label' => 'Variant ' . ($idx + 1),
         'sub'   => $variant_names[$v] ?? ('Direction ' . ($idx + 1)),
-        'src'   => $p['html_path'],
+        'src'   => $p['html_path'] . '?v=' . (@filemtime('/var/www/sites/trywebwiz/public' . $p['html_path']) ?: time()),
         'variant' => $v,
         'is_original' => false,
     ];
@@ -149,9 +149,9 @@ if ($current_url) {
   .stage .loading .dot-dot span:nth-child(3){animation-delay:.3s;}
   @keyframes dot{0%,80%,100%{transform:scale(0.6);opacity:0.4;}40%{transform:scale(1);opacity:1;}}
 
-  #wiz-bubble{position:fixed;bottom:22px;right:22px;width:78px;height:78px;border-radius:50%;background:var(--cream);border:4px solid var(--navy);box-shadow:6px 6px 0 var(--yellow);cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:200;transition:transform .2s;}
+  #wiz-bubble{position:fixed;bottom:22px;right:22px;width:78px;height:78px;border-radius:50%;background:var(--cream);border:4px solid var(--navy);box-shadow:6px 6px 0 var(--yellow);cursor:pointer;display:flex;align-items:center;justify-content:center;overflow:hidden;padding:0;z-index:200;transition:transform .2s;}
   #wiz-bubble:hover{transform:translate(-2px,-2px);}
-  #wiz-bubble img{width:66px;height:66px;}
+  #wiz-bubble img{width:100%;height:100%;object-fit:cover;object-position:center;border-radius:50%;display:block;}
 
   #wiz-chat{position:fixed;bottom:110px;right:22px;width:380px;max-width:calc(100vw - 30px);height:560px;max-height:calc(100vh - 140px);background:#fff;border:4px solid var(--navy);border-radius:22px;box-shadow:10px 10px 0 var(--navy);display:none;flex-direction:column;z-index:201;overflow:hidden;}
   #wiz-chat.open{display:flex;}
