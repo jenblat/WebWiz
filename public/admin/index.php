@@ -544,10 +544,12 @@ if ($tab === 'prospects') {
                 if (!$tmp || !is_uploaded_file($tmp)) throw new Exception('No file uploaded.');
                 $_SESSION['pending_label'] = trim((string)($_FILES['csv']['name'] ?? '')) ?: ('upload-' . date('Y-m-d_H:i'));
             }
+            $sig = (string)@file_get_contents($tmp, false, null, 0, 4);
+            if (strncmp($sig, "PK\x03\x04", 4) === 0) throw new Exception('That looks like an Excel .xlsx file, not a CSV. The uploader normally auto-converts Excel to CSV — please re-select the file and try again. (Or in Excel/Sheets: File → Save As → CSV, then upload that.)');
             $h = fopen($tmp, 'r');
             if (!$h) throw new Exception('Cannot read file.');
             $header = fgetcsv($h);
-            if (!$header) throw new Exception('Empty CSV.');
+            if (!$header) throw new Exception('The file appears to be empty.');
             // Flexible header mapping: works with Apollo + arbitrary exports. Normalize each header
             // (lowercase, strip non-alphanumerics) and match against alias lists, so we never require
             // exact column names. Only a company name + a website are mandatory; everything else enriches.
@@ -574,6 +576,7 @@ if ($tab === 'prospects') {
             $i_result = $find(['result','validity','validationresult','validationstatus']); // optional validity flag (Apollo-style)
             if ($i_biz === null || $i_url === null) {
                 $seen = implode(', ', array_filter(array_map('trim', $header)));
+                $seen = trim(mb_substr(preg_replace('/[^\x20-\x7E]/', ' ', $seen), 0, 200));
                 throw new Exception('Could not find a company-name column and a website/URL column. I matched flexibly against names like Company / Business Name and Website / URL / Domain. Columns I saw: ' . ($seen ?: '(none)') . '. The file needs at least a company name and a website.');
             }
             $url_key = function($u) {
@@ -641,7 +644,7 @@ if ($tab === 'prospects') {
                 'min_total'=> (count($valid) * $batch_sec_per) / 60.0,
             ];
             header('Location: /admin/?tab=prospects&staged=1'); exit;
-        } catch (Throwable $e) { $_SESSION['flash_err'] = $e->getMessage(); header('Location: /admin/?tab=prospects&uperr=1'); exit; }
+        } catch (Throwable $e) { $_SESSION['flash_err'] = (trim(preg_replace('/[\x00-\x1F]+/', ' ', $e->getMessage())) ?: 'Upload failed — please check the file and try again.'); header('Location: /admin/?tab=prospects&uperr=1'); exit; }
     }
     $secrets_check = ww_secrets();
     $has_places_key = !empty($secrets_check['GOOGLE_PLACES_API_KEY']);
@@ -956,11 +959,11 @@ if ($tab === 'prospects') {
       <form id="csvForm" method="post" style="display:flex;flex-direction:column;flex:1;">
         <label>CSV file</label>
         <div id="csvDrop">
-          <div style="font-family:var(--display);font-weight:900;font-size:15px;">Drop your CSV here</div>
-          <div style="font-size:13px;opacity:0.65;margin-top:6px;">or click to choose a file</div>
+          <div style="font-family:var(--display);font-weight:900;font-size:15px;">Drop your CSV or Excel file here</div>
+          <div style="font-size:13px;opacity:0.65;margin-top:6px;">or click to choose &mdash; .csv, .xlsx or .xls</div>
           <div id="csvFileName" style="font-size:13px;margin-top:12px;font-weight:700;color:var(--navy);word-break:break-all;"></div>
         </div>
-        <input type="file" id="csvFile" accept=".csv,text/csv" style="display:none;">
+        <input type="file" id="csvFile" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display:none;">
         <input type="hidden" name="csv_sid" id="csvSid">
         <input type="hidden" name="csv_name" id="csvName">
         <div style="margin-top:14px;"><button class="btn" type="submit" id="csvBtn">Import &amp; queue generation &rarr;</button> <span id="csvProg" style="font-size:13px;opacity:0.75;margin-left:8px;"></span></div>
@@ -975,12 +978,15 @@ if ($tab === 'prospects') {
         ['dragenter','dragover'].forEach(function(ev){ drop.addEventListener(ev,function(e){ e.preventDefault(); drop.classList.add('drag'); }); });
         ['dragleave','drop'].forEach(function(ev){ drop.addEventListener(ev,function(e){ e.preventDefault(); drop.classList.remove('drag'); }); });
         drop.addEventListener('drop',function(e){ var f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0]; if(f) setFile(f); });
+        function ww_loadXLSX(){ return new Promise(function(res,rej){ if(window.XLSX) return res(); var s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'; s.onload=function(){res();}; s.onerror=function(){rej(new Error('could not load the Excel reader'));}; document.head.appendChild(s); }); }
+        async function ww_toCsv(f){ var ext=(f.name.split('.').pop()||'').toLowerCase(); if(ext!=='xlsx'&&ext!=='xls') return f; prog.textContent='Converting Excel to CSV…'; await ww_loadXLSX(); var buf=await f.arrayBuffer(); var wb=XLSX.read(new Uint8Array(buf),{type:'array'}); var ws=wb.Sheets[wb.SheetNames[0]]; var csv=XLSX.utils.sheet_to_csv(ws); return new File([csv], f.name.replace(/\.(xlsx|xls)$/i,'.csv'), {type:'text/csv'}); }
         form.addEventListener('submit',async function(e){
           if(sidEl.value) return; // chunks already uploaded -> let the normal POST go through
           e.preventDefault();
           var f=chosen||file.files[0];
-          if(!f){prog.textContent='Choose or drop a CSV first.';return;}
+          if(!f){prog.textContent='Choose or drop a CSV/Excel file first.';return;}
           btn.disabled=true;
+          try{ f=await ww_toCsv(f); }catch(cv){ prog.textContent='Could not read that file: '+cv.message; btn.disabled=false; return; }
           var sid=(Date.now().toString(36)+Math.random().toString(36).slice(2,12)).replace(/[^a-z0-9]/g,'');
           var CHUNK=900*1024, total=Math.max(1,Math.ceil(f.size/CHUNK));
           try{
