@@ -149,7 +149,7 @@ if ($current_url) {
   .stage .loading .dot-dot span:nth-child(3){animation-delay:.3s;}
   @keyframes dot{0%,80%,100%{transform:scale(0.6);opacity:0.4;}40%{transform:scale(1);opacity:1;}}
 
-  #wiz-bubble{position:fixed;bottom:22px;right:22px;width:78px;height:78px;border-radius:50%;background:var(--cream);border:4px solid var(--navy);box-shadow:6px 6px 0 var(--yellow);cursor:pointer;display:flex;align-items:center;justify-content:center;overflow:hidden;padding:0;z-index:200;transition:transform .2s;}
+  #wiz-bubble{position:fixed;bottom:22px;right:22px;width:117px;height:117px;border-radius:50%;background:var(--cream);border:5px solid var(--navy);box-shadow:8px 8px 0 var(--yellow);cursor:pointer;display:flex;align-items:center;justify-content:center;overflow:hidden;padding:0;z-index:200;transition:transform .2s;}
   #wiz-bubble:hover{transform:translate(-2px,-2px);}
   #wiz-bubble img{width:100%;height:100%;object-fit:cover;object-position:center;border-radius:50%;display:block;}
 
