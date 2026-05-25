@@ -145,6 +145,7 @@ function shell_open(string $title, ?array $me = null, string $current = '', bool
     <a href="/admin/?tab=prospects" class="<?= $current==='prospects'?'on':'' ?>">Prospects</a>
     <?php if ($is_admin): ?>
       <a href="/admin/?tab=users" class="<?= $current==='users'?'on':'' ?>">Users</a>
+      <a href="/admin/?tab=settings" class="<?= $current==='settings'?'on':'' ?>">Settings</a>
     <?php endif; ?>
   </nav>
   <div class="me">
@@ -184,6 +185,81 @@ if (!$logged_in) {
 $tab = $_GET['tab'] ?? 'dash';
 
 // ---------- USERS (admin-only) ----------
+if ($tab === 'settings') {
+    if (!$is_admin) { http_response_code(403); shell_open('Forbidden', $me, 'settings', $is_admin); echo '<h1>403</h1><p>Admins only.</p>'; shell_close(); exit; }
+    if ($_SERVER['REQUEST_METHOD']==='POST') {
+        $act = $_POST['settings_action'] ?? '';
+        try {
+            if ($act==='add_key') {
+                $label = trim((string)($_POST['label'] ?? '')); $key = trim((string)($_POST['api_key'] ?? ''));
+                if ($key==='') throw new Exception('Paste an API key.');
+                if ($label==='') $label = 'Key ' . substr($key, -4);
+                ww_db()->prepare("INSERT INTO api_keys (label, api_key, active) VALUES (?, ?, 1)")->execute([$label, $key]);
+                $_SESSION['flash_msg'] = 'API key added.';
+            } elseif ($act==='toggle_key') {
+                ww_db()->prepare("UPDATE api_keys SET active = 1 - active WHERE id=?")->execute([(int)($_POST['key_id'] ?? 0)]);
+                $_SESSION['flash_msg'] = 'Key updated.';
+            } elseif ($act==='delete_key') {
+                ww_db()->prepare("DELETE FROM api_keys WHERE id=?")->execute([(int)($_POST['key_id'] ?? 0)]);
+                $_SESSION['flash_msg'] = 'Key removed.';
+            } elseif ($act==='save_rl') {
+                foreach (['magic_link_enabled','magic_rl_per_ip_hour','magic_rl_daily_cap','magic_default_variants'] as $sk) {
+                    $sv = trim((string)($_POST[$sk] ?? ''));
+                    $up = ww_db()->prepare("UPDATE settings SET value=? WHERE key=?"); $up->execute([$sv, $sk]);
+                    if ($up->rowCount() === 0) ww_db()->prepare("INSERT INTO settings (key,value) VALUES (?,?)")->execute([$sk, $sv]);
+                }
+                $_SESSION['flash_msg'] = 'Settings saved.';
+            }
+        } catch (Throwable $e) { $_SESSION['flash_err'] = $e->getMessage(); }
+        header('Location: /admin/?tab=settings'); exit;
+    }
+    $smsg=''; $serr='';
+    if (!empty($_SESSION['flash_msg'])) { $smsg=$_SESSION['flash_msg']; unset($_SESSION['flash_msg']); }
+    if (!empty($_SESSION['flash_err'])) { $serr=$_SESSION['flash_err']; unset($_SESSION['flash_err']); }
+    $spend=[]; foreach (ww_db()->query("SELECT key_label, COALESCE(SUM(cost_usd),0) s, COUNT(*) c FROM api_calls WHERE key_label IS NOT NULL GROUP BY key_label") as $r) { $spend[$r['key_label']]=['s'=>(float)$r['s'],'c'=>(int)$r['c']]; }
+    $keys = ww_db()->query("SELECT * FROM api_keys ORDER BY id")->fetchAll(PDO::FETCH_ASSOC);
+    $sget = function($k,$d='') { $v = ww_db()->prepare("SELECT value FROM settings WHERE key=?"); $v->execute([$k]); $r=$v->fetchColumn(); return $r===false?$d:(string)$r; };
+    $instyle = 'width:100%;padding:9px 12px;border:2px solid var(--navy);border-radius:10px;font-size:14px;font-family:var(--body);margin-top:4px;box-sizing:border-box;';
+
+    shell_open('Settings', $me, 'settings', $is_admin);
+    echo '<h1>Settings</h1>';
+    if ($smsg) echo '<div class="info">'.ww_h($smsg).'</div>';
+    if ($serr) echo '<div class="err">'.ww_h($serr).'</div>';
+
+    echo '<h2 style="font-family:var(--display);font-weight:900;margin-top:6px;">Anthropic API keys</h2>';
+    echo '<p style="font-size:13px;opacity:0.75;margin-bottom:12px;max-width:760px;">Real-time / sync generation <strong>rotates across all active keys</strong> (round-robin) to split load and rate limits; batches use the first active key so results stay on one account. Spend is tracked per key from logged usage.</p>';
+    if ($keys) {
+        echo '<table class="t"><thead><tr><th>Label</th><th>Key</th><th>Status</th><th>Spend</th><th>Calls</th><th>Actions</th></tr></thead><tbody>';
+        foreach ($keys as $k) {
+            $ak=(string)$k['api_key']; $mask = strlen($ak)>12 ? (substr($ak,0,7).'&hellip;'.substr($ak,-4)) : '&bull;&bull;&bull;&bull;';
+            $sp = $spend[$k['label']] ?? ['s'=>0,'c'=>0];
+            echo '<tr><td><strong>'.ww_h($k['label']).'</strong></td>';
+            echo '<td style="font-family:ui-monospace,monospace;font-size:12px;">'.$mask.'</td>';
+            echo '<td><span class="pill '.($k['active']?'ok':'muted').'">'.($k['active']?'active':'off').'</span></td>';
+            echo '<td>$'.number_format($sp['s'],2).'</td><td>'.$sp['c'].'</td><td>';
+            echo '<form method="post" style="display:inline;"><input type="hidden" name="settings_action" value="toggle_key"><input type="hidden" name="key_id" value="'.(int)$k['id'].'"><button class="btn ghost" type="submit" style="padding:5px 11px;font-size:12px;">'.($k['active']?'Disable':'Enable').'</button></form> ';
+            echo '<form method="post" style="display:inline;" onsubmit="return confirm(\'Remove this key?\');"><input type="hidden" name="settings_action" value="delete_key"><input type="hidden" name="key_id" value="'.(int)$k['id'].'"><button class="btn ghost" type="submit" style="padding:5px 11px;font-size:12px;">Remove</button></form>';
+            echo '</td></tr>';
+        }
+        echo '</tbody></table>';
+    } else { echo '<div class="empty">No keys yet &mdash; add one below.</div>'; }
+    echo '<div class="form-card" style="max-width:560px;margin-top:18px;"><h3>Add an API key</h3>';
+    echo '<form method="post"><input type="hidden" name="settings_action" value="add_key">';
+    echo '<label>Label</label><input type="text" name="label" placeholder="e.g. BusySeed main, Client X" style="'.$instyle.'">';
+    echo '<label style="display:block;margin-top:10px;">Anthropic API key</label><input type="password" name="api_key" placeholder="sk-ant-..." autocomplete="off" required style="'.$instyle.'">';
+    echo '<div style="margin-top:14px;"><button class="btn" type="submit">Add key &rarr;</button></div></form></div>';
+
+    echo '<h2 style="font-family:var(--display);font-weight:900;margin-top:30px;">Magic link (real-time generation)</h2>';
+    echo '<div class="form-card" style="max-width:560px;"><form method="post"><input type="hidden" name="settings_action" value="save_rl">';
+    echo '<label style="display:block;"><input type="checkbox" name="magic_link_enabled" value="1" '.($sget('magic_link_enabled','1')==='1'?'checked':'').'> Enable the public magic link</label>';
+    echo '<label style="display:block;margin-top:12px;">Max generations per IP, per hour</label><input type="number" name="magic_rl_per_ip_hour" min="0" value="'.ww_h($sget('magic_rl_per_ip_hour','3')).'" style="'.$instyle.'">';
+    echo '<label style="display:block;margin-top:10px;">Daily global cap (total magic-link sites/day)</label><input type="number" name="magic_rl_daily_cap" min="0" value="'.ww_h($sget('magic_rl_daily_cap','100')).'" style="'.$instyle.'">';
+    echo '<label style="display:block;margin-top:10px;">Default variants when not specified (1&ndash;3)</label><input type="number" name="magic_default_variants" min="1" max="3" value="'.ww_h($sget('magic_default_variants','1')).'" style="'.$instyle.'">';
+    echo '<div style="margin-top:14px;"><button class="btn" type="submit">Save &rarr;</button></div></form></div>';
+
+    shell_close(); exit;
+}
+
 if ($tab === 'users') {
     if (!$is_admin) { http_response_code(403); shell_open('Forbidden', $me, 'users', $is_admin); echo '<h1>403</h1><p>Admins only.</p>'; shell_close(); exit; }
 
