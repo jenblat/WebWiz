@@ -1,0 +1,90 @@
+<?php
+// Public "magic link" real-time generator.
+// GET: website (required), name (optional), email (optional), v / variants (1-3, default from settings).
+// Scrapes the site, generates v variants synchronously, writes a preview, returns JSON { token, url }.
+declare(strict_types=1);
+@set_time_limit(0);
+ignore_user_abort(true);
+header('Content-Type: application/json');
+
+require_once '/var/www/sites/trywebwiz/private/worker.php'; // provides generation functions (queue loop is CLI-only)
+
+$db = ww_db();
+function ml_sget(PDO $db, string $k, string $d = ''): string { $s = $db->prepare("SELECT value FROM settings WHERE key=?"); $s->execute([$k]); $r = $s->fetchColumn(); return $r === false ? $d : (string)$r; }
+function ml_fail(string $m, int $code = 400) { http_response_code($code); echo json_encode(['error' => $m]); exit; }
+
+if (ml_sget($db, 'magic_link_enabled', '1') !== '1') ml_fail('Instant preview is currently turned off.', 403);
+
+$website = trim((string)($_GET['website'] ?? $_GET['url'] ?? ''));
+$name    = trim((string)($_GET['name'] ?? ''));
+$email   = trim((string)($_GET['email'] ?? ''));
+$v       = (int)($_GET['v'] ?? $_GET['variants'] ?? ml_sget($db, 'magic_default_variants', '1'));
+$v = max(1, min(3, $v ?: 1));
+if ($website === '') ml_fail('Missing website.');
+if (!preg_match('~^https?://~i', $website)) $website = 'https://' . $website;
+if (!filter_var($website, FILTER_VALIDATE_URL)) ml_fail('That website URL looks invalid.');
+
+// magic_hits table (rate-limit log)
+$db->exec("CREATE TABLE IF NOT EXISTS magic_hits (id INTEGER PRIMARY KEY AUTOINCREMENT, ip TEXT, token TEXT, created_at TEXT DEFAULT (datetime('now')))");
+
+// ---- rate limiting (per-IP/hour + daily global cap) ----
+$ip = (string)($_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '');
+$ip = trim(explode(',', $ip)[0]);
+$perIp = (int)ml_sget($db, 'magic_rl_per_ip_hour', '3');
+$daily = (int)ml_sget($db, 'magic_rl_daily_cap', '100');
+if ($perIp > 0) { $c = $db->prepare("SELECT COUNT(*) FROM magic_hits WHERE ip=? AND created_at > datetime('now','-1 hour')"); $c->execute([$ip]); if ((int)$c->fetchColumn() >= $perIp) ml_fail('You have reached the limit for now. Please try again a bit later.', 429); }
+if ($daily > 0) { if ((int)$db->query("SELECT COUNT(*) FROM magic_hits WHERE created_at > datetime('now','start of day')")->fetchColumn() >= $daily) ml_fail('We have hit today\'s capacity for instant previews. Please try again tomorrow.', 429); }
+
+try {
+    $scrape = scrape_multi($website);
+    $biz = trim((string)($scrape['business_name'] ?? ''));
+    if ($biz === '') { $biz = trim((string)($scrape['h1'][0] ?? '')); }
+    if ($biz === '') { $t = trim((string)($scrape['title'] ?? '')); if ($t !== '') $biz = trim((string)preg_split('~[|\-\x{2013}\x{2014}:]~u', $t)[0]); }
+    if ($biz === '') { $biz = preg_replace('~^www\.~', '', (string)(parse_url($website, PHP_URL_HOST) ?: 'Your Business')); }
+    $industry = '';
+    $usable = array_values(array_filter($scrape['images'] ?? [], fn($i) => empty($i['is_logo']) && empty($i['is_thumb']) && empty($i['is_team_card'])));
+    $system = build_system_prompt($industry, count($usable));
+    $reqs = [];
+    for ($i = 1; $i <= $v; $i++) { $reqs[$i] = ['system' => $system, 'messages' => [['role' => 'user', 'content' => build_user_prompt($scrape, $biz, $industry, $i)]]]; }
+    $res = anthropic_multi('claude-sonnet-4-6', $reqs, 14000, 0.7, null, ['</html>']);
+    $htmls = []; $cost = 0.0;
+    foreach ($reqs as $i => $_) { $cost += (float)($res[$i]['cost_usd'] ?? 0); $cand = finalize_html($res[$i]['text'] ?? ''); if ($cand && quality_gate($cand)['ok']) $htmls[$i] = $cand; }
+    if (!$htmls) throw new Exception('generation produced no usable site');
+    ksort($htmls);
+
+    // 1) write preview files first (filesystem, no DB lock)
+    $token = bin2hex(random_bytes(12));
+    $dir = '/var/www/sites/trywebwiz/public/preview/' . $token;
+    foreach ($htmls as $i => $html) { $d = $dir . '/v' . $i; if (!is_dir($d)) @mkdir($d, 0755, true); file_put_contents($d . '/index.html', $html); }
+    if (!is_file($dir . '/index.php')) file_put_contents($dir . '/index.php', "<?php\n\$_GET['t'] = basename(__DIR__);\nrequire __DIR__ . '/../index.php';\n");
+
+    // 2) persist to DB inside one transaction, retrying if SQLite is briefly locked by the cron worker
+    $persist = function () use ($db, $email, $name, $biz, $website, $cost, $htmls, $token, $ip) {
+        $db->beginTransaction();
+        $db->prepare("INSERT INTO prospects (email, name, business_name, current_url, source) VALUES (?, ?, ?, ?, 'magic')")->execute([$email, $name, $biz, $website]);
+        $pid = (int)$db->lastInsertId();
+        $db->prepare("INSERT INTO jobs (type, prospect_id, customer_email, business_name, status, scheduled_for, token, generation_mode, item_status, total_cost_cents, completed_at, qa_status) VALUES ('outbound', ?, ?, ?, 'ready', datetime('now'), ?, 'magic', 'done', ?, datetime('now'), 'magic')")
+           ->execute([$pid, $email, $biz, $token, (int)round($cost * 100)]);
+        $jid = (int)$db->lastInsertId();
+        $ins = $db->prepare("INSERT INTO previews (job_id, variant_n, html_path, qa_score, qa_pass, qa_issues) VALUES (?, ?, ?, NULL, NULL, NULL)");
+        foreach ($htmls as $i => $html) { $ins->execute([$jid, $i, '/preview/' . $token . '/v' . $i . '/index.html']); }
+        $db->prepare("INSERT INTO magic_hits (ip, token) VALUES (?, ?)")->execute([$ip, $token]);
+        $db->commit();
+    };
+    $persisted = false; $lastErr = null;
+    for ($try = 0; $try < 20 && !$persisted; $try++) {
+        try { $persist(); $persisted = true; }
+        catch (Throwable $e) {
+            $lastErr = $e;
+            if ($db->inTransaction()) { try { $db->rollBack(); } catch (Throwable $x) {} }
+            if (stripos($e->getMessage(), 'lock') !== false || stripos($e->getMessage(), 'busy') !== false) { usleep(350000); continue; }
+            throw $e;
+        }
+    }
+    if (!$persisted) throw ($lastErr ?: new Exception('could not save the result'));
+
+    echo json_encode(['ok' => true, 'token' => $token, 'url' => '/preview/' . $token . '/', 'variants' => count($htmls), 'business' => $biz]);
+    exit;
+} catch (Throwable $e) {
+    ml_fail('Generation failed: ' . preg_replace('/[\x00-\x1F]+/', ' ', $e->getMessage()), 500);
+}
