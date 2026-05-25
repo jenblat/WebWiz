@@ -446,20 +446,20 @@ if ($tab === 'prospects') {
         $bexp = (int)($_GET['batch'] ?? 0);
         if ($ids) {
             $ph = implode(',', array_fill(0, count($ids), '?'));
-            $st = ww_db()->prepare("SELECT p.business_name, p.name, p.email, p.current_url, j.status AS job_status, j.token AS job_token FROM prospects p LEFT JOIN jobs j ON j.id = (SELECT MAX(id) FROM jobs WHERE prospect_id = p.id) WHERE p.id IN ($ph) ORDER BY p.id DESC");
+            $st = ww_db()->prepare("SELECT p.business_name, p.name, p.first_name, p.last_name, p.email, p.current_url, j.status AS job_status, j.token AS job_token FROM prospects p LEFT JOIN jobs j ON j.id = (SELECT MAX(id) FROM jobs WHERE prospect_id = p.id) WHERE p.id IN ($ph) ORDER BY p.id DESC");
             $st->execute($ids);
             $erows = $st->fetchAll(PDO::FETCH_ASSOC);
         } elseif ($bexp) {
-            $st = ww_db()->prepare("SELECT p.business_name, p.name, p.email, p.current_url, j.status AS job_status, j.token AS job_token FROM jobs j JOIN prospects p ON p.id = j.prospect_id WHERE j.upload_batch_id = ? ORDER BY j.id");
+            $st = ww_db()->prepare("SELECT p.business_name, p.name, p.first_name, p.last_name, p.email, p.current_url, j.status AS job_status, j.token AS job_token FROM jobs j JOIN prospects p ON p.id = j.prospect_id WHERE j.upload_batch_id = ? ORDER BY j.id");
             $st->execute([$bexp]);
             $erows = $st->fetchAll(PDO::FETCH_ASSOC);
         } else {
-            $erows = ww_db()->query("SELECT p.business_name, p.name, p.email, p.current_url, j.status AS job_status, j.token AS job_token FROM prospects p LEFT JOIN jobs j ON j.id = (SELECT MAX(id) FROM jobs WHERE prospect_id = p.id) ORDER BY p.id DESC")->fetchAll(PDO::FETCH_ASSOC);
+            $erows = ww_db()->query("SELECT p.business_name, p.name, p.first_name, p.last_name, p.email, p.current_url, j.status AS job_status, j.token AS job_token FROM prospects p LEFT JOIN jobs j ON j.id = (SELECT MAX(id) FROM jobs WHERE prospect_id = p.id) ORDER BY p.id DESC")->fetchAll(PDO::FETCH_ASSOC);
         }
         header('Content-Type: text/csv; charset=utf-8');
         header('Content-Disposition: attachment; filename="webwiz-prospects-' . date('Y-m-d') . '.csv"');
         $out = fopen('php://output', 'w');
-        fputcsv($out, ['business_name','contact_name','email','current_url','status','seed_site_website','showcase_image']);
+        fputcsv($out, ['business_name','first_name','last_name','email','current_url','status','seed_site_website','showcase_image']);
         foreach ($erows as $r) {
             $st = $r['job_status'] ?? '';
             $preview = ''; $shot = '';
@@ -468,7 +468,13 @@ if ($tab === 'prospects') {
                 $scf = '/var/www/sites/trywebwiz/public/preview/' . $r['job_token'] . '/showcase.jpg';
                 $shot = is_file($scf) ? ('https://trywebwiz.com/preview/' . $r['job_token'] . '/showcase.jpg') : '';
             }
-            fputcsv($out, [$r['business_name'], $r['name'], $r['email'], $r['current_url'], $st, $preview, $shot]);
+            $first = trim((string)($r['first_name'] ?? ''));
+            $last  = trim((string)($r['last_name'] ?? ''));
+            if ($first === '' && $last === '') {
+                $full = trim((string)($r['name'] ?? ''));
+                if ($full !== '') { $parts = preg_split('/\s+/', $full, 2); $first = $parts[0]; $last = $parts[1] ?? ''; }
+            }
+            fputcsv($out, [$r['business_name'], $first, $last, $r['email'], $r['current_url'], $st, $preview, $shot]);
         }
         fclose($out);
         exit;
