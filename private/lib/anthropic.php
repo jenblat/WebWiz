@@ -11,15 +11,39 @@ const ANTHROPIC_PRICING = [
     'claude-haiku-4-5-20251001' => ['in' => 1.0, 'out' => 5.0],
 ];
 
+/** Active Anthropic API keys for the round-robin pool (LRU order). Falls back to the secrets key. */
+function ww_anthropic_keys(): array {
+    try {
+        $rows = ww_db()->query("SELECT id, label, api_key FROM api_keys WHERE active=1 ORDER BY (last_used_at IS NULL) DESC, last_used_at ASC, id ASC")->fetchAll(PDO::FETCH_ASSOC);
+        if ($rows) return $rows;
+    } catch (Throwable $e) {}
+    $s = ww_secrets();
+    return !empty($s['ANTHROPIC_API_KEY']) ? [['id'=>0, 'label'=>'secrets', 'api_key'=>$s['ANTHROPIC_API_KEY']]] : [];
+}
+/** Round-robin: least-recently-used active key, marked used. For real-time / sync generation. */
+function ww_pick_api_key(): array {
+    $keys = ww_anthropic_keys();
+    if (!$keys) throw new Exception('No Anthropic API key configured (add one in Settings)');
+    $k = $keys[0];
+    if (!empty($k['id'])) { try { ww_db()->prepare("UPDATE api_keys SET last_used_at=datetime('now') WHERE id=?")->execute([$k['id']]); } catch (Throwable $e) {} }
+    return $k;
+}
+/** Stable primary key (first active by id). For batches so create/retrieve/results use one key. */
+function ww_primary_api_key(): array {
+    $keys = ww_anthropic_keys();
+    if (!$keys) throw new Exception('No Anthropic API key configured (add one in Settings)');
+    usort($keys, fn($a,$b) => ($a['id'] <=> $b['id']));
+    return $keys[0];
+}
+
 /**
  * Call Anthropic Messages API.
  * Returns ['text' => string, 'prompt_tokens' => int, 'completion_tokens' => int, 'cost_usd' => float, 'model' => string]
  * Throws on error.
  */
 function anthropic_chat(string $model, array $messages, ?string $system = null, int $max_tokens = 4096, ?float $temperature = null, ?int $job_id = null, ?array $stop_sequences = null): array {
-    $secrets = ww_secrets();
-    $api_key = $secrets['ANTHROPIC_API_KEY'] ?? '';
-    if (!$api_key) throw new Exception('ANTHROPIC_API_KEY not configured');
+    $kp = ww_pick_api_key();
+    $api_key = $kp['api_key']; $key_label = $kp['label'];
 
     $body = [
         'model'      => $model,
@@ -70,9 +94,9 @@ function anthropic_chat(string $model, array $messages, ?string $system = null, 
     // Log to api_calls
     try {
         $stmt = ww_db()->prepare(
-            "INSERT INTO api_calls (job_id, provider, model, prompt_tokens, completion_tokens, cost_usd) VALUES (?, 'anthropic', ?, ?, ?, ?)"
+            "INSERT INTO api_calls (job_id, provider, model, prompt_tokens, completion_tokens, cost_usd, key_label) VALUES (?, 'anthropic', ?, ?, ?, ?, ?)"
         );
-        $stmt->execute([$job_id, $model, $pt, $ct, $cost]);
+        $stmt->execute([$job_id, $model, $pt, $ct, $cost, $key_label]);
     } catch (Throwable $e) {
         error_log('[anthropic] log failed: ' . $e->getMessage());
     }
@@ -93,9 +117,8 @@ function anthropic_chat(string $model, array $messages, ?string $system = null, 
  * Each successful call is logged to api_calls. Never throws on individual failures (returns empty text).
  */
 function anthropic_multi(string $model, array $requests, int $max_tokens = 12000, ?float $temperature = null, ?int $job_id = null, ?array $stop_sequences = null): array {
-    $secrets = ww_secrets();
-    $api_key = $secrets['ANTHROPIC_API_KEY'] ?? '';
-    if (!$api_key) throw new Exception('ANTHROPIC_API_KEY not configured');
+    $kp = ww_pick_api_key();
+    $api_key = $kp['api_key']; $key_label = $kp['label'];
     if (!$requests) return [];
 
     $mh = curl_multi_init();
@@ -149,8 +172,8 @@ function anthropic_multi(string $model, array $requests, int $max_tokens = 12000
             $ct = (int)($data['usage']['output_tokens'] ?? 0);
             $cost = ($pt / 1_000_000) * $price['in'] + ($ct / 1_000_000) * $price['out'];
             try {
-                ww_db()->prepare("INSERT INTO api_calls (job_id, provider, model, prompt_tokens, completion_tokens, cost_usd) VALUES (?, 'anthropic', ?, ?, ?, ?)")
-                    ->execute([$job_id, $model, $pt, $ct, $cost]);
+                ww_db()->prepare("INSERT INTO api_calls (job_id, provider, model, prompt_tokens, completion_tokens, cost_usd, key_label) VALUES (?, 'anthropic', ?, ?, ?, ?, ?)")
+                    ->execute([$job_id, $model, $pt, $ct, $cost, $key_label]);
             } catch (Throwable $e) { error_log('[anthropic_multi] log failed: ' . $e->getMessage()); }
         } else {
             error_log("[anthropic_multi] request $k failed http=$http: " . substr((string)$raw, 0, 300));
@@ -167,9 +190,8 @@ function anthropic_multi(string $model, array $requests, int $max_tokens = 12000
  * Returns ['text','cost_usd','prompt_tokens','completion_tokens','model']. Throws on hard error.
  */
 function anthropic_vision(string $model, string $system, string $user_text, array $images, int $max_tokens = 1200, ?float $temperature = 0.0, ?int $job_id = null): array {
-    $secrets = ww_secrets();
-    $api_key = $secrets['ANTHROPIC_API_KEY'] ?? '';
-    if (!$api_key) throw new Exception('ANTHROPIC_API_KEY not configured');
+    $kp = ww_pick_api_key();
+    $api_key = $kp['api_key']; $key_label = $kp['label'];
 
     $content = [];
     foreach ($images as $img) {
@@ -202,7 +224,7 @@ function anthropic_vision(string $model, string $system, string $user_text, arra
     $pt = (int)($data['usage']['input_tokens'] ?? 0); $ct = (int)($data['usage']['output_tokens'] ?? 0);
     $price = ANTHROPIC_PRICING[$model] ?? ANTHROPIC_PRICING['claude-sonnet-4-6'];
     $cost = ($pt/1_000_000)*$price['in'] + ($ct/1_000_000)*$price['out'];
-    try { ww_db()->prepare("INSERT INTO api_calls (job_id, provider, model, prompt_tokens, completion_tokens, cost_usd) VALUES (?, 'anthropic', ?, ?, ?, ?)")->execute([$job_id, $model.'-vision', $pt, $ct, $cost]); } catch (Throwable $e) {}
+    try { ww_db()->prepare("INSERT INTO api_calls (job_id, provider, model, prompt_tokens, completion_tokens, cost_usd, key_label) VALUES (?, 'anthropic', ?, ?, ?, ?, ?)")->execute([$job_id, $model.'-vision', $pt, $ct, $cost, $key_label]); } catch (Throwable $e) {}
     return ['text'=>$text, 'cost_usd'=>$cost, 'prompt_tokens'=>$pt, 'completion_tokens'=>$ct, 'model'=>$model];
 }
 
@@ -223,9 +245,8 @@ const WW_BATCH_MAX_BYTES = 180000000;
  * Returns ['batch_ids'=>[...], 'errors'=>[custom_id=>msg]]. Chunks automatically by count + byte size.
  */
 function anthropic_batch_create(string $model, array $requests, int $max_tokens = 12000, ?float $temperature = null, ?array $stop_sequences = null): array {
-    $secrets = ww_secrets();
-    $api_key = $secrets['ANTHROPIC_API_KEY'] ?? '';
-    if (!$api_key) throw new Exception('ANTHROPIC_API_KEY not configured');
+    $kp = ww_primary_api_key();
+    $api_key = $kp['api_key']; $key_label = $kp['label'];
 
     // Build per-request param objects and chunk by count + serialized size.
     $items = [];
@@ -274,9 +295,8 @@ function anthropic_batch_create(string $model, array $requests, int $max_tokens 
 
 /** Retrieve a batch's status object. Returns decoded JSON (has processing_status, request_counts, results_url). */
 function anthropic_batch_retrieve(string $batch_id): array {
-    $secrets = ww_secrets();
-    $api_key = $secrets['ANTHROPIC_API_KEY'] ?? '';
-    if (!$api_key) throw new Exception('ANTHROPIC_API_KEY not configured');
+    $kp = ww_primary_api_key();
+    $api_key = $kp['api_key']; $key_label = $kp['label'];
     $ch = curl_init('https://api.anthropic.com/v1/messages/batches/' . rawurlencode($batch_id));
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
@@ -293,9 +313,8 @@ function anthropic_batch_retrieve(string $batch_id): array {
  * Returns map custom_id => ['ok'=>bool, 'text'=>string, 'status'=>'succeeded|errored|canceled|expired', 'error'=>?string].
  */
 function anthropic_batch_results(string $batch_id, ?int $job_id = null): array {
-    $secrets = ww_secrets();
-    $api_key = $secrets['ANTHROPIC_API_KEY'] ?? '';
-    if (!$api_key) throw new Exception('ANTHROPIC_API_KEY not configured');
+    $kp = ww_primary_api_key();
+    $api_key = $kp['api_key']; $key_label = $kp['label'];
 
     $meta = anthropic_batch_retrieve($batch_id);
     $url = $meta['results_url'] ?? '';
@@ -328,8 +347,8 @@ function anthropic_batch_results(string $batch_id, ?int $job_id = null): array {
             $ct = (int)($usage['output_tokens'] ?? 0);
             $price = ANTHROPIC_PRICING[$msg['model'] ?? ''] ?? ANTHROPIC_PRICING['claude-sonnet-4-6'];
             $cost = ($pt / 1e6) * $price['in'] * 0.5 + ($ct / 1e6) * $price['out'] * 0.5; // 50% batch discount
-            try { ww_db()->prepare("INSERT INTO api_calls (job_id, provider, model, prompt_tokens, completion_tokens, cost_usd) VALUES (?, 'anthropic', ?, ?, ?, ?)")
-                ->execute([$job_id, ($msg['model'] ?? 'claude-sonnet-4-6') . '-batch', $pt, $ct, $cost]); } catch (Throwable $e) {}
+            try { ww_db()->prepare("INSERT INTO api_calls (job_id, provider, model, prompt_tokens, completion_tokens, cost_usd, key_label) VALUES (?, 'anthropic', ?, ?, ?, ?, ?)")
+                ->execute([$job_id, ($msg['model'] ?? 'claude-sonnet-4-6') . '-batch', $pt, $ct, $cost, $key_label]); } catch (Throwable $e) {}
             $out[$cid] = ['ok' => trim($text) !== '', 'text' => trim($text), 'status' => 'succeeded', 'error' => null, 'pt' => $pt, 'ct' => $ct, 'cost' => $cost];
         } else {
             $err = $res['error']['message'] ?? ($res['error']['type'] ?? $type);
