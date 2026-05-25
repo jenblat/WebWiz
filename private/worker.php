@@ -9,6 +9,7 @@ require '/var/www/sites/trywebwiz/private/webwiz_lib.php';
 require '/var/www/sites/trywebwiz/private/lib/anthropic.php';
 require '/var/www/sites/trywebwiz/private/lib/scrape.php';
 require '/var/www/sites/trywebwiz/private/lib/qa.php';
+require '/var/www/sites/trywebwiz/private/lib/batch.php';
 
 set_time_limit(0);
 
@@ -27,13 +28,17 @@ $did = 0;
 while ((time() - $run_started) < WORKER_MAX_RUN_SECONDS) {
     $row = $db->query(
         "SELECT * FROM jobs
-         WHERE status = 'queued' AND datetime(scheduled_for) <= datetime('now')
+         WHERE status = 'queued' AND COALESCE(generation_mode,'sync') <> 'batch' AND datetime(scheduled_for) <= datetime('now')
          ORDER BY id ASC LIMIT 1"
     )->fetch(PDO::FETCH_ASSOC);
     if (!$row) { if ($did === 0) echo "[worker] no jobs\n"; break; }
     process_job($db, $row);
     $did++;
 }
+
+// Batch pipeline (all CSV uploads): build queued uploads (scrape+submit) and poll in-flight batches.
+try { ww_build_batches($db); } catch (Throwable $e) { echo "[batch] build error: ".$e->getMessage()."\n"; }
+try { ww_poll_batches($db); } catch (Throwable $e) { echo "[batch] poll error: ".$e->getMessage()."\n"; }
 
 flock($lock, LOCK_UN);
 fclose($lock);
