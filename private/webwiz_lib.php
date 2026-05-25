@@ -21,6 +21,7 @@ function ww_db(): PDO {
     $pdo = new PDO('sqlite:' . $path);
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $pdo->exec('PRAGMA journal_mode = WAL');
+    $pdo->exec('PRAGMA busy_timeout = 8000');
     $pdo->exec('PRAGMA foreign_keys = ON');
     ww_migrate($pdo);
     return $pdo;
