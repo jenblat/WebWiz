@@ -5,16 +5,19 @@
 // Each job generates 3 variants CONCURRENTLY (anthropic_multi), retrying only failures.
 
 declare(strict_types=1);
-require '/var/www/sites/trywebwiz/private/webwiz_lib.php';
-require '/var/www/sites/trywebwiz/private/lib/anthropic.php';
-require '/var/www/sites/trywebwiz/private/lib/scrape.php';
-require '/var/www/sites/trywebwiz/private/lib/qa.php';
-require '/var/www/sites/trywebwiz/private/lib/batch.php';
+require_once '/var/www/sites/trywebwiz/private/webwiz_lib.php';
+require_once '/var/www/sites/trywebwiz/private/lib/anthropic.php';
+require_once '/var/www/sites/trywebwiz/private/lib/scrape.php';
+require_once '/var/www/sites/trywebwiz/private/lib/qa.php';
+require_once '/var/www/sites/trywebwiz/private/lib/batch.php';
 
 set_time_limit(0);
 
 const WORKER_MAX_RUN_SECONDS = 270;
 
+// Only run the queue loop from cron (CLI). When required from a web request (e.g. the magic link),
+// this file just provides the generation functions below.
+if (PHP_SAPI === 'cli' && getenv('WW_LIB_ONLY') !== '1') {
 $lock = fopen('/tmp/webwiz-worker.lock', 'c');
 if (!$lock || !flock($lock, LOCK_EX | LOCK_NB)) {
     echo "[worker] already running, exit\n";
@@ -44,6 +47,7 @@ try { ww_generate_missing_showcases($db, 4); } catch (Throwable $e) { echo "[sho
 flock($lock, LOCK_UN);
 fclose($lock);
 echo "[worker] run complete, processed {$did} job(s)\n";
+}
 
 function process_job(PDO $db, array $row): void {
     $job_id = (int)$row['id'];
