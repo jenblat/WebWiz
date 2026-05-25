@@ -441,7 +441,14 @@ if ($tab === 'prospects') {
 
     // ---- Export results CSV (preview links + showcase image) ----
     if (($_GET['export'] ?? '') === 'csv') {
-        $erows = ww_db()->query("SELECT p.business_name, p.name, p.email, p.current_url, j.status AS job_status, j.token AS job_token FROM prospects p LEFT JOIN jobs j ON j.id = (SELECT MAX(id) FROM jobs WHERE prospect_id = p.id) ORDER BY p.id DESC")->fetchAll(PDO::FETCH_ASSOC);
+        $bexp = (int)($_GET['batch'] ?? 0);
+        if ($bexp) {
+            $st = ww_db()->prepare("SELECT p.business_name, p.name, p.email, p.current_url, j.status AS job_status, j.token AS job_token FROM jobs j JOIN prospects p ON p.id = j.prospect_id WHERE j.upload_batch_id = ? ORDER BY j.id");
+            $st->execute([$bexp]);
+            $erows = $st->fetchAll(PDO::FETCH_ASSOC);
+        } else {
+            $erows = ww_db()->query("SELECT p.business_name, p.name, p.email, p.current_url, j.status AS job_status, j.token AS job_token FROM prospects p LEFT JOIN jobs j ON j.id = (SELECT MAX(id) FROM jobs WHERE prospect_id = p.id) ORDER BY p.id DESC")->fetchAll(PDO::FETCH_ASSOC);
+        }
         header('Content-Type: text/csv; charset=utf-8');
         header('Content-Disposition: attachment; filename="webwiz-prospects-' . date('Y-m-d') . '.csv"');
         $out = fopen('php://output', 'w');
@@ -624,7 +631,47 @@ if ($tab === 'prospects') {
         echo '</div></div>';
     }
 
-    echo '<div style="margin-bottom:18px;"><a class="btn ghost" href="/admin/?tab=prospects&amp;export=csv">&darr; Download results CSV</a> <span style="font-size:12px;opacity:0.6;margin-left:8px;">business name, current site, status, preview link &amp; showcase image</span></div>';
+    // ---- Batch history / monitoring (one row per CSV upload) ----
+    $batches = ww_db()->query("SELECT * FROM upload_batches ORDER BY id DESC LIMIT 100")->fetchAll(PDO::FETCH_ASSOC);
+    $bcounts = [];
+    foreach (ww_db()->query("SELECT upload_batch_id uid, COALESCE(item_status,'queued') st, COUNT(*) c FROM jobs WHERE upload_batch_id IS NOT NULL GROUP BY uid, st") as $cr) {
+        $bcounts[(int)$cr['uid']][$cr['st']] = (int)$cr['c'];
+    }
+    $active_batches = false;
+    $bpill = ['queued'=>'muted','generating'=>'warn','qa'=>'warn','done'=>'ok','failed'=>'err'];
+    echo '<div style="margin-bottom:26px;">';
+    echo '<h3 style="font-family:var(--display);font-weight:900;font-size:18px;margin:0 0 10px;">Batch history</h3>';
+    if (!$batches) {
+        echo '<div class="empty">No batch uploads yet. Upload a CSV below and it\'ll appear here while it generates.</div>';
+    } else {
+        echo '<table class="t"><thead><tr><th>List</th><th>Uploaded</th><th>Sites</th><th>Status</th><th>Progress</th><th>Results</th></tr></thead><tbody>';
+        foreach ($batches as $b) {
+            $bid = (int)$b['id']; $bs = $b['status'] ?: 'queued';
+            if (in_array($bs, ['queued','generating','qa'], true)) $active_batches = true;
+            $c = $bcounts[$bid] ?? [];
+            $done = $c['done'] ?? 0; $fail = $c['failed'] ?? 0;
+            $gen = ($c['generating'] ?? 0) + ($c['scraped'] ?? 0); $q = $c['queued'] ?? 0;
+            $prog = [];
+            if ($done) $prog[] = "$done done";
+            if ($gen)  $prog[] = "$gen generating";
+            if ($q)    $prog[] = "$q queued";
+            if ($fail) $prog[] = "$fail failed";
+            echo '<tr>';
+            echo '<td><strong>' . ww_h($b['label']) . '</strong></td>';
+            echo '<td>' . ww_h(date('M j, g:ia', strtotime($b['created_at']))) . '</td>';
+            echo '<td>' . (int)$b['total_count'] . '</td>';
+            echo '<td><span class="pill ' . ($bpill[$bs] ?? 'muted') . '">' . ww_h($bs) . '</span></td>';
+            echo '<td style="font-size:13px;">' . ($prog ? ww_h(implode(', ', $prog)) : '&mdash;') . '</td>';
+            echo '<td>';
+            if ($bs === 'done') echo '<a class="btn ghost" style="padding:6px 12px;font-size:13px;" href="/admin/?tab=prospects&amp;export=csv&amp;batch=' . $bid . '">&darr; Download CSV</a>';
+            else echo '<span style="font-size:12px;opacity:0.55;">generating&hellip;</span>';
+            echo '</td></tr>';
+        }
+        echo '</tbody></table>';
+        echo '<p style="font-size:12px;opacity:0.6;margin-top:8px;">Results CSV (business name, current site, status, preview link &amp; showcase image) unlocks per batch once it\'s done.</p>';
+    }
+    echo '</div>';
+    if ($active_batches) echo '<script>setTimeout(function(){location.reload();},5000);</script>';
     ?>
     <style>
       .qa-card{background:#fff;border:3px solid var(--navy);border-radius:18px;padding:22px;box-shadow:8px 8px 0 var(--yellow);max-width:780px;margin-bottom:24px;position:relative;}
