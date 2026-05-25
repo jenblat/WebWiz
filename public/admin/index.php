@@ -465,8 +465,8 @@ if ($tab === 'prospects') {
             $preview = ''; $shot = '';
             if (!empty($r['job_token']) && in_array($st, ['ready','sent','picked'], true)) {
                 $preview = 'https://trywebwiz.com/preview/' . $r['job_token'] . '/';
-                $v1 = 'https://trywebwiz.com/preview/' . $r['job_token'] . '/v1/index.html';
-                $shot = 'https://s0.wp.com/mshots/v1/' . rawurlencode($v1) . '?w=1200';
+                $scf = '/var/www/sites/trywebwiz/public/preview/' . $r['job_token'] . '/showcase.jpg';
+                $shot = is_file($scf) ? ('https://trywebwiz.com/preview/' . $r['job_token'] . '/showcase.jpg') : '';
             }
             fputcsv($out, [$r['business_name'], $r['name'], $r['email'], $r['current_url'], $st, $preview, $shot]);
         }
