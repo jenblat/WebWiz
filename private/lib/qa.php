@@ -174,3 +174,26 @@ function ww_prewarm_images(string $html, string $origin = 'https://trywebwiz.com
     curl_multi_close($mh);
     return count($urls);
 }
+
+/* ---- Showcase screenshots: a real stored JPG of the generated site (replaces flaky mShots) ---- */
+function ww_capture_showcase(string $token): bool {
+    $base = '/var/www/sites/trywebwiz/public/preview/' . $token;
+    if (!is_dir($base . '/v1')) return false;
+    $url = 'https://trywebwiz.com/preview/' . $token . '/v1/index.html?sc=' . time();
+    $out = $base . '/showcase.jpg';
+    $cmd = 'export HOME=/tmp/crhome; mkdir -p /tmp/crhome; cd /var/www/sites/trywebwiz/private/qa-tools && timeout 70 node showcase.js ' . escapeshellarg($url) . ' ' . escapeshellarg($out) . ' 2>&1';
+    @exec($cmd, $o, $rc);
+    return is_file($out) && filesize($out) > 1500;
+}
+function ww_generate_missing_showcases(PDO $db, int $limit = 4): void {
+    $rows = $db->query("SELECT id, token FROM jobs WHERE status IN ('ready','sent','picked') AND token IS NOT NULL ORDER BY id DESC LIMIT 120")->fetchAll(PDO::FETCH_ASSOC);
+    $n = 0;
+    foreach ($rows as $r) {
+        if ($n >= $limit) break;
+        $base = '/var/www/sites/trywebwiz/public/preview/' . $r['token'];
+        if (is_file($base . '/showcase.jpg') && filesize($base . '/showcase.jpg') > 1500) continue;
+        if (!is_dir($base . '/v1')) continue;
+        if (ww_capture_showcase($r['token'])) { echo "[showcase] job #{$r['id']} captured\n"; $n++; }
+        else echo "[showcase] job #{$r['id']} capture failed\n";
+    }
+}
