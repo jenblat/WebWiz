@@ -39,6 +39,7 @@ while ((time() - $run_started) < WORKER_MAX_RUN_SECONDS) {
 // Batch pipeline (all CSV uploads): build queued uploads (scrape+submit) and poll in-flight batches.
 try { ww_build_batches($db); } catch (Throwable $e) { echo "[batch] build error: ".$e->getMessage()."\n"; }
 try { ww_poll_batches($db); } catch (Throwable $e) { echo "[batch] poll error: ".$e->getMessage()."\n"; }
+try { ww_generate_missing_showcases($db, 4); } catch (Throwable $e) { echo "[showcase] error: ".$e->getMessage()."\n"; }
 
 flock($lock, LOCK_UN);
 fclose($lock);
