@@ -330,10 +330,10 @@ function anthropic_batch_results(string $batch_id, ?int $job_id = null): array {
             $cost = ($pt / 1e6) * $price['in'] * 0.5 + ($ct / 1e6) * $price['out'] * 0.5; // 50% batch discount
             try { ww_db()->prepare("INSERT INTO api_calls (job_id, provider, model, prompt_tokens, completion_tokens, cost_usd) VALUES (?, 'anthropic', ?, ?, ?, ?)")
                 ->execute([$job_id, ($msg['model'] ?? 'claude-sonnet-4-6') . '-batch', $pt, $ct, $cost]); } catch (Throwable $e) {}
-            $out[$cid] = ['ok' => trim($text) !== '', 'text' => trim($text), 'status' => 'succeeded', 'error' => null];
+            $out[$cid] = ['ok' => trim($text) !== '', 'text' => trim($text), 'status' => 'succeeded', 'error' => null, 'pt' => $pt, 'ct' => $ct, 'cost' => $cost];
         } else {
             $err = $res['error']['message'] ?? ($res['error']['type'] ?? $type);
-            $out[$cid] = ['ok' => false, 'text' => '', 'status' => $type, 'error' => (string)$err];
+            $out[$cid] = ['ok' => false, 'text' => '', 'status' => $type, 'error' => (string)$err, 'pt' => 0, 'ct' => 0, 'cost' => 0.0];
         }
     }
     return $out;
