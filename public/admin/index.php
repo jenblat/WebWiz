@@ -458,12 +458,19 @@ if ($tab === 'prospects') {
         $staged = $_SESSION['pending_csv'];
         unset($_SESSION['pending_csv']);
         $db = ww_db();
-        $ins_pros = $db->prepare("INSERT INTO prospects (email, name, business_name, current_url, source) VALUES (?, ?, ?, ?, 'csv')");
+        $ins_pros = $db->prepare("INSERT INTO prospects (email, name, business_name, current_url, source, first_name, last_name, title, email_status, industry, city, state, country, street, apollo_data) VALUES (?, ?, ?, ?, 'csv', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
         $ins_job  = $db->prepare("INSERT INTO jobs (type, prospect_id, customer_email, business_name, status, scheduled_for, token) VALUES ('outbound', ?, ?, ?, 'queued', datetime('now'), ?)");
         $added = 0;
         $db->beginTransaction();
         foreach ($staged as $r) {
-            $ins_pros->execute([$r['email'], $r['name'], $r['biz'], $r['url']]);
+            $raw = json_encode(array_filter([
+                'first_name'=>$r['first'] ?? '', 'last_name'=>$r['last'] ?? '', 'title'=>$r['title'] ?? '',
+                'email_status'=>$r['estat'] ?? '', 'industry'=>$r['industry'] ?? '', 'city'=>$r['city'] ?? '',
+                'state'=>$r['state'] ?? '', 'country'=>$r['country'] ?? '', 'street'=>$r['street'] ?? '',
+            ], fn($v) => $v !== '' && $v !== null));
+            $ins_pros->execute([$r['email'], $r['name'], $r['biz'], $r['url'],
+                $r['first'] ?? '', $r['last'] ?? '', $r['title'] ?? '', $r['estat'] ?? '', $r['industry'] ?? '',
+                $r['city'] ?? '', $r['state'] ?? '', $r['country'] ?? '', $r['street'] ?? '', $raw]);
             $pid = (int)$db->lastInsertId();
             $token = bin2hex(random_bytes(12));
             $ins_job->execute([$pid, $r['email'], $r['biz'], $token]);
@@ -482,18 +489,33 @@ if ($tab === 'prospects') {
             if (!$h) throw new Exception('Cannot read file.');
             $header = fgetcsv($h);
             if (!$header) throw new Exception('Empty CSV.');
-            $header = array_map(function($s){ return strtolower(trim((string)$s)); }, $header);
-            $col = function($name) use ($header) {
-                $i = array_search($name, $header, true);
-                return $i === false ? null : $i;
+            // Flexible header mapping: works with Apollo + arbitrary exports. Normalize each header
+            // (lowercase, strip non-alphanumerics) and match against alias lists, so we never require
+            // exact column names. Only a company name + a website are mandatory; everything else enriches.
+            $norm = function($s){ return preg_replace('~[^a-z0-9]~', '', strtolower(trim((string)$s))); };
+            $hn = array_map($norm, $header);
+            $find = function(array $aliases, $contains = false) use ($hn, $norm) {
+                foreach ($aliases as $a) { $a = $norm($a); $i = array_search($a, $hn, true); if ($i !== false) return $i; }
+                if ($contains) { foreach ($aliases as $a) { $a = $norm($a); if ($a === '') continue; foreach ($hn as $i => $h) { if ($h !== '' && (strpos($h, $a) !== false || strpos($a, $h) !== false)) return $i; } } }
+                return null;
             };
-            $i_email  = $col('email');
-            $i_name   = $col('name');
-            $i_biz    = $col('business_name');
-            $i_url    = $col('current_url');
-            $i_result = $col('result'); // optional validity flag (Apollo-style)
+            $i_biz    = $find(['company','companyname','businessname','business','organizationname','organization','accountname','account'], true);
+            $i_url    = $find(['website','companywebsite','websiteurl','url','currenturl','domain','companydomain','primarydomain'], true);
+            $i_email  = $find(['email','emailaddress','workemail','contactemail','primaryemail']);
+            $i_estat  = $find(['emailstatus','emailverified','emailverification','verificationstatus','emailconfidence','emailvalidationstatus']);
+            $i_first  = $find(['firstname','first','fname','givenname']);
+            $i_last   = $find(['lastname','last','lname','surname','familyname']);
+            $i_name   = $find(['name','fullname','contactname','personname']);
+            $i_title  = $find(['title','jobtitle','position','role','headline']);
+            $i_ind    = $find(['industry','companyindustry','sector','vertical']);
+            $i_city   = $find(['companycity','city','contactcity']);
+            $i_state  = $find(['companystate','state','region','province']);
+            $i_country= $find(['companycountry','country']);
+            $i_street = $find(['companyaddress','companystreet','streetaddress','street','address','addressline1']);
+            $i_result = $find(['result','validity','validationresult','validationstatus']); // optional validity flag (Apollo-style)
             if ($i_biz === null || $i_url === null) {
-                throw new Exception('CSV must have columns: business_name, current_url (email, name, result optional)');
+                $seen = implode(', ', array_filter(array_map('trim', $header)));
+                throw new Exception('Could not find a company-name column and a website/URL column. I matched flexibly against names like Company / Business Name and Website / URL / Domain. Columns I saw: ' . ($seen ?: '(none)') . '. The file needs at least a company name and a website.');
             }
             $url_key = function($u) {
                 $u = strtolower(trim((string)$u));
@@ -507,22 +529,30 @@ if ($tab === 'prospects') {
                 $k = $url_key((string)$er['current_url']);
                 if ($k) $existing[$k] = true;
             }
+            $gv = function($row, $i){ return $i !== null ? trim((string)($row[$i] ?? '')) : ''; };
             $valid = []; $skipped = 0; $dupes = 0; $invalid = 0; $seen_csv = [];
             while (($row = fgetcsv($h)) !== false) {
-                $email  = $i_email !== null ? trim((string)($row[$i_email] ?? '')) : '';
-                $biz    = trim((string)($row[$i_biz] ?? ''));
-                $url    = trim((string)($row[$i_url] ?? ''));
-                $name   = $i_name !== null ? trim((string)($row[$i_name] ?? '')) : '';
-                $result = $i_result !== null ? strtolower(trim((string)($row[$i_result] ?? ''))) : '';
+                $biz    = $gv($row, $i_biz);
+                $url    = $gv($row, $i_url);
+                $result = strtolower($gv($row, $i_result));
                 if ($result === 'invalid') { $invalid++; continue; }
                 if (!$biz || !$url) { $skipped++; continue; }
+                $email = $gv($row, $i_email);
                 if ($email && !filter_var($email, FILTER_VALIDATE_EMAIL)) $email = '';
                 if (!preg_match('~^https?://~i', $url)) $url = 'https://' . $url;
                 $k = $url_key($url);
                 if ($k && (isset($existing[$k]) || isset($seen_csv[$k]))) { $dupes++; continue; }
                 if ($k) $seen_csv[$k] = true;
-                $valid[] = ['email'=>$email,'name'=>$name,'biz'=>$biz,'url'=>$url];
-                if (count($valid) >= 1000) break; // safety cap
+                $first = $gv($row, $i_first); $last = $gv($row, $i_last);
+                $name  = $gv($row, $i_name); if (!$name) $name = trim($first . ' ' . $last);
+                $valid[] = [
+                    'email'=>$email, 'name'=>$name, 'biz'=>$biz, 'url'=>$url,
+                    'first'=>$first, 'last'=>$last, 'title'=>$gv($row, $i_title),
+                    'estat'=>$gv($row, $i_estat), 'industry'=>$gv($row, $i_ind),
+                    'city'=>$gv($row, $i_city), 'state'=>$gv($row, $i_state),
+                    'country'=>$gv($row, $i_country), 'street'=>$gv($row, $i_street),
+                ];
+                if (count($valid) >= 2000) break; // staging safety cap (batch path handles larger lists)
             }
             fclose($h);
             if (!$valid) {
@@ -807,7 +837,7 @@ if ($tab === 'prospects') {
 
     <div class="form-card">
       <h3>Upload prospect CSV</h3>
-      <p style="font-size:13px;color:var(--navy);opacity:0.7;margin-bottom:10px;">Required: <code>business_name, current_url</code>. Optional: <code>email, name, result</code>. Rows where <code>result=invalid</code>, and sites already in the system, are skipped automatically. You'll see a count + cost/time estimate to confirm before anything is created. Each site takes <strong>~3&ndash;5 min</strong> to generate (one at a time).</p>
+      <p style="font-size:13px;color:var(--navy);opacity:0.7;margin-bottom:10px;">Drop in an Apollo (or any) export &mdash; columns are auto-detected, so headers don't need exact names. Only a <strong>company name</strong> and a <strong>website/URL</strong> are required; we also capture first/last name, title, email + verification status, industry, and city/state/country/street when present. Rows flagged <code>result=invalid</code> and sites already in the system are skipped. You'll see a count + cost/time estimate to confirm before anything is created.</p>
       <form method="post" enctype="multipart/form-data">
         <label>CSV file</label>
         <input type="file" name="csv" accept=".csv,text/csv" required>
