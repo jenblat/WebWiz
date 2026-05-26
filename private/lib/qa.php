@@ -219,9 +219,9 @@ function ww_capture_showcase_smc(string $token): bool {
 function ww_capture_showcase_local(string $token): bool {
     $base = '/var/www/sites/trywebwiz/public/preview/' . $token;
     if (!is_dir($base . '/v1')) return false;
-    $url = 'https://trywebwiz.com/preview/' . $token . '/v1/index.html?sc=' . time();
+    $url = 'file:///var/www/sites/trywebwiz/public/preview/' . $token . '/v1/index.html';
     $out = $base . '/showcase.jpg';
-    $cmd = 'export HOME=/tmp/crhome; mkdir -p /tmp/crhome; cd /var/www/sites/trywebwiz/private/qa-tools && timeout 70 node showcase.js ' . escapeshellarg($url) . ' ' . escapeshellarg($out) . ' 2>&1';
+    $cmd = 'export HOME=/tmp/crhome; mkdir -p /tmp/crhome; cd /var/www/sites/trywebwiz/private/qa-tools && timeout 35 node showcase.js ' . escapeshellarg($url) . ' ' . escapeshellarg($out) . ' 2>&1';
     @exec($cmd, $o, $rc);
     return is_file($out) && filesize($out) > 1500;
 }

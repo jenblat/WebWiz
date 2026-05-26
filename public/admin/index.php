@@ -580,6 +580,8 @@ if ($tab === 'prospects') {
         header('Content-Type: text/csv; charset=utf-8');
         header('Content-Disposition: attachment; filename="webwiz-prospects-' . date('Y-m-d') . '.csv"');
         $out = fopen('php://output', 'w');
+        // ?filter=images → only emit rows where the showcase JPG actually exists on disk.
+        $filterImages = (($_GET['filter'] ?? '') === 'images');
         fputcsv($out, ['business_name','first_name','last_name','email','current_url','status','seed_site_website','showcase_image']);
         foreach ($erows as $r) {
             $st = $r['job_status'] ?? '';
@@ -587,8 +589,9 @@ if ($tab === 'prospects') {
             if (!empty($r['job_token']) && in_array($st, ['ready','sent','picked'], true)) {
                 $preview = 'https://trywebwiz.com/preview/' . $r['job_token'] . '/';
                 $scf = '/var/www/sites/trywebwiz/public/preview/' . $r['job_token'] . '/showcase.jpg';
-                $shot = is_file($scf) ? ('https://trywebwiz.com/preview/' . $r['job_token'] . '/showcase.jpg') : '';
+                $shot = (is_file($scf) && filesize($scf) > 1500) ? ('https://trywebwiz.com/preview/' . $r['job_token'] . '/showcase.jpg') : '';
             }
+            if ($filterImages && $shot === '') continue; // skip rows without a real captured image
             $first = trim((string)($r['first_name'] ?? ''));
             $last  = trim((string)($r['last_name'] ?? ''));
             if ($first === '' && $last === '') {
@@ -822,7 +825,16 @@ if ($tab === 'prospects') {
             if ($bs === 'done') {
                 $doneN = $bcounts[$bid]['done'] ?? 0;
                 $totN  = (int)$b['total_count'];
-                echo '<a class="btn ghost" style="padding:6px 12px;font-size:13px;" href="/admin/?tab=prospects&amp;export=csv&amp;batch=' . $bid . '" title="Only sites that generated successfully (' . (int)$doneN . ')">&darr; Download CSV <span style="opacity:0.6;">(' . (int)$doneN . ')</span></a>';
+                // Count this batch's rows that actually have a showcase image on disk.
+                $bImg = 0;
+                $bts = ww_db()->prepare("SELECT token FROM jobs WHERE upload_batch_id = ? AND status IN ('ready','sent','picked') AND token IS NOT NULL");
+                $bts->execute([$bid]);
+                foreach ($bts->fetchAll(PDO::FETCH_COLUMN, 0) as $tk) {
+                    $scf = '/var/www/sites/trywebwiz/public/preview/' . $tk . '/showcase.jpg';
+                    if (is_file($scf) && filesize($scf) > 1500) $bImg++;
+                }
+                echo '<a class="btn" style="padding:6px 12px;font-size:13px;" href="/admin/?tab=prospects&amp;export=csv&amp;batch=' . $bid . '&amp;filter=images" title="Only successful sites that have a captured showcase image">&darr; With images <span style="opacity:0.7;">(' . (int)$bImg . ')</span></a>';
+                echo ' <a class="btn ghost" style="padding:6px 12px;font-size:13px;margin-left:6px;" href="/admin/?tab=prospects&amp;export=csv&amp;batch=' . $bid . '" title="All successful sites (some may be missing showcase image)">&darr; Successful <span style="opacity:0.6;">(' . (int)$doneN . ')</span></a>';
                 if ((int)$doneN < $totN) echo ' <a style="font-size:12px;opacity:0.65;margin-left:6px;" href="/admin/?tab=prospects&amp;export=csv&amp;batch=' . $bid . '&amp;include=all" title="Include failed/queued/generating rows too">or all (' . $totN . ')</a>';
             } elseif ($bs === 'failed') {
                 echo '<span style="font-size:12px;opacity:0.55;">&mdash;</span>';
@@ -1182,6 +1194,27 @@ if ($tab === 'prospects') {
     echo '</select></label>';
     echo '<button class="btn" type="button" id="exportSel" disabled>Export selected (0)</button>';
     echo '</form>';
+
+    // ---- Download bar: full prospects export with image / no-image counts ----
+    {
+        // Cheap counts — one COUNT(*) for total prospects, then walk a small per-job query for image-present.
+        $dlTotalProspects = $total;
+        $dlReadySt = ww_db()->query("SELECT j.token FROM jobs j JOIN (SELECT prospect_id, MAX(id) mid FROM jobs GROUP BY prospect_id) m ON j.id = m.mid WHERE j.status IN ('ready','sent','picked') AND j.token IS NOT NULL")->fetchAll(PDO::FETCH_COLUMN, 0);
+        $dlWithImg = 0;
+        foreach ($dlReadySt as $tk) {
+            $scf = '/var/www/sites/trywebwiz/public/preview/' . $tk . '/showcase.jpg';
+            if (is_file($scf) && filesize($scf) > 1500) $dlWithImg++;
+        }
+        $dlReadyN = count($dlReadySt);
+        echo '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px;padding:10px 12px;background:#fff7d6;border:2px solid var(--navy);border-radius:10px;">';
+        echo '<strong style="font-family:var(--display);font-weight:900;font-size:12px;letter-spacing:0.12em;text-transform:uppercase;margin-right:4px;">Download CSV</strong>';
+        echo '<a class="btn" style="padding:7px 14px;font-size:13px;" href="/admin/?tab=prospects&amp;export=csv&amp;filter=images" title="Only rows where a showcase image was successfully captured">&darr; With images <span style="opacity:0.7;">(' . number_format($dlWithImg) . ')</span></a>';
+        echo '<a class="btn ghost" style="padding:7px 14px;font-size:13px;" href="/admin/?tab=prospects&amp;export=csv" title="Every prospect, regardless of image">&darr; Everything <span style="opacity:0.6;">(' . number_format($dlTotalProspects) . ')</span></a>';
+        if ($dlReadyN > 0 && $dlWithImg < $dlReadyN) {
+            echo '<span style="font-size:12px;opacity:0.6;margin-left:auto;">' . ($dlReadyN - $dlWithImg) . ' ready job' . (($dlReadyN - $dlWithImg) === 1 ? '' : 's') . ' missing image (ghost jobs without /v1)</span>';
+        }
+        echo '</div>';
+    }
 
     // ---- Pagination nav ----
     $pageUrl = function(int $n) use ($q, $sort, $per) { return '/admin/?tab=prospects' . ($q !== '' ? '&q=' . urlencode($q) : '') . '&sort=' . $sort . '&per=' . $per . '&page=' . $n; };
