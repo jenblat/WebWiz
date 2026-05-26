@@ -42,36 +42,142 @@ function ww_image_is_cutout(string $u, string $alt): bool {
 }
 
 // Parallel GET of multiple URLs. Returns [origUrl => ['html'=>string,'final_url'=>string,'http'=>int]].
+/**
+ * Build the curl opts for a scrape fetch, given a UA "profile":
+ *   'chrome'   -> real Chrome UA + browser-style Accept headers (works on most sites)
+ *   'bare'     -> NO User-Agent header at all (some WAFs blanket-block Mozilla/Bot strings
+ *                 but allow bare or curl-default UAs; we saw this on vivamexicocantinagrill.com)
+ */
+function ww_scrape_curl_opts(string $profile, int $timeout): array {
+    $base = [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS      => 5,
+        CURLOPT_TIMEOUT        => $timeout,
+        CURLOPT_CONNECTTIMEOUT => 6,
+        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_ENCODING       => '', // accept gzip/deflate/br
+    ];
+    if ($profile === 'bare') {
+        // Send empty UA + minimal headers — defeats WAFs that key on 'Mozilla'/'Bot'.
+        $base[CURLOPT_USERAGENT] = '';
+        $base[CURLOPT_HTTPHEADER] = ['Accept: */*'];
+    } else {
+        $base[CURLOPT_USERAGENT] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36';
+        $base[CURLOPT_HTTPHEADER] = [
+            'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language: en-US,en;q=0.9',
+            'Sec-CH-UA: "Not(A:Brand";v="24", "Chromium";v="127"',
+            'Sec-CH-UA-Mobile: ?0',
+            'Sec-CH-UA-Platform: "Windows"',
+            'Sec-Fetch-Dest: document',
+            'Sec-Fetch-Mode: navigate',
+            'Sec-Fetch-Site: none',
+            'Sec-Fetch-User: ?1',
+            'Upgrade-Insecure-Requests: 1',
+        ];
+    }
+    return $base;
+}
+
+/**
+ * Identify Cloudflare's interstitial JS challenge ('Just a moment...') so we can
+ * route around it. CF returns it as 200 OR 403 with the same body — checking
+ * the body is the reliable signal.
+ */
+function ww_is_cloudflare_challenge(string $html, int $http): bool {
+    if ($http && $http >= 200 && $http < 300 && strlen($html) > 50000) return false; // big real page
+    if (stripos($html, 'Just a moment...') !== false && stripos($html, 'challenges.cloudflare.com') !== false) return true;
+    if (stripos($html, 'cf-mitigated') !== false || stripos($html, 'cf-chl-bypass') !== false) return true;
+    return false;
+}
+
+/**
+ * Last-resort fetch using SYSTEM curl via shell_exec. Cloudflare's bot scoring
+ * uses JA3 (TLS fingerprint), and the system curl binary on this droplet
+ * produces a JA3 that CF treats as 'trusted client' while libcurl-from-PHP
+ * does not. Confirmed empirically on vivamexicocantinagrill.com.
+ */
+function ww_http_get_shell(string $url, int $timeout = 25): array {
+    $tmp = tempnam('/tmp', 'wwsh_');
+    if (!$tmp) return ['html' => '', 'http' => 0, 'final_url' => $url];
+    // Use --write-out separator that's unlikely to appear in any HTML body so we
+    // can split status from body easily.
+    $wfmt = "\n--WWHTTP--%{http_code}--WWURL--%{url_effective}\n";
+    $cmd = '/usr/bin/curl -sS --max-time ' . (int)$timeout
+         . ' -L --compressed --max-redirs 5 -w ' . escapeshellarg($wfmt)
+         . ' -o ' . escapeshellarg($tmp)
+         . ' ' . escapeshellarg($url) . ' 2>/dev/null';
+    $stat = (string)shell_exec($cmd);
+    $body = @file_get_contents($tmp) ?: '';
+    @unlink($tmp);
+    $http = 0; $final = $url;
+    if (preg_match('~--WWHTTP--(\d+)--WWURL--([^\n]*)~', $stat, $m)) {
+        $http = (int)$m[1];
+        $final = trim($m[2]) ?: $url;
+    }
+    return ['html' => $body, 'http' => $http, 'final_url' => $final];
+}
+
 function ww_http_get_many(array $urls, int $timeout = 12): array {
     if (!$urls) return [];
-    $mh = curl_multi_init();
-    $handles = [];
-    foreach ($urls as $u) {
-        $ch = curl_init($u);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_MAXREDIRS      => 5,
-            CURLOPT_TIMEOUT        => $timeout,
-            CURLOPT_CONNECTTIMEOUT => 6,
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_USERAGENT      => 'Mozilla/5.0 (compatible; WebWizBot/1.0; +https://trywebwiz.com)',
-        ]);
-        curl_multi_add_handle($mh, $ch);
-        $handles[$u] = $ch;
+
+    // Pass 1: real Chrome UA via libcurl multi.
+    $fire = function(array $urls, string $profile) use ($timeout) {
+        $mh = curl_multi_init();
+        $handles = [];
+        $opts = ww_scrape_curl_opts($profile, $timeout);
+        foreach ($urls as $u) {
+            $ch = curl_init($u);
+            curl_setopt_array($ch, $opts);
+            curl_multi_add_handle($mh, $ch);
+            $handles[$u] = $ch;
+        }
+        do { $st = curl_multi_exec($mh, $running); if ($running) curl_multi_select($mh, 1.0); } while ($running && $st === CURLM_OK);
+        $out = [];
+        foreach ($handles as $u => $ch) {
+            $out[$u] = [
+                'html'      => (string)curl_multi_getcontent($ch),
+                'final_url' => curl_getinfo($ch, CURLINFO_EFFECTIVE_URL) ?: $u,
+                'http'      => (int)curl_getinfo($ch, CURLINFO_HTTP_CODE),
+            ];
+            curl_multi_remove_handle($mh, $ch);
+            curl_close($ch);
+        }
+        curl_multi_close($mh);
+        return $out;
+    };
+
+    $out = $fire($urls, 'chrome');
+
+    // Pass 2: retry 403/429/CF-challenge URLs with no UA (defeats simple WAF UA rules).
+    $needs_retry = function(array $r): bool {
+        $h = (int)$r['http']; $b = (string)$r['html'];
+        if ($h === 403 || $h === 429 || $h === 0 || $b === '') return true;
+        if (ww_is_cloudflare_challenge($b, $h)) return true;
+        return false;
+    };
+    $retry = array_keys(array_filter($out, $needs_retry));
+    if ($retry) {
+        $bare = $fire($retry, 'bare');
+        foreach ($bare as $u => $r) {
+            $new_http = (int)$r['http'];
+            if (!$needs_retry($r) && ($new_http >= 200 && $new_http < 400)) {
+                $out[$u] = $r;
+            }
+        }
     }
-    do { $st = curl_multi_exec($mh, $running); if ($running) curl_multi_select($mh, 1.0); } while ($running && $st === CURLM_OK);
-    $out = [];
-    foreach ($handles as $u => $ch) {
-        $out[$u] = [
-            'html'      => (string)curl_multi_getcontent($ch),
-            'final_url' => curl_getinfo($ch, CURLINFO_EFFECTIVE_URL) ?: $u,
-            'http'      => (int)curl_getinfo($ch, CURLINFO_HTTP_CODE),
-        ];
-        curl_multi_remove_handle($mh, $ch);
-        curl_close($ch);
+
+    // Pass 3: anything still failing (esp. Cloudflare challenge) — shell out to
+    // system curl, which produces a JA3 that CF treats as legitimate.
+    $shell_retry = array_keys(array_filter($out, $needs_retry));
+    foreach ($shell_retry as $u) {
+        $r = ww_http_get_shell($u, max($timeout, 20));
+        if (!$needs_retry($r) && (int)$r['http'] >= 200 && (int)$r['http'] < 400) {
+            $out[$u] = $r;
+        }
     }
-    curl_multi_close($mh);
+
     return $out;
 }
 
@@ -86,7 +192,8 @@ function ww_filter_live_images(array $images, int $max_check = 24, int $timeout 
         curl_setopt_array($ch, [
             CURLOPT_NOBODY => true, CURLOPT_RETURNTRANSFER => true, CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_MAXREDIRS => 3, CURLOPT_TIMEOUT => $timeout, CURLOPT_CONNECTTIMEOUT => 4,
-            CURLOPT_SSL_VERIFYPEER => false, CURLOPT_USERAGENT => 'Mozilla/5.0 (compatible; WebWizBot/1.0)',
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
         ]);
         curl_multi_add_handle($mh, $ch);
         $handles[$i] = $ch;
