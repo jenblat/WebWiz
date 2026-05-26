@@ -55,7 +55,7 @@ try {
     // 1) write preview files first (filesystem, no DB lock)
     $token = bin2hex(random_bytes(12));
     $dir = '/var/www/sites/trywebwiz/public/preview/' . $token;
-    foreach ($htmls as $i => $html) { $d = $dir . '/v' . $i; if (!is_dir($d)) @mkdir($d, 0755, true); file_put_contents($d . '/index.html', $html); }
+    foreach ($htmls as $i => $html) { $html = ww_apply_upscale($html, null); $htmls[$i] = $html; $d = $dir . '/v' . $i; if (!is_dir($d)) @mkdir($d, 0755, true); file_put_contents($d . '/index.html', $html); }
     if (!is_file($dir . '/index.php')) file_put_contents($dir . '/index.php', "<?php\n\$_GET['t'] = basename(__DIR__);\nrequire __DIR__ . '/../index.php';\n");
 
     // 2) persist to DB inside one transaction, retrying if SQLite is briefly locked by the cron worker
