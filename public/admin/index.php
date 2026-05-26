@@ -1100,7 +1100,16 @@ if ($tab === 'prospects') {
         $pwhere = "WHERE (p.business_name LIKE ? OR p.name LIKE ? OR p.email LIKE ? OR p.current_url LIKE ?)";
         $like = '%' . $q . '%'; $pparams = [$like, $like, $like, $like];
     }
-    $psql = "SELECT p.*, j.status AS job_status, j.token AS job_token, j.id AS job_id FROM prospects p LEFT JOIN jobs j ON j.id = (SELECT MAX(id) FROM jobs WHERE prospect_id = p.id) $pwhere ORDER BY p.created_at $order, p.id $order LIMIT 500";
+    // Pagination
+    $per_choices = [10, 25, 50, 100];
+    $per = (int)($_GET['per'] ?? 25);
+    if (!in_array($per, $per_choices, true)) $per = 25;
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $cnt = ww_db()->prepare("SELECT COUNT(*) FROM prospects p $pwhere"); $cnt->execute($pparams); $total = (int)$cnt->fetchColumn();
+    $pages = max(1, (int)ceil($total / $per));
+    if ($page > $pages) $page = $pages;
+    $offset = ($page - 1) * $per;
+    $psql = "SELECT p.*, j.status AS job_status, j.token AS job_token, j.id AS job_id FROM prospects p LEFT JOIN jobs j ON j.id = (SELECT MAX(id) FROM jobs WHERE prospect_id = p.id) $pwhere ORDER BY p.created_at $order, p.id $order LIMIT $per OFFSET $offset";
     $pst = ww_db()->prepare($psql); $pst->execute($pparams); $rows = $pst->fetchAll(PDO::FETCH_ASSOC);
 
     // Toolbar: search + create-date sort + export-selected
@@ -1110,9 +1119,39 @@ if ($tab === 'prospects') {
     echo '<input type="text" name="q" value="' . ww_h($q) . '" placeholder="Search business, contact, email or URL…" style="flex:1;min-width:240px;padding:9px 12px;border:2px solid var(--navy);border-radius:10px;font-size:14px;font-family:var(--body);">';
     echo '<button class="btn ghost" type="submit">Search</button>';
     if ($q !== '') echo '<a class="btn ghost" href="/admin/?tab=prospects">Clear</a>';
-    echo '<a class="btn ghost" href="/admin/?tab=prospects&amp;q=' . urlencode($q) . '&amp;sort=' . $sortToggle . '">Created ' . ($sort === 'created_desc' ? '&darr; newest first' : '&uarr; oldest first') . '</a>';
+    echo '<a class="btn ghost" href="/admin/?tab=prospects&amp;q=' . urlencode($q) . '&amp;sort=' . $sortToggle . '&amp;per=' . $per . '">Created ' . ($sort === 'created_desc' ? '&darr; newest first' : '&uarr; oldest first') . '</a>';
+    echo '<label style="font-size:13px;display:flex;align-items:center;gap:6px;"><span style="opacity:0.75;">Per page</span><select name="per" onchange="this.form.submit()" style="padding:7px 10px;border:2px solid var(--navy);border-radius:8px;font-size:13px;background:#fff;font-family:var(--body);">';
+    foreach ($per_choices as $pc) echo '<option value="' . $pc . '"' . ($pc === $per ? ' selected' : '') . '>' . $pc . '</option>';
+    echo '</select></label>';
     echo '<button class="btn" type="button" id="exportSel" disabled>Export selected (0)</button>';
     echo '</form>';
+
+    // ---- Pagination nav ----
+    $pageUrl = function(int $n) use ($q, $sort, $per) { return '/admin/?tab=prospects' . ($q !== '' ? '&q=' . urlencode($q) : '') . '&sort=' . $sort . '&per=' . $per . '&page=' . $n; };
+    if ($total > 0) {
+        $from = ($page - 1) * $per + 1; $to = min($total, $page * $per);
+        echo '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;font-size:13px;">';
+        echo '<span>Showing <strong>' . number_format($from) . '&ndash;' . number_format($to) . '</strong> of <strong>' . number_format($total) . '</strong></span>';
+        if ($pages > 1) {
+            echo '<span style="opacity:0.45;">&middot;</span><span>Page <strong>' . $page . '</strong> of <strong>' . number_format($pages) . '</strong></span>';
+            echo '<span style="margin-left:auto;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">';
+            if ($page > 1) echo '<a class="btn ghost" style="padding:6px 12px;font-size:13px;" href="' . ww_h($pageUrl($page - 1)) . '">&larr; Prev</a>';
+            $nums = [1];
+            for ($i = $page - 2; $i <= $page + 2; $i++) if ($i > 1 && $i < $pages) $nums[] = $i;
+            if ($pages > 1) $nums[] = $pages;
+            $nums = array_values(array_unique($nums)); sort($nums);
+            $last = 0;
+            foreach ($nums as $n) {
+                if ($last && $n - $last > 1) echo '<span style="opacity:0.5;padding:0 4px;">&hellip;</span>';
+                if ($n === $page) echo '<span style="padding:6px 12px;background:var(--navy);color:#fff;border-radius:9px;font-weight:700;font-size:13px;">' . $n . '</span>';
+                else echo '<a class="btn ghost" style="padding:6px 12px;font-size:13px;" href="' . ww_h($pageUrl($n)) . '">' . $n . '</a>';
+                $last = $n;
+            }
+            if ($page < $pages) echo '<a class="btn ghost" style="padding:6px 12px;font-size:13px;" href="' . ww_h($pageUrl($page + 1)) . '">Next &rarr;</a>';
+            echo '</span>';
+        }
+        echo '</div>';
+    }
 
     if (!$rows) { echo '<div class="empty">' . ($q !== '' ? 'No prospects match &ldquo;' . ww_h($q) . '&rdquo;.' : 'No prospects imported yet.') . '</div>'; }
     else {
