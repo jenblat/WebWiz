@@ -530,6 +530,20 @@ if ($tab === 'prospects') {
             header('Location: /admin/?tab=prospects&done=retry'); exit;
         }
     }
+    // Pause / Resume a batch upload (gates the cron worker's builder + poller)
+    if ($_SERVER['REQUEST_METHOD']==='POST' && in_array(($_POST['batch_action'] ?? ''), ['pause','resume'], true)) {
+        $bid = (int)($_POST['batch_id'] ?? 0);
+        if ($bid) {
+            if ($_POST['batch_action']==='pause') {
+                ww_db()->prepare("UPDATE upload_batches SET paused_at=datetime('now') WHERE id=?")->execute([$bid]);
+                $_SESSION['flash_msg'] = 'Batch paused. New scraping/submissions are stopped; any Anthropic batches already submitted will still land once you resume.';
+            } else {
+                ww_db()->prepare("UPDATE upload_batches SET paused_at=NULL WHERE id=?")->execute([$bid]);
+                $_SESSION['flash_msg'] = 'Batch resumed.';
+            }
+            header('Location: /admin/?tab=prospects'); exit;
+        }
+    }
     $confirm = null; // staged-import summary, if a CSV was just parsed
     // Post/Redirect/Get: surface one-shot flash messages + the staged-import summary from the
     // session so refreshing the page never re-submits the upload/confirm forms.
@@ -791,11 +805,20 @@ if ($tab === 'prospects') {
             echo '<td><strong>' . ww_h($b['label']) . '</strong></td>';
             echo '<td>' . ww_h(date('M j, g:ia', strtotime($b['created_at']))) . '</td>';
             echo '<td>' . (int)$b['total_count'] . '</td>';
-            echo '<td><span class="pill ' . ($bpill[$bs] ?? 'muted') . '">' . ww_h($bs) . '</span></td>';
+            $bs_display = !empty($b['paused_at']) ? 'paused' : $bs;
+            $bs_cls = !empty($b['paused_at']) ? 'warn' : ($bpill[$bs] ?? 'muted');
+            echo '<td><span class="pill ' . $bs_cls . '">' . ww_h($bs_display) . '</span></td>';
             echo '<td style="font-size:13px;"><strong>' . (int)$done . ' successful</strong>' . ($rest ? ', ' . ww_h(implode(', ', $rest)) : '') . '</td>';
             echo '<td>';
-            if ($bs === 'done') echo '<a class="btn ghost" style="padding:6px 12px;font-size:13px;" href="/admin/?tab=prospects&amp;export=csv&amp;batch=' . $bid . '">&darr; Download CSV</a>';
-            else echo '<span style="font-size:12px;opacity:0.55;">generating&hellip;</span>';
+            if ($bs === 'done') {
+                echo '<a class="btn ghost" style="padding:6px 12px;font-size:13px;" href="/admin/?tab=prospects&amp;export=csv&amp;batch=' . $bid . '">&darr; Download CSV</a>';
+            } elseif ($bs === 'failed') {
+                echo '<span style="font-size:12px;opacity:0.55;">&mdash;</span>';
+            } elseif (!empty($b['paused_at'])) {
+                echo '<form method="post" style="display:inline;"><input type="hidden" name="batch_action" value="resume"><input type="hidden" name="batch_id" value="' . $bid . '"><button class="btn" type="submit" style="padding:6px 12px;font-size:13px;">&#9658; Resume</button></form>';
+            } else {
+                echo '<form method="post" style="display:inline;" onsubmit="return confirm(\'Pause this batch? New scraping/submissions stop. Anthropic batches already in flight will still land when you resume.\');"><input type="hidden" name="batch_action" value="pause"><input type="hidden" name="batch_id" value="' . $bid . '"><button class="btn ghost" type="submit" style="padding:6px 12px;font-size:13px;">&#10074;&#10074; Pause</button></form>';
+            }
             echo '</td></tr>';
         }
         echo '</tbody></table>';
