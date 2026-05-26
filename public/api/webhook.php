@@ -137,8 +137,19 @@ function dollars(?int $cents): string {
     return '$' . number_format($cents / 100, 2);
 }
 
-// Resolve admin recipient list once for this request.
+// Resolve admin recipient list once for this request — and honor the toggle
+// in the settings table. When notify_emails_enabled is '0' we skip admin
+// sends entirely (customer-facing emails always send).
 $ADMIN_TO = ww_admin_recipients($FALLBACK_ADMIN);
+$NOTIFY_ON = true;
+try {
+    require_once __DIR__ . '/../../private/webwiz_lib.php';
+    $st = ww_db()->prepare("SELECT value FROM settings WHERE key='notify_emails_enabled'");
+    $st->execute();
+    $v = $st->fetchColumn();
+    if ($v !== false && (string)$v === '0') $NOTIFY_ON = false;
+} catch (Throwable $e) { /* leave default on */ }
+if (!$NOTIFY_ON) $ADMIN_TO = [];
 
 // ---------- Handlers ----------
 $type = $event['type'] ?? '';

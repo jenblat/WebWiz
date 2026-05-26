@@ -228,6 +228,13 @@ if ($tab === 'settings') {
                     if ($up->rowCount() === 0) ww_db()->prepare("INSERT INTO settings (key,value) VALUES (?,?)")->execute([$sk, $sv]);
                 }
                 $_SESSION['flash_msg'] = 'Settings saved.';
+            } elseif ($act==='save_notify') {
+                // Checkboxes only post a value when checked, so default off on missing.
+                $en = isset($_POST['notify_emails_enabled']) ? '1' : '0';
+                $up = ww_db()->prepare("UPDATE settings SET value=? WHERE key='notify_emails_enabled'");
+                $up->execute([$en]);
+                if ($up->rowCount() === 0) ww_db()->prepare("INSERT INTO settings (key,value) VALUES ('notify_emails_enabled', ?)")->execute([$en]);
+                $_SESSION['flash_msg'] = 'Notification settings saved.';
             }
         } catch (Throwable $e) { $_SESSION['flash_err'] = $e->getMessage(); }
         header('Location: /admin/?tab=settings'); exit;
@@ -245,8 +252,15 @@ if ($tab === 'settings') {
     if ($smsg) echo '<div class="info">'.ww_h($smsg).'</div>';
     if ($serr) echo '<div class="err">'.ww_h($serr).'</div>';
 
-    echo '<h2 style="font-family:var(--display);font-weight:900;margin-top:6px;">Anthropic API keys</h2>';
-    echo '<p style="font-size:13px;opacity:0.75;margin-bottom:12px;max-width:760px;">Real-time / sync generation <strong>rotates across all active keys</strong> (round-robin) to split load and rate limits; batches use the first active key so results stay on one account. Spend is tracked per key from logged usage.</p>';
+    $notify_admins = (int)ww_db()->query("SELECT COUNT(*) FROM users WHERE role='admin' AND email IS NOT NULL AND email <> ''")->fetchColumn();
+    $notify_on = $sget('notify_emails_enabled','1') === '1';
+
+    echo '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(440px,1fr));gap:24px;align-items:start;margin-top:14px;">';
+
+    // ===== LEFT COLUMN: Anthropic API keys =====
+    echo '<section>';
+    echo '<h2 style="font-family:var(--display);font-weight:900;margin:0 0 6px;">Anthropic API keys</h2>';
+    echo '<p style="font-size:13px;opacity:0.75;margin-bottom:12px;">Real-time / sync generation <strong>rotates across all active keys</strong> (round-robin) to split load and rate limits; batches use the first active key so results stay on one account. Spend is tracked per key from logged usage.</p>';
     if ($keys) {
         echo '<table class="t"><thead><tr><th>Label</th><th>Key</th><th>Status</th><th>Spend</th><th>Calls</th><th>Actions</th></tr></thead><tbody>';
         foreach ($keys as $k) {
@@ -262,14 +276,26 @@ if ($tab === 'settings') {
         }
         echo '</tbody></table>';
     } else { echo '<div class="empty">No keys yet &mdash; add one below.</div>'; }
-    echo '<div class="form-card" style="max-width:560px;margin-top:18px;"><h3>Add an API key</h3>';
+    echo '<div class="form-card" style="margin-top:18px;max-width:none;"><h3>Add an API key</h3>';
     echo '<form method="post"><input type="hidden" name="settings_action" value="add_key">';
     echo '<label>Label</label><input type="text" name="label" placeholder="e.g. BusySeed main, Client X" style="'.$instyle.'">';
     echo '<label style="display:block;margin-top:10px;">Anthropic API key</label><input type="password" name="api_key" placeholder="sk-ant-..." autocomplete="off" required style="'.$instyle.'">';
     echo '<div style="margin-top:14px;"><button class="btn" type="submit">Add key &rarr;</button></div></form></div>';
+    echo '</section>';
 
-    echo '<h2 style="font-family:var(--display);font-weight:900;margin-top:30px;">Magic link (real-time generation)</h2>';
-    echo '<div class="form-card" style="max-width:560px;"><form method="post"><input type="hidden" name="settings_action" value="save_rl">';
+    // ===== RIGHT COLUMN: Notifications + Magic link =====
+    echo '<section>';
+
+    echo '<h2 style="font-family:var(--display);font-weight:900;margin:0 0 6px;">Notifications</h2>';
+    echo '<p style="font-size:13px;opacity:0.75;margin-bottom:12px;">Stripe webhook events (new orders, payment failures, cancellations) email every user with role <code>admin</code>. Customer-facing emails always send regardless of this setting.</p>';
+    echo '<div class="form-card" style="max-width:none;"><form method="post"><input type="hidden" name="settings_action" value="save_notify">';
+    echo '<label style="display:flex;gap:10px;align-items:center;">';
+    echo '<input type="checkbox" name="notify_emails_enabled" value="1"' . ($notify_on ? ' checked' : '') . ' style="width:18px;height:18px;">';
+    echo '<span><strong>Send admin email alerts</strong><br><span style="font-size:12px;opacity:0.7;">Currently routing to <strong>' . $notify_admins . '</strong> admin recipient' . ($notify_admins === 1 ? '' : 's') . ' (see Users tab).</span></span></label>';
+    echo '<div style="margin-top:14px;"><button class="btn" type="submit">Save &rarr;</button></div></form></div>';
+
+    echo '<h2 style="font-family:var(--display);font-weight:900;margin:24px 0 6px;">Magic link (real-time generation)</h2>';
+    echo '<div class="form-card" style="max-width:none;"><form method="post"><input type="hidden" name="settings_action" value="save_rl">';
     echo '<label style="display:block;"><input type="checkbox" name="magic_link_enabled" value="1" '.($sget('magic_link_enabled','1')==='1'?'checked':'').'> Enable the public magic link</label>';
     echo '<label style="display:block;margin-top:12px;">Max generations per IP, per hour</label><input type="number" name="magic_rl_per_ip_hour" min="0" value="'.ww_h($sget('magic_rl_per_ip_hour','3')).'" style="'.$instyle.'">';
     echo '<label style="display:block;margin-top:10px;">Daily global cap (total magic-link sites/day)</label><input type="number" name="magic_rl_daily_cap" min="0" value="'.ww_h($sget('magic_rl_daily_cap','100')).'" style="'.$instyle.'">';
@@ -277,13 +303,16 @@ if ($tab === 'settings') {
     echo '<div style="margin-top:14px;"><button class="btn" type="submit">Save &rarr;</button></div></form></div>';
 
     $b = 'https://trywebwiz.com/try/';
-    echo '<div class="form-card" style="max-width:680px;margin-top:16px;"><h3>Magic link URL &amp; examples</h3>';
+    echo '<div class="form-card" style="margin-top:16px;max-width:none;"><h3>Magic link URL &amp; examples</h3>';
     echo '<p style="font-size:13px;opacity:0.8;margin-bottom:8px;">Point prospects at <code>' . $b . '</code> with these query params. It scrapes their site and builds a live preview behind a WebWiz loading screen.</p>';
-    echo '<p style="font-size:12px;opacity:0.7;margin-bottom:8px;"><code>website</code> (required) &middot; <code>name</code> (optional) &middot; <code>email</code> (optional) &middot; <code>v</code> = variants 1&ndash;3 (default ' . ww_h($sget('magic_default_variants','1')) . ')</p>';
+    echo '<p style="font-size:12px;opacity:0.7;margin-bottom:8px;"><code>website</code> (required) &middot; <code>name</code> (optional) &middot; <code>v</code> = variants 1&ndash;3 (default ' . ww_h($sget('magic_default_variants','1')) . ')</p>';
     echo '<div style="font-family:ui-monospace,monospace;font-size:12px;background:var(--paper);border:2px solid var(--navy);border-radius:10px;padding:10px 12px;line-height:1.7;word-break:break-all;">';
     echo '1 variant (fastest):<br>' . ww_h($b . '?name=Jane+Doe&website=acme.com') . '<br><br>';
     echo '3 variants:<br>' . ww_h($b . '?name=Jane+Doe&website=acme.com&v=3');
     echo '</div></div>';
+
+    echo '</section>';
+    echo '</div>';
 
     shell_close(); exit;
 }
