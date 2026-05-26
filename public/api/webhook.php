@@ -10,7 +10,27 @@ $BREVO_KEY      = $secrets['BREVO_API_KEY'] ?? '';
 $FROM_NAME      = $secrets['EMAIL_FROM_NAME'] ?? 'WebWiz';
 $FROM_ADDR      = $secrets['EMAIL_FROM_ADDR'] ?? 'sales@busyseed.com';
 $REPLY_TO       = $secrets['EMAIL_REPLY_TO']  ?? 'hello@trywebwiz.com';
-$ADMIN_EMAIL    = $secrets['NOTIFY_EMAIL']    ?? 'ultimax97@gmail.com';
+$FALLBACK_ADMIN = $secrets['NOTIFY_EMAIL']    ?? 'ultimax97@gmail.com';
+
+// Pull admin recipients from the users table (role='admin'). Falls back to
+// $FALLBACK_ADMIN if the DB read fails for any reason.
+function ww_admin_recipients(string $fallback): array {
+    try {
+        require_once __DIR__ . '/../../private/webwiz_lib.php';
+        $db = ww_db();
+        $st = $db->query("SELECT email, name FROM users WHERE role='admin' AND email IS NOT NULL AND email <> ''");
+        $rows = $st ? $st->fetchAll(PDO::FETCH_ASSOC) : [];
+    } catch (Throwable $e) {
+        error_log('[webwiz webhook] admin lookup failed: ' . $e->getMessage());
+        $rows = [];
+    }
+    if (!$rows) return [['email' => $fallback, 'name' => 'WebWiz Team']];
+    $out = [];
+    foreach ($rows as $r) {
+        $out[] = ['email' => (string)$r['email'], 'name' => (string)($r['name'] ?? 'WebWiz Team')];
+    }
+    return $out;
+}
 
 // ---------- Read raw body ----------
 $raw = file_get_contents('php://input') ?: '';
@@ -41,7 +61,6 @@ if (!$ok) {
         http_response_code(400);
         exit('Bad signature.');
     }
-    // No secret yet — still log the event so we can wire it up.
 }
 
 $event = json_decode($raw, true);
@@ -58,12 +77,15 @@ $log_dir = __DIR__ . '/../../logs';
     FILE_APPEND | LOCK_EX
 );
 
-// ---------- Brevo sender ----------
+// ---------- Brevo sender (supports multiple recipients in one call) ----------
 function brevo_send(string $key, array $from, array $to, ?array $reply_to, string $subject, string $html, string $text = ''): bool {
     if ($key === '') return false;
+    // $to can be a single ['email'=>..,'name'=>..] OR a list of those.
+    $to_list = (isset($to['email'])) ? [$to] : array_values($to);
+    if (!$to_list) return false;
     $payload = [
         'sender'      => $from,
-        'to'          => [$to],
+        'to'          => $to_list,
         'subject'     => $subject,
         'htmlContent' => $html,
     ];
@@ -115,6 +137,9 @@ function dollars(?int $cents): string {
     return '$' . number_format($cents / 100, 2);
 }
 
+// Resolve admin recipient list once for this request.
+$ADMIN_TO = ww_admin_recipients($FALLBACK_ADMIN);
+
 // ---------- Handlers ----------
 $type = $event['type'] ?? '';
 $obj  = $event['data']['object'] ?? [];
@@ -149,7 +174,7 @@ if ($type === 'checkout.session.completed') {
         );
     }
 
-    // Internal alert
+    // Internal alert — to ALL role=admin users.
     $admin_body  = '<h2 style="margin:0 0 12px;">New WebWiz order</h2>';
     $admin_body .= '<p><strong>' . htmlspecialchars($biz ?: '(no business name)') . '</strong> &middot; ' . htmlspecialchars(plan_label($plan)) . ' &middot; ' . dollars($amount) . '</p>';
     $admin_body .= '<table role="presentation" cellpadding="6" cellspacing="0" style="margin:8px 0 16px;border-collapse:collapse;font-size:14px;">';
@@ -170,7 +195,7 @@ if ($type === 'checkout.session.completed') {
 
     brevo_send($BREVO_KEY,
         ['name' => 'WebWiz alerts', 'email' => $FROM_ADDR],
-        ['email' => $ADMIN_EMAIL, 'name' => 'WebWiz Team'],
+        $ADMIN_TO,
         null,
         '[WebWiz] New order: ' . ($biz ?: $name ?: 'unknown'),
         tpl_shell('New order', $admin_body)
@@ -199,7 +224,7 @@ elseif ($type === 'invoice.payment_failed') {
     }
     brevo_send($BREVO_KEY,
         ['name' => 'WebWiz alerts', 'email' => $FROM_ADDR],
-        ['email' => $ADMIN_EMAIL, 'name' => 'WebWiz Team'],
+        $ADMIN_TO,
         null,
         '[WebWiz] Payment failed: ' . ($email ?? 'unknown'),
         tpl_shell('Payment failed', '<p>Invoice failed for ' . htmlspecialchars($email ?? 'unknown') . ' — ' . dollars($amt) . '. Stripe will retry.</p><p><a href="' . htmlspecialchars($obj['hosted_invoice_url'] ?? '') . '">Hosted invoice</a></p>')
@@ -208,8 +233,8 @@ elseif ($type === 'invoice.payment_failed') {
 
 elseif ($type === 'customer.subscription.deleted') {
     $email = $obj['customer_email'] ?? null;
+    $name  = '';
     if (!$email && !empty($obj['customer'])) {
-        // Best-effort fetch
         $secrets2 = require __DIR__ . '/../../secrets.php';
         $ch = curl_init('https://api.stripe.com/v1/customers/' . urlencode($obj['customer']));
         curl_setopt_array($ch, [
@@ -221,7 +246,7 @@ elseif ($type === 'customer.subscription.deleted') {
         $cust = json_decode($r, true);
         $email = $cust['email'] ?? null;
         $name  = $cust['name'] ?? '';
-    } else { $name = ''; }
+    }
 
     $body  = '<h1 style="font-family:Nunito,system-ui;font-weight:900;font-size:30px;margin:0 0 12px;letter-spacing:-0.02em;">Sorry to see you go.</h1>';
     $body .= '<p>Your WebWiz care plan has been cancelled. You won\'t be charged again.</p>';
@@ -239,7 +264,7 @@ elseif ($type === 'customer.subscription.deleted') {
     }
     brevo_send($BREVO_KEY,
         ['name' => 'WebWiz alerts', 'email' => $FROM_ADDR],
-        ['email' => $ADMIN_EMAIL, 'name' => 'WebWiz Team'],
+        $ADMIN_TO,
         null,
         '[WebWiz] Subscription cancelled: ' . ($email ?? 'unknown'),
         tpl_shell('Sub cancelled', '<p>' . htmlspecialchars($email ?? 'unknown') . ' just cancelled their care plan. Site goes offline at end of period.</p>')

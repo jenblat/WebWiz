@@ -59,6 +59,25 @@ function stripe_get(string $secret, string $path, array $query = []): ?array {
     return json_decode($r, true);
 }
 
+/** Stripe POST/DELETE with form-encoded body. Returns [http_code, ?decoded_body]. */
+function stripe_request(string $secret, string $method, string $path, array $body = []): array {
+    $url = 'https://api.stripe.com/v1/' . ltrim($path, '/');
+    $ch = curl_init($url);
+    $opts = [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_USERPWD => $secret . ':',
+        CURLOPT_TIMEOUT => 15,
+        CURLOPT_CUSTOMREQUEST => strtoupper($method),
+        CURLOPT_HTTPHEADER => ['Stripe-Version: 2024-06-20'],
+    ];
+    if ($body) $opts[CURLOPT_POSTFIELDS] = http_build_query($body);
+    curl_setopt_array($ch, $opts);
+    $r = curl_exec($ch);
+    $http = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    return [$http, is_string($r) ? json_decode($r, true) : null];
+}
+
 // ---------- Layout ----------
 function shell_open(string $title, ?array $me = null, string $current = '', bool $is_admin = false) {
     $h = 'ww_h';
@@ -463,27 +482,125 @@ if ($tab === 'sites') {
     exit;
 }
 
+// ---------- Subscription action handler (pause / cancel / resume) ----------
+if ($tab === 'customers' && $_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['sub_action']) && $is_admin) {
+    $sub_id = trim((string)($_POST['sub_id'] ?? ''));
+    $action = (string)$_POST['sub_action'];
+    $msg = ''; $err = '';
+    if ($sub_id === '' || !preg_match('/^sub_[A-Za-z0-9]+$/', $sub_id)) {
+        $err = 'Invalid subscription id.';
+    } elseif ($action === 'cancel') {
+        // Cancel at end of billing period — customer keeps access until then.
+        [$code, $resp] = stripe_request($STRIPE_SECRET, 'POST', 'subscriptions/' . $sub_id, ['cancel_at_period_end' => 'true']);
+        if ($code === 200) $msg = 'Subscription will end at the close of the current billing period.';
+        else $err = 'Stripe error (' . $code . '): ' . ($resp['error']['message'] ?? 'unknown');
+    } elseif ($action === 'uncancel') {
+        // Reverse a pending cancel_at_period_end.
+        [$code, $resp] = stripe_request($STRIPE_SECRET, 'POST', 'subscriptions/' . $sub_id, ['cancel_at_period_end' => 'false']);
+        if ($code === 200) $msg = 'Cancellation reversed.';
+        else $err = 'Stripe error (' . $code . '): ' . ($resp['error']['message'] ?? 'unknown');
+    } elseif ($action === 'pause') {
+        // pause_collection[behavior]=void → invoices accrue but are not collected. Restart via resume.
+        [$code, $resp] = stripe_request($STRIPE_SECRET, 'POST', 'subscriptions/' . $sub_id, ['pause_collection[behavior]' => 'void']);
+        if ($code === 200) $msg = 'Subscription paused — no further charges until resumed.';
+        else $err = 'Stripe error (' . $code . '): ' . ($resp['error']['message'] ?? 'unknown');
+    } elseif ($action === 'resume') {
+        // Clear pause_collection by setting it to an empty value.
+        [$code, $resp] = stripe_request($STRIPE_SECRET, 'POST', 'subscriptions/' . $sub_id, ['pause_collection' => '']);
+        if ($code === 200) $msg = 'Subscription resumed.';
+        else $err = 'Stripe error (' . $code . '): ' . ($resp['error']['message'] ?? 'unknown');
+    } else {
+        $err = 'Unknown action.';
+    }
+    // PRG: redirect back so refresh doesn't re-fire the action.
+    $flash = $msg ? ('m=' . urlencode($msg)) : ($err ? ('e=' . urlencode($err)) : '');
+    header('Location: /admin/?tab=customers' . ($flash ? '&' . $flash : '')); exit;
+}
+
 // ---------- CUSTOMERS ----------
 if ($tab === 'customers') {
     shell_open('Customers', $me, 'customers', $is_admin);
     echo '<h1>Customers</h1>';
+    // Flash messages from the action handler PRG.
+    if (!empty($_GET['m'])) echo '<div style="margin:8px 0 18px;padding:11px 14px;border:2px solid #1b873d;background:#dff8e7;color:#0c5a25;border-radius:10px;font-size:14px;">' . ww_h((string)$_GET['m']) . '</div>';
+    if (!empty($_GET['e'])) echo '<div style="margin:8px 0 18px;padding:11px 14px;border:2px solid #b71d1d;background:#fde2e2;color:#8a0e0e;border-radius:10px;font-size:14px;">' . ww_h((string)$_GET['e']) . '</div>';
+
     $customers = stripe_get($STRIPE_SECRET, 'customers', ['limit' => 100]);
     $rows = $customers['data'] ?? [];
     if (!$rows) {
         echo '<div class="empty">No customers yet.</div>';
     } else {
-        echo '<table class="t"><thead><tr><th>Customer</th><th>Email</th><th>Created</th><th>Subs</th><th>Total spent</th><th></th></tr></thead><tbody>';
+        echo '<table class="t"><thead><tr><th>Customer</th><th>Email</th><th>Subscriptions</th><th>Spent</th><th></th></tr></thead><tbody>';
         foreach ($rows as $c) {
             $subs = stripe_get($STRIPE_SECRET, 'subscriptions', ['customer' => $c['id'], 'status' => 'all', 'limit' => 5]);
-            $sub_count = 0;
-            foreach (($subs['data'] ?? []) as $s) if (in_array($s['status'], ['active','trialing','past_due'], true)) $sub_count++;
             $charges = stripe_get($STRIPE_SECRET, 'charges', ['customer' => $c['id'], 'limit' => 100]);
             $spent = 0;
             foreach (($charges['data'] ?? []) as $ch) if ($ch['paid']) $spent += $ch['amount'] - $ch['amount_refunded'];
-            echo '<tr><td><strong>' . ww_h($c['name'] ?: ($c['metadata']['business_name'] ?? '—')) . '</strong></td>';
-            echo '<td>' . ww_h($c['email'] ?? '—') . '</td>';
-            echo '<td>' . ww_h(date('M j, Y', $c['created'])) . '</td>';
-            echo '<td>' . ($sub_count ? '<span class="pill ok">' . $sub_count . ' active</span>' : '<span class="pill muted">none</span>') . '</td>';
+
+            echo '<tr><td><strong>' . ww_h($c['name'] ?: ($c['metadata']['business_name'] ?? '—')) . '</strong>';
+            echo '<div style="font-size:12px;opacity:0.55;">Joined ' . ww_h(date('M j, Y', $c['created'])) . '</div></td>';
+            echo '<td><a href="mailto:' . ww_h($c['email'] ?? '') . '">' . ww_h($c['email'] ?? '—') . '</a></td>';
+
+            // Subscriptions cell with inline pause/cancel/resume actions.
+            echo '<td style="font-size:13px;">';
+            $sub_list = $subs['data'] ?? [];
+            if (!$sub_list) {
+                echo '<span style="opacity:0.55;">No subscriptions</span>';
+            } else {
+                echo '<div style="display:flex;flex-direction:column;gap:8px;">';
+                foreach ($sub_list as $s) {
+                    $sid = $s['id'];
+                    $st = $s['status'];
+                    $paused = !empty($s['pause_collection']);
+                    $cancel_at_end = !empty($s['cancel_at_period_end']);
+                    $price = '';
+                    $item = $s['items']['data'][0] ?? null;
+                    if ($item) {
+                        $amt = $item['price']['unit_amount'] ?? 0;
+                        $iv  = $item['price']['recurring']['interval'] ?? '';
+                        $price = '$' . number_format($amt/100, 2) . ($iv ? '/' . $iv : '');
+                    }
+                    $pill_cls = $paused ? 'warn' : ($cancel_at_end ? 'warn' : (in_array($st, ['active','trialing'], true) ? 'ok' : 'muted'));
+                    $pill_label = $paused ? 'paused' : ($cancel_at_end ? 'cancelling' : $st);
+
+                    echo '<div style="padding:8px 10px;border:1.5px solid #12184A22;border-radius:10px;background:#fff;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">';
+                    echo '<span class="pill ' . $pill_cls . '">' . ww_h($pill_label) . '</span>';
+                    echo '<span style="opacity:0.85;">' . ww_h($price) . '</span>';
+                    echo '<span style="font-family:ui-monospace,monospace;font-size:11px;opacity:0.45;">' . ww_h(substr($sid, 0, 14)) . '…</span>';
+
+                    // Action buttons (admin only, with confirm). Each is a tiny POST form.
+                    if ($is_admin) {
+                        echo '<span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;">';
+                        if ($cancel_at_end) {
+                            // Show "Reverse cancel" instead of pause/cancel
+                            echo '<form method="post" style="display:inline;" onsubmit="return confirm(\'Reverse the pending cancellation? The subscription will keep renewing.\');">';
+                            echo '<input type="hidden" name="sub_action" value="uncancel"><input type="hidden" name="sub_id" value="' . ww_h($sid) . '">';
+                            echo '<button class="btn ghost" type="submit" style="padding:5px 10px;font-size:12px;">Reverse cancel</button>';
+                            echo '</form>';
+                        } elseif ($paused) {
+                            echo '<form method="post" style="display:inline;" onsubmit="return confirm(\'Resume this subscription? Billing will restart immediately.\');">';
+                            echo '<input type="hidden" name="sub_action" value="resume"><input type="hidden" name="sub_id" value="' . ww_h($sid) . '">';
+                            echo '<button class="btn" type="submit" style="padding:5px 10px;font-size:12px;">Resume</button>';
+                            echo '</form>';
+                        } elseif (in_array($st, ['active','trialing','past_due'], true)) {
+                            echo '<form method="post" style="display:inline;" onsubmit="return confirm(\'Pause this subscription? Invoices will not be charged until you resume it.\');">';
+                            echo '<input type="hidden" name="sub_action" value="pause"><input type="hidden" name="sub_id" value="' . ww_h($sid) . '">';
+                            echo '<button class="btn ghost" type="submit" style="padding:5px 10px;font-size:12px;">Pause</button>';
+                            echo '</form>';
+                            echo '<form method="post" style="display:inline;" onsubmit="return confirm(\'Cancel this subscription at the end of the current billing period? The customer keeps access until then.\');">';
+                            echo '<input type="hidden" name="sub_action" value="cancel"><input type="hidden" name="sub_id" value="' . ww_h($sid) . '">';
+                            echo '<button class="btn ghost" type="submit" style="padding:5px 10px;font-size:12px;color:#8a0e0e;border-color:#8a0e0e;">Cancel</button>';
+                            echo '</form>';
+                        }
+                        echo '<a class="btn ghost" target="_blank" href="https://dashboard.stripe.com/subscriptions/' . ww_h($sid) . '" style="padding:5px 10px;font-size:12px;" title="Open in Stripe (for refunds, plan changes, etc.)">Stripe &rarr;</a>';
+                        echo '</span>';
+                    }
+                    echo '</div>';
+                }
+                echo '</div>';
+            }
+            echo '</td>';
+
             echo '<td><strong>$' . number_format($spent/100, 2) . '</strong></td>';
             echo '<td><a class="btn ghost" href="https://dashboard.stripe.com/customers/' . ww_h($c['id']) . '" target="_blank">Stripe &rarr;</a></td></tr>';
         }
@@ -580,8 +697,6 @@ if ($tab === 'prospects') {
         header('Content-Type: text/csv; charset=utf-8');
         header('Content-Disposition: attachment; filename="webwiz-prospects-' . date('Y-m-d') . '.csv"');
         $out = fopen('php://output', 'w');
-        // ?filter=images → only emit rows where the showcase JPG actually exists on disk.
-        $filterImages = (($_GET['filter'] ?? '') === 'images');
         fputcsv($out, ['business_name','first_name','last_name','email','current_url','status','seed_site_website','showcase_image']);
         foreach ($erows as $r) {
             $st = $r['job_status'] ?? '';
@@ -589,9 +704,8 @@ if ($tab === 'prospects') {
             if (!empty($r['job_token']) && in_array($st, ['ready','sent','picked'], true)) {
                 $preview = 'https://trywebwiz.com/preview/' . $r['job_token'] . '/';
                 $scf = '/var/www/sites/trywebwiz/public/preview/' . $r['job_token'] . '/showcase.jpg';
-                $shot = (is_file($scf) && filesize($scf) > 1500) ? ('https://trywebwiz.com/preview/' . $r['job_token'] . '/showcase.jpg') : '';
+                $shot = is_file($scf) ? ('https://trywebwiz.com/preview/' . $r['job_token'] . '/showcase.jpg') : '';
             }
-            if ($filterImages && $shot === '') continue; // skip rows without a real captured image
             $first = trim((string)($r['first_name'] ?? ''));
             $last  = trim((string)($r['last_name'] ?? ''));
             if ($first === '' && $last === '') {
@@ -825,16 +939,7 @@ if ($tab === 'prospects') {
             if ($bs === 'done') {
                 $doneN = $bcounts[$bid]['done'] ?? 0;
                 $totN  = (int)$b['total_count'];
-                // Count this batch's rows that actually have a showcase image on disk.
-                $bImg = 0;
-                $bts = ww_db()->prepare("SELECT token FROM jobs WHERE upload_batch_id = ? AND status IN ('ready','sent','picked') AND token IS NOT NULL");
-                $bts->execute([$bid]);
-                foreach ($bts->fetchAll(PDO::FETCH_COLUMN, 0) as $tk) {
-                    $scf = '/var/www/sites/trywebwiz/public/preview/' . $tk . '/showcase.jpg';
-                    if (is_file($scf) && filesize($scf) > 1500) $bImg++;
-                }
-                echo '<a class="btn" style="padding:6px 12px;font-size:13px;" href="/admin/?tab=prospects&amp;export=csv&amp;batch=' . $bid . '&amp;filter=images" title="Only successful sites that have a captured showcase image">&darr; With images <span style="opacity:0.7;">(' . (int)$bImg . ')</span></a>';
-                echo ' <a class="btn ghost" style="padding:6px 12px;font-size:13px;margin-left:6px;" href="/admin/?tab=prospects&amp;export=csv&amp;batch=' . $bid . '" title="All successful sites (some may be missing showcase image)">&darr; Successful <span style="opacity:0.6;">(' . (int)$doneN . ')</span></a>';
+                echo '<a class="btn ghost" style="padding:6px 12px;font-size:13px;" href="/admin/?tab=prospects&amp;export=csv&amp;batch=' . $bid . '" title="Only sites that generated successfully (' . (int)$doneN . ')">&darr; Download CSV <span style="opacity:0.6;">(' . (int)$doneN . ')</span></a>';
                 if ((int)$doneN < $totN) echo ' <a style="font-size:12px;opacity:0.65;margin-left:6px;" href="/admin/?tab=prospects&amp;export=csv&amp;batch=' . $bid . '&amp;include=all" title="Include failed/queued/generating rows too">or all (' . $totN . ')</a>';
             } elseif ($bs === 'failed') {
                 echo '<span style="font-size:12px;opacity:0.55;">&mdash;</span>';
@@ -1194,27 +1299,6 @@ if ($tab === 'prospects') {
     echo '</select></label>';
     echo '<button class="btn" type="button" id="exportSel" disabled>Export selected (0)</button>';
     echo '</form>';
-
-    // ---- Download bar: full prospects export with image / no-image counts ----
-    {
-        // Cheap counts — one COUNT(*) for total prospects, then walk a small per-job query for image-present.
-        $dlTotalProspects = $total;
-        $dlReadySt = ww_db()->query("SELECT j.token FROM jobs j JOIN (SELECT prospect_id, MAX(id) mid FROM jobs GROUP BY prospect_id) m ON j.id = m.mid WHERE j.status IN ('ready','sent','picked') AND j.token IS NOT NULL")->fetchAll(PDO::FETCH_COLUMN, 0);
-        $dlWithImg = 0;
-        foreach ($dlReadySt as $tk) {
-            $scf = '/var/www/sites/trywebwiz/public/preview/' . $tk . '/showcase.jpg';
-            if (is_file($scf) && filesize($scf) > 1500) $dlWithImg++;
-        }
-        $dlReadyN = count($dlReadySt);
-        echo '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px;padding:10px 12px;background:#fff7d6;border:2px solid var(--navy);border-radius:10px;">';
-        echo '<strong style="font-family:var(--display);font-weight:900;font-size:12px;letter-spacing:0.12em;text-transform:uppercase;margin-right:4px;">Download CSV</strong>';
-        echo '<a class="btn" style="padding:7px 14px;font-size:13px;" href="/admin/?tab=prospects&amp;export=csv&amp;filter=images" title="Only rows where a showcase image was successfully captured">&darr; With images <span style="opacity:0.7;">(' . number_format($dlWithImg) . ')</span></a>';
-        echo '<a class="btn ghost" style="padding:7px 14px;font-size:13px;" href="/admin/?tab=prospects&amp;export=csv" title="Every prospect, regardless of image">&darr; Everything <span style="opacity:0.6;">(' . number_format($dlTotalProspects) . ')</span></a>';
-        if ($dlReadyN > 0 && $dlWithImg < $dlReadyN) {
-            echo '<span style="font-size:12px;opacity:0.6;margin-left:auto;">' . ($dlReadyN - $dlWithImg) . ' ready job' . (($dlReadyN - $dlWithImg) === 1 ? '' : 's') . ' missing image (ghost jobs without /v1)</span>';
-        }
-        echo '</div>';
-    }
 
     // ---- Pagination nav ----
     $pageUrl = function(int $n) use ($q, $sort, $per) { return '/admin/?tab=prospects' . ($q !== '' ? '&q=' . urlencode($q) : '') . '&sort=' . $sort . '&per=' . $per . '&page=' . $n; };
