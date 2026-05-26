@@ -783,9 +783,12 @@ if ($tab === 'prospects') {
     foreach (ww_db()->query("SELECT upload_batch_id uid, COALESCE(item_status,'queued') st, COUNT(*) c FROM jobs WHERE upload_batch_id IS NOT NULL GROUP BY uid, st") as $cr) {
         $bcounts[(int)$cr['uid']][$cr['st']] = (int)$cr['c'];
     }
+    // Determine up-front whether any batch is still "moving" (non-terminal AND not paused);
+    // the front-end uses this on the wrapper to decide whether to keep polling.
     $active_batches = false;
+    foreach ($batches as $b) { $bs = $b['status'] ?: 'queued'; if (in_array($bs, ['queued','generating','qa'], true) && empty($b['paused_at'])) { $active_batches = true; break; } }
     $bpill = ['queued'=>'muted','generating'=>'warn','qa'=>'warn','done'=>'ok','failed'=>'err'];
-    echo '<div style="margin-bottom:26px;">';
+    echo '<div id="batchHistory" data-active="' . ($active_batches ? '1' : '0') . '" style="margin-bottom:26px;">';
     echo '<h3 style="font-family:var(--display);font-weight:900;font-size:18px;margin:0 0 10px;">Batch history</h3>';
     if (!$batches) {
         echo '<div class="empty">No batch uploads yet. Upload a CSV above and it\'ll appear here while it generates.</div>';
@@ -793,7 +796,6 @@ if ($tab === 'prospects') {
         echo '<table class="t"><thead><tr><th>List</th><th>Uploaded</th><th>Sites</th><th>Status</th><th>Progress</th><th>Results</th></tr></thead><tbody>';
         foreach ($batches as $b) {
             $bid = (int)$b['id']; $bs = $b['status'] ?: 'queued';
-            if (in_array($bs, ['queued','generating','qa'], true)) $active_batches = true;
             $c = $bcounts[$bid] ?? [];
             $done = $c['done'] ?? 0; $fail = $c['failed'] ?? 0;
             $gen = ($c['generating'] ?? 0) + ($c['scraped'] ?? 0); $q = $c['queued'] ?? 0;
@@ -825,8 +827,9 @@ if ($tab === 'prospects') {
         echo '<p style="font-size:12px;opacity:0.6;margin-top:8px;">Results CSV (business name, current site, status, preview link &amp; showcase image) unlocks per batch once it\'s done.</p>';
     }
     echo '</div>';
-    if ($active_batches) echo '<script>setTimeout(function(){location.reload();},5000);</script>';
     $batch_history_html = ob_get_clean();
+    // Partial endpoint: in-place batch-history refresh (no full-page reload)
+    if (($_GET['batch_partial'] ?? '') === '1') { header('Content-Type: text/html; charset=utf-8'); echo $batch_history_html; exit; }
     ?>
     <style>
       .qa-card{background:#fff;border:3px solid var(--navy);border-radius:18px;padding:22px;box-shadow:8px 8px 0 var(--yellow);max-width:780px;margin-bottom:24px;position:relative;}
@@ -1114,6 +1117,8 @@ if ($tab === 'prospects') {
     </div><!--/prospect-cols-->
     <?php
     echo $batch_history_html ?? '';
+    // Poll the Batch history block in-place every 5s while any batch is still moving (no full-page reload)
+    echo '<script>(function(){var c=document.getElementById("batchHistory");function tick(){if(!c)return;if((c.getAttribute("data-active")||"0")!=="1")return;fetch("/admin/?tab=prospects&batch_partial=1",{credentials:"same-origin"}).then(function(r){return r.text();}).then(function(h){var n=document.createElement("div");n.innerHTML=h;var fresh=n.firstElementChild;if(fresh&&c){c.replaceWith(fresh);c=document.getElementById("batchHistory");setTimeout(tick,5000);}else{setTimeout(tick,5000);}}).catch(function(){setTimeout(tick,5000);});}setTimeout(tick,5000);})();</script>';
     $q = trim((string)($_GET['q'] ?? ''));
     $sort = (($_GET['sort'] ?? 'created_desc') === 'created_asc') ? 'created_asc' : 'created_desc';
     $order = $sort === 'created_asc' ? 'ASC' : 'DESC';
