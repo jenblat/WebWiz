@@ -1,32 +1,52 @@
-const puppeteer = require('puppeteer-core');
-const sleep = ms => new Promise(r => setTimeout(r, ms));
-(async () => {
-  const url = process.argv[2], out = process.argv[3];
-  const browser = await puppeteer.launch({
-    executablePath: '/bin/google-chrome-stable',
-    headless: 'new',
-    args: ['--no-sandbox','--disable-dev-shm-usage','--disable-gpu','--hide-scrollbars','--force-color-profile=srgb'],
-    defaultViewport: { width: 1280, height: 820, deviceScaleFactor: 2 },
-  });
-  try {
-    const page = await browser.newPage();
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 45000 });
-    // force-reveal entrance animations so the hero isn't blank
-    await page.evaluate(() => {
-      const e = document.querySelectorAll('.fade-up,.fade-in,.reveal,[data-reveal],.animate,.scroll-reveal');
-      e.forEach(el => { el.classList.add('visible','active','in-view','show'); el.style.opacity='1'; el.style.transform='none'; el.style.visibility='visible'; });
-    });
-    // wait for above-the-fold images to load
-    await page.evaluate(async () => {
-      const imgs = Array.from(document.images).slice(0, 14);
-      await Promise.all(imgs.map(img => (img.complete && img.naturalWidth > 0)
-        ? Promise.resolve()
-        : new Promise(res => { img.addEventListener('load', res); img.addEventListener('error', res); setTimeout(res, 6000); })));
-      if (document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch(e){} }
-    });
-    await sleep(700);
-    await page.screenshot({ path: out, type: 'jpeg', quality: 82, fullPage: false, clip: { x:0, y:0, width:1280, height:820 } });
-    console.log('OK');
-  } catch (e) { console.error('ERR ' + e.message); process.exitCode = 2; }
-  finally { await browser.close(); }
-})();
+// showcase.js — capture a hero screenshot of a generated preview without puppeteer.
+// Puppeteer-launched Chrome was failing nondeterministically with
+// "chrome_crashpad_handler: --database is required" on this droplet; native
+// Chrome (--headless=new --screenshot) works reliably. We then transcode PNG->JPG
+// via ImageMagick `convert` to keep the cache shape unchanged (showcase.jpg).
+const { execSync, spawnSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+const url = process.argv[2], out = process.argv[3];
+if (!url || !out) { console.error('usage: showcase.js URL OUT'); process.exit(2); }
+
+const ud = fs.mkdtempSync('/tmp/crud-');
+const pngPath = path.join(ud, 'shot.png');
+const args = [
+  '--headless=new','--no-sandbox','--disable-gpu','--disable-dev-shm-usage',
+  '--disable-breakpad','--no-crash-upload','--disable-features=Crashpad',
+  '--hide-scrollbars','--force-color-profile=srgb',
+  '--user-data-dir=' + ud,
+  '--crash-dumps-dir=' + ud,
+  '--window-size=1280,820',
+  '--virtual-time-budget=12000',
+  '--screenshot=' + pngPath,
+  url,
+];
+
+try {
+  // Ensure Chrome has a writable HOME (cron user "nobody" doesn't).
+  const env = Object.assign({}, process.env, { HOME: ud });
+  const r = spawnSync('/bin/google-chrome-stable', args, { env, timeout: 65000, stdio: 'ignore' });
+  if (r.status !== 0 && !fs.existsSync(pngPath)) {
+    console.error('ERR chrome rc=' + r.status + ' sig=' + r.signal);
+    process.exit(2);
+  }
+  if (!fs.existsSync(pngPath) || fs.statSync(pngPath).size < 4000) {
+    console.error('ERR no/tiny png at ' + pngPath);
+    process.exit(2);
+  }
+  // Transcode PNG -> JPG at 82 quality, upscale to 2x (2560x1640) to match the
+  // historical output shape the admin UI expects.
+  const c = spawnSync('/bin/convert', [pngPath, '-resize', '2560x1640', '-quality', '82', out], { timeout: 30000, stdio: 'ignore' });
+  if (c.status !== 0 || !fs.existsSync(out) || fs.statSync(out).size < 2000) {
+    console.error('ERR convert rc=' + c.status);
+    process.exit(2);
+  }
+  console.log('OK');
+} catch (e) {
+  console.error('ERR ' + e.message);
+  process.exit(2);
+} finally {
+  try { fs.rmSync(ud, { recursive: true, force: true }); } catch(e){}
+}
