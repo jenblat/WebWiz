@@ -1118,7 +1118,27 @@ if ($tab === 'prospects') {
     <?php
     echo $batch_history_html ?? '';
     // Poll the Batch history block in-place every 5s while any batch is still moving (no full-page reload)
-    echo '<script>(function(){var c=document.getElementById("batchHistory");function tick(){if(!c)return;if((c.getAttribute("data-active")||"0")!=="1")return;fetch("/admin/?tab=prospects&batch_partial=1",{credentials:"same-origin"}).then(function(r){return r.text();}).then(function(h){var n=document.createElement("div");n.innerHTML=h;var fresh=n.firstElementChild;if(fresh&&c){c.replaceWith(fresh);c=document.getElementById("batchHistory");setTimeout(tick,5000);}else{setTimeout(tick,5000);}}).catch(function(){setTimeout(tick,5000);});}setTimeout(tick,5000);})();</script>';
+    echo '<script>(function(){
+      var c=document.getElementById("batchHistory");
+      function schedule(){ setTimeout(tick,5000); }
+      function tick(){
+        if(!c) return;
+        if((c.getAttribute("data-active")||"0")!=="1") return;
+        fetch("/admin/?tab=prospects&batch_partial=1",{credentials:"same-origin",cache:"no-store"})
+          .then(function(r){ if(!r.ok) throw new Error("http "+r.status); return r.text(); })
+          .then(function(h){
+            // Only swap if the response is actually the batch-history partial (avoids wiping the section
+            // if the server returns the login page, an error, or any other unexpected HTML).
+            if (h.indexOf("id=\"batchHistory\"") === -1) { schedule(); return; }
+            var tpl=document.createElement("template"); tpl.innerHTML=h.trim();
+            var fresh=tpl.content.querySelector("#batchHistory");
+            if(fresh && c && c.parentNode){ c.parentNode.replaceChild(fresh,c); c=fresh; }
+            schedule();
+          })
+          .catch(function(){ schedule(); });
+      }
+      schedule();
+    })();</script>';
     $q = trim((string)($_GET['q'] ?? ''));
     $sort = (($_GET['sort'] ?? 'created_desc') === 'created_asc') ? 'created_asc' : 'created_desc';
     $order = $sort === 'created_asc' ? 'ASC' : 'DESC';
