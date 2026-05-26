@@ -185,11 +185,14 @@ function ww_capture_showcase(string $token): bool {
     @exec($cmd, $o, $rc);
     return is_file($out) && filesize($out) > 1500;
 }
-function ww_generate_missing_showcases(PDO $db, int $limit = 4): void {
-    $rows = $db->query("SELECT id, token FROM jobs WHERE status IN ('ready','sent','picked') AND token IS NOT NULL ORDER BY id DESC LIMIT 120")->fetchAll(PDO::FETCH_ASSOC);
-    $n = 0;
+function ww_generate_missing_showcases(PDO $db, int $limit = 20, int $time_budget_sec = 150): void {
+    // Pull a generous pool of ready jobs (oldest first so older uploads catch up). Filesystem check
+    // inside the loop skips ones already done, so this happily walks until budget or limit is hit.
+    $rows = $db->query("SELECT id, token FROM jobs WHERE status IN ('ready','sent','picked') AND token IS NOT NULL ORDER BY id ASC LIMIT 5000")->fetchAll(PDO::FETCH_ASSOC);
+    $n = 0; $start = time();
     foreach ($rows as $r) {
         if ($n >= $limit) break;
+        if (time() - $start > $time_budget_sec) { echo "[showcase] time budget hit at $n captures\n"; break; }
         $base = '/var/www/sites/trywebwiz/public/preview/' . $r['token'];
         if (is_file($base . '/showcase.jpg') && filesize($base . '/showcase.jpg') > 1500) continue;
         if (!is_dir($base . '/v1')) continue;
