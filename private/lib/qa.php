@@ -176,7 +176,47 @@ function ww_prewarm_images(string $html, string $origin = 'https://trywebwiz.com
 }
 
 /* ---- Showcase screenshots: a real stored JPG of the generated site (replaces flaky mShots) ---- */
-function ww_capture_showcase(string $token): bool {
+
+/**
+ * Capture via screenshotmachine.com (paid PAYG, ~$0.002/shot). Returns true on success.
+ * Far faster than local Chrome (parallel HTTP vs single-host CPU contention).
+ */
+function ww_capture_showcase_smc(string $token): bool {
+    $s = ww_secrets();
+    $key = (string)($s['SCREENSHOTMACHINE_KEY'] ?? '');
+    if ($key === '') return false;
+    $base = '/var/www/sites/trywebwiz/public/preview/' . $token;
+    if (!is_dir($base . '/v1')) return false;
+    $url = 'https://trywebwiz.com/preview/' . $token . '/v1/index.html?sc=' . time();
+    $out = $base . '/showcase.jpg';
+    $api = 'https://api.screenshotmachine.com/?' . http_build_query([
+        'key'        => $key,
+        'url'        => $url,
+        'dimension'  => '1280x820',
+        'device'     => 'desktop',
+        'format'     => 'jpg',
+        'cacheLimit' => 0,
+        'delay'      => 1500,
+    ]);
+    $ch = curl_init($api);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT        => 45,
+        CURLOPT_CONNECTTIMEOUT => 10,
+        CURLOPT_FOLLOWLOCATION => true,
+    ]);
+    $bin  = curl_exec($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    if ($code !== 200 || !is_string($bin) || strlen($bin) < 4000) return false;
+    // SMC returns small JPEGs containing an error message on failure — guard
+    // with JPEG SOI signature (0xFF 0xD8 0xFF) before writing.
+    if (substr($bin, 0, 3) !== chr(0xFF) . chr(0xD8) . chr(0xFF)) return false;
+    return (bool)@file_put_contents($out, $bin);
+}
+
+/** Fallback: local headless Chrome via private/qa-tools/showcase.js. */
+function ww_capture_showcase_local(string $token): bool {
     $base = '/var/www/sites/trywebwiz/public/preview/' . $token;
     if (!is_dir($base . '/v1')) return false;
     $url = 'https://trywebwiz.com/preview/' . $token . '/v1/index.html?sc=' . time();
@@ -184,6 +224,12 @@ function ww_capture_showcase(string $token): bool {
     $cmd = 'export HOME=/tmp/crhome; mkdir -p /tmp/crhome; cd /var/www/sites/trywebwiz/private/qa-tools && timeout 70 node showcase.js ' . escapeshellarg($url) . ' ' . escapeshellarg($out) . ' 2>&1';
     @exec($cmd, $o, $rc);
     return is_file($out) && filesize($out) > 1500;
+}
+
+function ww_capture_showcase(string $token): bool {
+    // SMC first (fast, off-droplet). Falls back to local Chrome if SMC fails.
+    if (ww_capture_showcase_smc($token)) return true;
+    return ww_capture_showcase_local($token);
 }
 function ww_generate_missing_showcases(PDO $db, int $limit = 20, int $time_budget_sec = 150): void {
     // Pull a generous pool of ready jobs (oldest first so older uploads catch up). Filesystem check
