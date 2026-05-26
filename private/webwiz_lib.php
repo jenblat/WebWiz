@@ -91,6 +91,19 @@ function ww_migrate(PDO $pdo): void {
         status TEXT NOT NULL DEFAULT 'building' CHECK (status IN ('building','live','paused','archived')),
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )");
+    // Performance indexes for hot queries (prospects list, batch counts, cost rollups, worker selection)
+    foreach ([
+        "CREATE INDEX IF NOT EXISTS idx_jobs_prospect_id ON jobs(prospect_id)",
+        "CREATE INDEX IF NOT EXISTS idx_jobs_upload_batch_id ON jobs(upload_batch_id)",
+        "CREATE INDEX IF NOT EXISTS idx_jobs_status_sched ON jobs(status, scheduled_for)",
+        "CREATE INDEX IF NOT EXISTS idx_jobs_generation_mode ON jobs(generation_mode)",
+        "CREATE INDEX IF NOT EXISTS idx_jobs_status_total_cost ON jobs(status, total_cost_cents)",
+        "CREATE INDEX IF NOT EXISTS idx_previews_job_id ON previews(job_id)",
+        "CREATE INDEX IF NOT EXISTS idx_api_calls_job_id ON api_calls(job_id)",
+        "CREATE INDEX IF NOT EXISTS idx_api_calls_key_label ON api_calls(key_label)",
+        "CREATE INDEX IF NOT EXISTS idx_api_calls_provider ON api_calls(provider)",
+        "CREATE INDEX IF NOT EXISTS idx_prospects_created ON prospects(created_at, id)",
+    ] as $sql) { @$pdo->exec($sql); }
 }
 
 function ww_h($s): string {
