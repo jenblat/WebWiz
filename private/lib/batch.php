@@ -25,7 +25,7 @@ function ww_parse_cid(string $cid): ?array {
  * (3 requests per job) and move the upload to 'generating'.
  */
 function ww_build_batches(PDO $db): void {
-    $ub = $db->query("SELECT * FROM upload_batches WHERE status='queued' ORDER BY id ASC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+    $ub = $db->query("SELECT * FROM upload_batches WHERE status='queued' AND paused_at IS NULL ORDER BY id ASC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
     if (!$ub) return;
     $uid = (int)$ub['id'];
 
@@ -85,7 +85,7 @@ function ww_build_batches(PDO $db): void {
  * finalize passing variants, re-batch failed/empty variants exactly once, then finalize the upload.
  */
 function ww_poll_batches(PDO $db): void {
-    $ubs = $db->query("SELECT * FROM upload_batches WHERE status IN ('generating','qa') ORDER BY id ASC")->fetchAll(PDO::FETCH_ASSOC);
+    $ubs = $db->query("SELECT * FROM upload_batches WHERE status IN ('generating','qa') AND paused_at IS NULL ORDER BY id ASC")->fetchAll(PDO::FETCH_ASSOC);
     foreach ($ubs as $ub) {
         $uid = (int)$ub['id'];
         $bids = json_decode($ub['anthropic_batch_ids'] ?: '[]', true) ?: [];
