@@ -564,8 +564,15 @@ if ($tab === 'prospects') {
             $st->execute($ids);
             $erows = $st->fetchAll(PDO::FETCH_ASSOC);
         } elseif ($bexp) {
-            $st = ww_db()->prepare("SELECT p.business_name, p.name, p.first_name, p.last_name, p.email, p.current_url, j.status AS job_status, j.token AS job_token FROM jobs j JOIN prospects p ON p.id = j.prospect_id WHERE j.upload_batch_id = ? ORDER BY j.id");
-            $st->execute([$bexp]);
+            // Default: only sites that actually generated successfully. Pass &include=all to get everything.
+            $includeAll = (($_GET['include'] ?? '') === 'all');
+            if ($includeAll) {
+                $st = ww_db()->prepare("SELECT p.business_name, p.name, p.first_name, p.last_name, p.email, p.current_url, j.status AS job_status, j.token AS job_token FROM jobs j JOIN prospects p ON p.id = j.prospect_id WHERE j.upload_batch_id = ? ORDER BY j.id");
+                $st->execute([$bexp]);
+            } else {
+                $st = ww_db()->prepare("SELECT p.business_name, p.name, p.first_name, p.last_name, p.email, p.current_url, j.status AS job_status, j.token AS job_token FROM jobs j JOIN prospects p ON p.id = j.prospect_id WHERE j.upload_batch_id = ? AND j.status IN ('ready','sent','picked') AND j.item_status = 'done' ORDER BY j.id");
+                $st->execute([$bexp]);
+            }
             $erows = $st->fetchAll(PDO::FETCH_ASSOC);
         } else {
             $erows = ww_db()->query("SELECT p.business_name, p.name, p.first_name, p.last_name, p.email, p.current_url, j.status AS job_status, j.token AS job_token FROM prospects p LEFT JOIN jobs j ON j.id = (SELECT MAX(id) FROM jobs WHERE prospect_id = p.id) ORDER BY p.id DESC")->fetchAll(PDO::FETCH_ASSOC);
@@ -813,7 +820,10 @@ if ($tab === 'prospects') {
             echo '<td style="font-size:13px;"><strong>' . (int)$done . ' successful</strong>' . ($rest ? ', ' . ww_h(implode(', ', $rest)) : '') . '</td>';
             echo '<td>';
             if ($bs === 'done') {
-                echo '<a class="btn ghost" style="padding:6px 12px;font-size:13px;" href="/admin/?tab=prospects&amp;export=csv&amp;batch=' . $bid . '">&darr; Download CSV</a>';
+                $doneN = $bcounts[$bid]['done'] ?? 0;
+                $totN  = (int)$b['total_count'];
+                echo '<a class="btn ghost" style="padding:6px 12px;font-size:13px;" href="/admin/?tab=prospects&amp;export=csv&amp;batch=' . $bid . '" title="Only sites that generated successfully (' . (int)$doneN . ')">&darr; Download CSV <span style="opacity:0.6;">(' . (int)$doneN . ')</span></a>';
+                if ((int)$doneN < $totN) echo ' <a style="font-size:12px;opacity:0.65;margin-left:6px;" href="/admin/?tab=prospects&amp;export=csv&amp;batch=' . $bid . '&amp;include=all" title="Include failed/queued/generating rows too">or all (' . $totN . ')</a>';
             } elseif ($bs === 'failed') {
                 echo '<span style="font-size:12px;opacity:0.55;">&mdash;</span>';
             } elseif (!empty($b['paused_at'])) {
