@@ -162,6 +162,8 @@ function ww_poll_batches(PDO $db): void {
             $public_dir = '/var/www/sites/trywebwiz/public/preview/' . $row['token'];
             ksort($htmls);
             foreach ($htmls as $v => $html) {
+                $html = ww_apply_upscale($html, $jid);
+                $htmls[$v] = $html;
                 $dir = $public_dir . '/v' . $v;
                 if (!is_dir($dir)) @mkdir($dir, 0755, true);
                 file_put_contents($dir . '/index.html', $html);
