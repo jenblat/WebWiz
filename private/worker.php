@@ -9,6 +9,7 @@ require_once '/var/www/sites/trywebwiz/private/webwiz_lib.php';
 require_once '/var/www/sites/trywebwiz/private/lib/anthropic.php';
 require_once '/var/www/sites/trywebwiz/private/lib/scrape.php';
 require_once '/var/www/sites/trywebwiz/private/lib/qa.php';
+require_once '/var/www/sites/trywebwiz/private/lib/replicate.php';
 require_once '/var/www/sites/trywebwiz/private/lib/batch.php';
 
 set_time_limit(0);
@@ -122,7 +123,7 @@ function process_job(PDO $db, array $row): void {
             if (!is_dir($dir)) @mkdir($dir, 0755, true);
             file_put_contents($dir . '/index.html', $html);
         };
-        foreach ($htmls as $v => $html) { $write_variant($v, $html); }
+        foreach ($htmls as $v => $html) { $html = ww_apply_upscale($html, $job_id); $htmls[$v] = $html; $write_variant($v, $html); }
         $stub = $public_dir . '/index.php';
         if (!is_file($stub)) {
             file_put_contents($stub, "<?php\n\$_GET['t'] = basename(__DIR__);\nrequire __DIR__ . '/../index.php';\n");
