@@ -43,6 +43,11 @@ if (!$url || !preg_match('~^https?://~i', $url)) { svg_placeholder($label); }
 // ---- cache hit? ----
 $key = sha1($url);
 if (!is_dir(IMG_CACHE_DIR)) @mkdir(IMG_CACHE_DIR, 0775, true);
+// Upscaled-variant cache hit (caller requested &up=1, e.g. low-res images enhanced via Replicate)
+if (($_GET['up'] ?? '') === '1') {
+    $upf = IMG_CACHE_DIR . '/' . $key . '_up.jpg';
+    if (is_file($upf) && filesize($upf) > 1500) serve_file($upf, 'image/jpeg');
+}
 foreach (['jpg' => 'image/jpeg', 'png' => 'image/png', 'gif' => 'image/gif', 'webp' => 'image/webp', 'svg' => 'image/svg+xml'] as $ext => $ct) {
     $cf = IMG_CACHE_DIR . '/' . $key . '.' . $ext;
     if (is_file($cf) && filesize($cf) > 100) serve_file($cf, $ct);
