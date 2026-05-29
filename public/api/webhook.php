@@ -211,6 +211,23 @@ if ($type === 'checkout.session.completed') {
         '[WebWiz] New order: ' . ($biz ?: $name ?: 'unknown'),
         tpl_shell('New order', $admin_body)
     );
+
+    // Funnel analytics — fire checkout_completed for /try ad-funnel orders.
+    try {
+        $token_meta = (string)($obj['metadata']['token'] ?? '');
+        $source     = (string)($obj['metadata']['source'] ?? '');
+        if (preg_match('~^[a-f0-9]{24}$~', $token_meta)) {
+            $pl = json_encode([
+                'amount'    => $amount,
+                'plan'      => $plan,
+                'source'    => $source,
+                'biz'       => $biz,
+                'recurring' => (string)($obj['mode'] ?? '') === 'subscription',
+            ]);
+            ww_db()->prepare("INSERT INTO try_events (event, token, session_id, payload) VALUES ('checkout_completed', ?, ?, ?)")
+                   ->execute([$token_meta, (string)$sid, $pl]);
+        }
+    } catch (Throwable $e) { error_log('[webhook] try-event insert failed: ' . $e->getMessage()); }
 }
 
 elseif ($type === 'invoice.payment_failed') {

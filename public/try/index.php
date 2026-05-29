@@ -98,6 +98,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <title>Your new website. Free. · WebWiz</title>
+<meta name="description" content="Tell Wizzy about your business and he’ll design your website in under a minute. Free to design. No credit card.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="preload" as="image" href="/preview/wizzy-wave.gif">
@@ -114,6 +115,11 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
     background-image:radial-gradient(rgba(18,24,74,0.07) 1.5px, transparent 1.5px);background-size:24px 24px;
     line-height:1.5;font-size:16px;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;min-height:100vh;}
   a{color:var(--navy);}
+  /* visible keyboard focus ring (a11y) */
+  :focus-visible{outline:2px solid var(--navy)!important;outline-offset:3px;border-radius:8px;}
+  button:focus-visible,input:focus-visible,textarea:focus-visible,a:focus-visible{outline:2px solid var(--navy)!important;outline-offset:3px;}
+  .net-banner{display:none;position:fixed;top:0;left:0;right:0;z-index:100;background:#fde2e2;color:#5a0808;border-bottom:2px solid #8a0e0e;padding:10px 16px;text-align:center;font-family:var(--body);font-weight:600;font-size:13px;}
+  .net-banner.on{display:block;}
 
   .view{opacity:0;visibility:hidden;height:0;overflow:hidden;transition:opacity 400ms ease;}
   body[data-view="form"]    .view-form    { opacity:1;visibility:visible;height:auto;overflow:visible; }
@@ -332,6 +338,8 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
 </head>
 <body data-view="<?= htmlspecialchars($initial_view, ENT_QUOTES) ?>" data-cap="<?= $initial_edits === 0 ? 'hit' : 'ok' ?>">
 
+<div class="net-banner" id="netBanner" role="alert">You appear to be offline. Reconnect and we’ll keep going.</div>
+
 <header class="topbar">
   <a href="/try" class="brand">WebWiz<span class="dot">.</span></a>
 </header>
@@ -511,7 +519,9 @@ window.__TRY_INIT__ = {
   businessName: <?= json_encode($initial_biz) ?>,
   editsRemaining: <?= (int)$initial_edits ?>,
   view: <?= json_encode($initial_view) ?>,
-  previewUrl: <?= json_encode($initial_preview_url) ?>
+  previewUrl: <?= json_encode($initial_preview_url) ?>,
+  // anon session id (per browser tab, lasts until reload). Used to stitch funnel events together.
+  sessionId: (function(){ try { var k='ww_try_sid'; var s=sessionStorage.getItem(k); if(s) return s; s='s_'+Math.random().toString(36).slice(2,12)+Date.now().toString(36); sessionStorage.setItem(k,s); return s; } catch(e){ return null; } })()
 };
 </script>
 <script>
@@ -519,6 +529,24 @@ window.__TRY_INIT__ = {
   var INIT = window.__TRY_INIT__ || {};
   var body = document.body;
   var EDIT_CAP = 5;
+
+  // ---------- Analytics (POST to /api/event.php, fire-and-forget) ----------
+  function track(event, payload){
+    try {
+      var body = JSON.stringify({ event: event, token: (state && state.token) || INIT.token || null, session_id: INIT.sessionId || null, payload: payload || null });
+      if (navigator.sendBeacon) {
+        var blob = new Blob([body], { type: 'application/json' });
+        navigator.sendBeacon('/api/event.php', blob);
+      } else {
+        fetch('/api/event.php', { method: 'POST', body: body, headers: {'Content-Type':'application/json'}, keepalive: true }).catch(function(){});
+      }
+    } catch(e){ /* never break UI */ }
+  }
+  // Network online/offline indicator
+  var netBanner = document.getElementById('netBanner');
+  function setOnline(on){ if (netBanner) netBanner.classList.toggle('on', !on); }
+  window.addEventListener('online',  function(){ setOnline(true);  });
+  window.addEventListener('offline', function(){ setOnline(false); });
 
   var form = document.getElementById('tryForm');
   var descField = form.querySelector('[data-field="description"]');
@@ -617,6 +645,9 @@ window.__TRY_INIT__ = {
     if (!descOk) { desc.focus(); return; }
     if (!webOk)  { web.focus();  return; }
 
+    track('form_submit', { has_website: !!web.value.trim(), description_length: desc.value.trim().length });
+    track('gen_started');
+    var __genT0 = Date.now();
     generating = true; ctaBtn.disabled = true;
     var hostGuess = '';
     try { var raw = web.value.trim().replace(/^https?:\/\//i,'').replace(/^www\./i,''); hostGuess = raw.split('/')[0].split('?')[0]; } catch(e){}
@@ -637,13 +668,21 @@ window.__TRY_INIT__ = {
         loadingHead.innerHTML = 'Wizzy is designing ' + escapeHtml(state.businessName) + '…';
         stopLoadingTickers();
         var previewUrl = res.body.preview_url || (res.body.url + 'v1/index.html');
-        setTimeout(function(){ previewFrame.src = previewUrl; setView('reveal'); chatInput.focus(); }, 600);
+        track('gen_completed', { duration_ms: Date.now() - __genT0 });
+        setTimeout(function(){ previewFrame.src = previewUrl; setView('reveal'); chatInput.focus(); track('reveal_viewed'); }, 600);
       } else {
-        showLoadingError((res.body && res.body.error) ? res.body.error : 'Generation failed. Try again?');
+        var msg = (res.body && res.body.error) ? res.body.error : 'Generation failed. Try again?';
+        track('gen_failed', { reason: String(msg).slice(0,140), duration_ms: Date.now() - __genT0 });
+        showLoadingError(msg);
         ctaBtn.disabled = false;
       }
     })
-    .catch(function(e){ showLoadingError('Network error: ' + (e && e.message ? e.message : 'unknown')); ctaBtn.disabled = false; });
+    .catch(function(e){
+      var em = e && e.message ? e.message : 'unknown';
+      track('gen_failed', { reason: 'network: ' + String(em).slice(0,120), duration_ms: Date.now() - __genT0 });
+      showLoadingError('Network error: ' + em);
+      ctaBtn.disabled = false;
+    });
   });
 
   notifyForm.addEventListener('submit', function(e){
@@ -705,6 +744,7 @@ window.__TRY_INIT__ = {
     state.sending = true; chatSend.disabled = true;
     appendMsg('user', message); chatInput.value = '';
     var typing = appendTyping();
+    track('edit_used', { edit_number: (EDIT_CAP - state.editsRemaining) + 1, edit_type: 'text', message: message.slice(0, 140) });
 
     fetch('/api/edit.php', {
       method: 'POST',
@@ -737,6 +777,7 @@ window.__TRY_INIT__ = {
   function onCapHit(customMsg){
     var msg = customMsg || "That's all the tweaks I can do here. If you love where it's at, let's make it real. If it still needs work, my human teammates can take it from here once you launch it.";
     appendMsg('wiz', msg);
+    track('edit_cap_hit');
     setTimeout(showConvCard, 700);
   }
 
@@ -752,6 +793,7 @@ window.__TRY_INIT__ = {
 
   convCta.addEventListener('click', function(){
     if (!state.token) { convErr.textContent = 'Lost track of your preview — refresh and try again.'; convErr.classList.add('on'); return; }
+    track('make_it_real_clicked');
     convCta.disabled = true; convCta.textContent = 'Spinning up checkout…';
     convErr.classList.remove('on');
     fetch('/api/try_checkout.php', {
@@ -762,7 +804,7 @@ window.__TRY_INIT__ = {
     .then(function(r){ return r.json().then(function(j){ return { ok:r.ok, body:j }; }); })
     .then(function(res){
       var b = res.body || {};
-      if (b.ok && b.checkout_url) { window.location.href = b.checkout_url; return; }
+      if (b.ok && b.checkout_url) { track('checkout_started', { session_id: b.session_id || null }); window.location.href = b.checkout_url; return; }
       convErr.textContent = b.error || 'Could not start checkout. Try again?';
       convErr.classList.add('on');
       convCta.disabled = false; convCta.textContent = 'Make it real →';
@@ -797,6 +839,7 @@ window.__TRY_INIT__ = {
     if (state.editsRemaining <= 0) return;
     umBackdrop.classList.add('on'); uploadErr.classList.remove('on');
     document.body.style.overflow = 'hidden';
+    track('asset_upload_opened');
   }
   function closeUploadModal(){
     umBackdrop.classList.remove('on'); document.body.style.overflow = '';
@@ -852,6 +895,7 @@ window.__TRY_INIT__ = {
     fd.append('token', state.token);
     if (pickedLogo) fd.append('logo', pickedLogo, pickedLogo.name);
     if (pickedPhotos) pickedPhotos.forEach(function(p){ fd.append('photos[]', p, p.name); });
+    track('edit_used', { edit_number: (EDIT_CAP - state.editsRemaining) + 1, edit_type: 'asset_upload', logo: !!pickedLogo, photo_count: pickedPhotos.length });
     appendMsg('user', '📎 Sent ' + (pickedLogo ? 'logo' : '') + (pickedLogo && pickedPhotos.length ? ' + ' : '') + (pickedPhotos.length ? (pickedPhotos.length + ' photo' + (pickedPhotos.length===1?'':'s')) : ''));
     var typing = appendTyping();
     closeUploadModal();
@@ -865,6 +909,7 @@ window.__TRY_INIT__ = {
           previewFrame.src = src;
           appendMsg('wiz', b.reply || "Got it. I'll work these in.");
           updateEditsChip(typeof b.edits_remaining === 'number' ? b.edits_remaining : (state.editsRemaining - 1));
+          track('asset_upload_completed', { logo: !!pickedLogo, photo_count: pickedPhotos.length });
           if (b.cap_hit) onCapHit();
         } else { appendMsg('wiz', 'Upload failed: ' + (b.error || 'something went wrong')); }
       })
@@ -876,6 +921,11 @@ window.__TRY_INIT__ = {
   // If PHP gave us an initial token (Stripe cancel recovery), the upload chip
   // should be visible if we're already 3+ edits in.
   if (state.token && state.editsRemaining <= 2) addUploadChip();
+
+  // Initial analytics on page load
+  if (INIT.view === 'form')    track('hero_view', { from: document.referrer || null });
+  if (INIT.view === 'reveal')  track('reveal_viewed', { recovered: true });
+  if (INIT.view === 'success') track('checkout_completed_view');
 
   // ---------- helpers ----------
   function escapeHtml(s){ return String(s).replace(/[&<>"']/g, function(c){
