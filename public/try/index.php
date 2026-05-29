@@ -106,6 +106,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
 <style>
   :root{
     --teal:#00C4A7;--navy:#12184A;--yellow:#FFBE00;--cream:#FFF8E7;
+    --wizbg:#f7f8f5; /* matches the Wizzy video background so the video blends seamlessly */
     --display:'Nunito',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
     --body:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
   }
@@ -161,7 +162,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
   .chip{display:inline-flex;align-items:center;gap:6px;background:var(--cream);border:2px solid var(--navy);border-radius:999px;padding:8px 16px;font-family:var(--body);font-weight:600;font-size:14px;color:var(--navy);}
   .chip .tick{color:var(--teal);font-weight:900;}
   .hero-mascot{position:relative;display:flex;justify-content:center;align-items:center;min-height:520px;}
-  .wiz-circle{width:480px;height:480px;border-radius:50%;background:var(--cream);border:3px solid var(--navy);display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative;box-shadow:8px 8px 0 var(--yellow);}
+  .wiz-circle{width:480px;height:480px;border-radius:50%;background:var(--wizbg);border:3px solid var(--navy);display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative;box-shadow:8px 8px 0 var(--yellow);}
   .wiz-circle img{width:78%;height:78%;object-fit:contain;}
   .wizzy-vid{width:100%;height:100%;object-fit:contain;background:transparent;}
   .wiz-circle .wizzy-vid,.wiz-circle.success .wizzy-vid{width:78%;height:78%;}
@@ -175,7 +176,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
   /* ----------- Loading ----------- */
   .view-loading{padding:40px 24px 60px;}
   .loading-wrap{max-width:600px;margin:0 auto;text-align:center;}
-  .loading-mascot{width:280px;height:280px;margin:0 auto 8px;display:flex;align-items:center;justify-content:center;}
+  .loading-mascot{width:280px;height:280px;margin:0 auto 8px;display:flex;align-items:center;justify-content:center;background:var(--wizbg);border:3px solid var(--navy);border-radius:50%;overflow:hidden;box-shadow:8px 8px 0 var(--yellow);}
   .loading-mascot img{width:100%;height:100%;object-fit:contain;}
   @keyframes bob{0%,100%{transform:translateY(0);}50%{transform:translateY(-8px);}}
   .loading-h2{font-family:var(--display);font-weight:900;font-size:48px;letter-spacing:-0.02em;line-height:1.05;color:var(--navy);margin:24px 0 0;}
@@ -201,7 +202,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
   .reveal-frame{width:100%;height:80vh;border:2px solid var(--navy);border-radius:16px;background:var(--cream);box-shadow:8px 8px 0 var(--yellow);overflow:hidden;}
   .reveal-frame iframe{width:100%;height:100%;border:0;display:block;background:var(--cream);}
   .wizzy-badge-wrap{position:absolute;top:-20px;left:-20px;display:flex;align-items:flex-start;gap:12px;z-index:5;}
-  .wizzy-badge{width:80px;height:80px;border-radius:50%;background:var(--cream);border:3px solid var(--navy);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;box-shadow:4px 4px 0 var(--yellow);}
+  .wizzy-badge{width:80px;height:80px;border-radius:50%;background:var(--wizbg);border:3px solid var(--navy);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;box-shadow:4px 4px 0 var(--yellow);}
   .wizzy-badge img{width:78%;height:78%;object-fit:contain;}
   .speech-bubble{margin-top:16px;background:var(--cream);border:2px solid var(--navy);border-radius:12px;padding:10px 14px;font-family:var(--body);font-weight:600;font-size:14px;color:var(--navy);box-shadow:3px 3px 0 var(--navy);max-width:280px;position:relative;}
   .speech-bubble::before{content:'';position:absolute;left:-12px;top:14px;width:0;height:0;border-top:8px solid transparent;border-bottom:8px solid transparent;border-right:12px solid var(--navy);}
@@ -209,7 +210,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
 
   .edit-panel{background:var(--cream);border:2px solid var(--navy);border-radius:16px;box-shadow:6px 6px 0 var(--navy);display:flex;flex-direction:column;position:sticky;top:16px;max-height:calc(100vh - 32px);min-height:520px;overflow:hidden;}
   .edit-header{padding:16px 18px;border-bottom:2px solid var(--navy);display:flex;align-items:center;gap:10px;background:var(--cream);}
-  .edit-header-wiz{width:40px;height:40px;border-radius:50%;background:var(--cream);border:2px solid var(--navy);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;}
+  .edit-header-wiz{width:40px;height:40px;border-radius:50%;background:var(--wizbg);border:2px solid var(--navy);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;}
   .edit-header-wiz img{width:90%;height:90%;object-fit:contain;}
   .edit-header h3{flex:1;font-family:var(--display);font-weight:900;font-size:18px;color:var(--navy);margin:0;letter-spacing:-0.01em;}
   .edits-chip{background:var(--yellow);color:var(--navy);border:2px solid var(--navy);border-radius:999px;padding:6px 12px;font-family:var(--body);font-weight:700;font-size:12px;letter-spacing:0.04em;white-space:nowrap;}
@@ -252,7 +253,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
   body[data-conv="on"] .conv-card{display:block;}
   .conv-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px;}
   .conv-head h2{font-family:var(--display);font-weight:900;font-size:32px;color:var(--navy);margin:0;letter-spacing:-0.02em;line-height:1.05;}
-  .conv-head .wiz-mini{width:54px;height:54px;border-radius:50%;background:var(--cream);border:2px solid var(--navy);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;}
+  .conv-head .wiz-mini{width:54px;height:54px;border-radius:50%;background:var(--wizbg);border:2px solid var(--navy);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;}
   .conv-head .wiz-mini img{width:90%;height:90%;object-fit:contain;}
   .conv-lead{font-size:15px;color:var(--navy);margin:0 0 8px;}
   .conv-checklist{list-style:none;padding:0;margin:8px 0 0;}
@@ -380,7 +381,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
     </div>
 
     <div class="hero-mascot">
-      <div class="wiz-circle"><video class="wizzy-vid" autoplay loop muted playsinline preload="metadata" poster="/preview/wizzy-waving-poster.jpg" aria-label="Wizzy waving"><source src="/preview/wizzy-waving.webm" type="video/webm"><source src="/preview/wizzy-waving.mp4" type="video/mp4"><img src="/preview/wizzy-wave.gif" alt="Wizzy waving"></video></div>
+      <div class="wiz-circle"><video class="wizzy-vid" autoplay muted playsinline preload="metadata" poster="/preview/wizzy-waving-poster.jpg" aria-label="Wizzy waving"><source src="/preview/wizzy-waving.webm" type="video/webm"><source src="/preview/wizzy-waving.mp4" type="video/mp4"><img src="/preview/wizzy-wave.gif" alt="Wizzy waving"></video></div>
       <div class="sticker">Made with care<small>by Wizzy</small></div>
     </div>
   </section>
@@ -389,7 +390,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
 <!-- ===================== LOADING VIEW ===================== -->
 <main class="view view-loading">
   <div class="loading-wrap">
-    <div class="loading-mascot"><video class="wizzy-vid" autoplay loop muted playsinline preload="metadata" poster="/preview/wizzy-waving-poster.jpg" aria-label="Wizzy waving"><source src="/preview/wizzy-waving.webm" type="video/webm"><source src="/preview/wizzy-waving.mp4" type="video/mp4"><img src="/preview/wizzy-wave.gif" alt="Wizzy waving"></video></div>
+    <div class="loading-mascot"><video class="wizzy-vid wizzy-proc" autoplay muted playsinline preload="metadata" poster="/preview/wizzy-processing-poster.jpg" aria-label="Wizzy processing"><source src="/preview/wizzy-processing.webm" type="video/webm"><source src="/preview/wizzy-processing.mp4" type="video/mp4"><img src="/preview/wizzy-wave.gif" alt="Wizzy processing"></video></div>
     <h2 class="loading-h2" id="loadingHead">Wizzy is designing your site&hellip;</h2>
     <p class="loading-sub">Hang tight. He&rsquo;s working fast.</p>
     <div class="progress-track"><span class="progress-fill" id="progFill"></span></div>
@@ -418,14 +419,14 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
         <iframe id="previewFrame" src="<?= htmlspecialchars($initial_preview_url ?: 'about:blank', ENT_QUOTES) ?>" loading="eager" title="Your new website preview"></iframe>
       </div>
       <div class="wizzy-badge-wrap">
-        <div class="wizzy-badge"><video class="wizzy-vid" autoplay loop muted playsinline preload="metadata" poster="/preview/wizzy-waving-poster.jpg" aria-label="Wizzy waving"><source src="/preview/wizzy-waving.webm" type="video/webm"><source src="/preview/wizzy-waving.mp4" type="video/mp4"><img src="/preview/wizzy-wave.gif" alt="Wizzy waving"></video></div>
+        <div class="wizzy-badge"><video class="wizzy-vid" autoplay muted playsinline preload="metadata" poster="/preview/wizzy-waving-poster.jpg" aria-label="Wizzy waving"><source src="/preview/wizzy-waving.webm" type="video/webm"><source src="/preview/wizzy-waving.mp4" type="video/mp4"><img src="/preview/wizzy-wave.gif" alt="Wizzy waving"></video></div>
         <div class="speech-bubble">Here&rsquo;s what I made you. What do you think?</div>
       </div>
     </div>
 
     <aside class="edit-panel">
       <div class="edit-header">
-        <div class="edit-header-wiz"><video class="wizzy-vid" autoplay loop muted playsinline preload="metadata" poster="/preview/wizzy-waving-poster.jpg" aria-label="Wizzy waving"><source src="/preview/wizzy-waving.webm" type="video/webm"><source src="/preview/wizzy-waving.mp4" type="video/mp4"><img src="/preview/wizzy-wave.gif" alt="Wizzy waving"></video></div>
+        <div class="edit-header-wiz"><video class="wizzy-vid" autoplay muted playsinline preload="metadata" poster="/preview/wizzy-waving-poster.jpg" aria-label="Wizzy waving"><source src="/preview/wizzy-waving.webm" type="video/webm"><source src="/preview/wizzy-waving.mp4" type="video/mp4"><img src="/preview/wizzy-wave.gif" alt="Wizzy waving"></video></div>
         <h3>Chat with Wizzy</h3>
         <span class="edits-chip <?= $initial_edits === 0 ? 'zero' : '' ?>" id="editsChip"><?= (int)$initial_edits ?> edit<?= $initial_edits === 1 ? '' : 's' ?> remaining</span>
       </div>
@@ -451,7 +452,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
       <div class="conv-card" id="convCard">
         <div class="conv-head">
           <h2>Want to make it real?</h2>
-          <div class="wiz-mini"><video class="wizzy-vid" autoplay loop muted playsinline preload="metadata" poster="/preview/wizzy-waving-poster.jpg" aria-label="Wizzy waving"><source src="/preview/wizzy-waving.webm" type="video/webm"><source src="/preview/wizzy-waving.mp4" type="video/mp4"><img src="/preview/wizzy-wave.gif" alt="Wizzy waving"></video></div>
+          <div class="wiz-mini"><video class="wizzy-vid" autoplay muted playsinline preload="metadata" poster="/preview/wizzy-waving-poster.jpg" aria-label="Wizzy waving"><source src="/preview/wizzy-waving.webm" type="video/webm"><source src="/preview/wizzy-waving.mp4" type="video/mp4"><img src="/preview/wizzy-wave.gif" alt="Wizzy waving"></video></div>
         </div>
         <p class="conv-lead">Wizzy&rsquo;s design is yours, free. To go live we&rsquo;ll:</p>
         <ul class="conv-checklist">
@@ -479,7 +480,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
 <main class="view view-success">
   <div class="success-wrap">
     <div class="wiz-circle success" style="border:3px solid var(--navy);box-shadow:8px 8px 0 var(--yellow);">
-      <video class="wizzy-vid" autoplay loop muted playsinline preload="metadata" poster="/preview/wizzy-waving-poster.jpg" aria-label="Wizzy waving"><source src="/preview/wizzy-waving.webm" type="video/webm"><source src="/preview/wizzy-waving.mp4" type="video/mp4"><img src="/preview/wizzy-wave.gif" alt="Wizzy waving"></video>
+      <video class="wizzy-vid" autoplay muted playsinline preload="metadata" poster="/preview/wizzy-waving-poster.jpg" aria-label="Wizzy waving"><source src="/preview/wizzy-waving.webm" type="video/webm"><source src="/preview/wizzy-waving.mp4" type="video/mp4"><img src="/preview/wizzy-wave.gif" alt="Wizzy waving"></video>
     </div>
     <h1 class="h-set">You&rsquo;re set.</h1>
     <p class="s-lead">Your site is on its way to going live. We&rsquo;ll be in touch within 24 hours.</p>
@@ -942,6 +943,23 @@ window.__TRY_INIT__ = {
   if (INIT.view === 'form')    track('hero_view', { from: document.referrer || null });
   if (INIT.view === 'reveal')  track('reveal_viewed', { recovered: true });
   if (INIT.view === 'success') track('checkout_completed_view');
+
+
+  // ---------- Wizzy video pause-then-loop ----------
+  // Removed `loop` from the <video> tags so we can wait 5s between plays
+  // (per Omar). Some Wizzy videos are short loops (~3-5s); without this
+  // pause they feel frantic. Re-plays muted so autoplay policies hold.
+  function wireWizzyPause(){
+    var vids = document.querySelectorAll('video.wizzy-vid');
+    vids.forEach(function(v){
+      v.removeAttribute('loop');
+      v.addEventListener('ended', function(){
+        setTimeout(function(){ try { v.currentTime = 0; v.play().catch(function(){}); } catch(e){} }, 5000);
+      });
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wireWizzyPause);
+  else wireWizzyPause();
 
   // ---------- helpers ----------
   function escapeHtml(s){ return String(s).replace(/[&<>"']/g, function(c){

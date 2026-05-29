@@ -106,17 +106,31 @@ try {
         $db->prepare("INSERT INTO magic_hits (ip, token) VALUES (?, ?)")->execute([$ip, $token]);
         $db->commit();
     };
+    // Beefier retry — up to ~25s of total wait (vs prior 7s) with light backoff,
+    // because peak concurrent magic-link generations can hold the writer for
+    // longer than the SQLite busy_timeout alone covers.
     $persisted = false; $lastErr = null;
-    for ($try = 0; $try < 20 && !$persisted; $try++) {
+    $delay_us = 200000; // 200ms
+    for ($try = 0; $try < 60 && !$persisted; $try++) {
         try { $persist(); $persisted = true; }
         catch (Throwable $e) {
             $lastErr = $e;
             if ($db->inTransaction()) { try { $db->rollBack(); } catch (Throwable $x) {} }
-            if (stripos($e->getMessage(), 'lock') !== false || stripos($e->getMessage(), 'busy') !== false) { usleep(350000); continue; }
-            throw $e;
+            $msg = strtolower($e->getMessage());
+            $is_lock = (strpos($msg, 'lock') !== false) || (strpos($msg, 'busy') !== false) || (strpos($msg, 'database is locked') !== false);
+            if (!$is_lock) throw $e;
+            usleep($delay_us);
+            $delay_us = min(800000, (int)($delay_us * 1.2));
         }
     }
-    if (!$persisted) throw ($lastErr ?: new Exception('could not save the result'));
+    if (!$persisted) {
+        $msg = $lastErr ? $lastErr->getMessage() : 'could not save the result';
+        // Surface a friendlier message instead of leaking the SQLite error string.
+        if (stripos($msg, 'lock') !== false || stripos($msg, 'busy') !== false) {
+            throw new Exception('Our database is busy right now. Please try again in a few seconds.');
+        }
+        throw new Exception($msg);
+    }
 
     echo json_encode(['ok' => true, 'token' => $token, 'url' => '/preview/' . $token . '/', 'preview_url' => '/preview/' . $token . '/v1/index.html', 'variants' => count($htmls), 'business' => $biz, 'business_name' => $biz]);
     exit;

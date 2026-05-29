@@ -22,6 +22,10 @@ function ww_db(): PDO {
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $pdo->exec('PRAGMA journal_mode = WAL');
     $pdo->exec('PRAGMA busy_timeout = 8000');
+    // NORMAL fsync is durable enough under WAL and is ~2-3x faster than FULL
+    // for writes. Reduces the per-tx hold time so concurrent magic-link
+    // generations don't pile up on the writer.
+    $pdo->exec('PRAGMA synchronous = NORMAL');
     $pdo->exec('PRAGMA foreign_keys = ON');
     ww_migrate($pdo);
     return $pdo;
