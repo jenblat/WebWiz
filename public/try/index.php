@@ -1,9 +1,13 @@
 <?php
 // /try/ — dual-mode landing.
-// 1. /try/ (no params) → ad-funnel landing page (form → loading → reveal → chat edits).
-// 2. /try/?website=... → existing cold-email magic-link loading screen.
+// 1. /try/ (no params)            → ad-funnel form → loading → reveal → chat edits → make-it-real.
+// 2. /try/?website=...             → existing cold-email magic-link loading screen.
+// 3. /try/?t=<token>               → restore reveal view (cancel recovery from Stripe).
+// 4. /try/?success=1&t=<token>     → success view (post-Stripe completion).
 $website = trim((string)($_GET['website'] ?? $_GET['url'] ?? ''));
 $name    = trim((string)($_GET['name'] ?? ''));
+$tparam  = trim((string)($_GET['t'] ?? ''));
+$success = (string)($_GET['success'] ?? '') === '1';
 $is_magic = ($website !== '');
 
 if ($is_magic) {
@@ -63,7 +67,31 @@ if ($is_magic) {
     exit;
 }
 
-// ===== NEW AD-FUNNEL LANDING PAGE =====
+// ===== AD-FUNNEL LANDING PAGE =====
+
+// If we got back from Stripe (cancel or success), look up the token's job for
+// hydration so we land on the reveal/success view with the preview ready.
+$initial_view  = 'form';
+$initial_token = '';
+$initial_biz   = '';
+$initial_edits = 5;
+$initial_preview_url = '';
+if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
+    try {
+        require_once '/var/www/sites/trywebwiz/private/webwiz_lib.php';
+        $db = ww_db();
+        $st = $db->prepare("SELECT business_name, edit_count, generation_mode FROM jobs WHERE token = ? LIMIT 1");
+        $st->execute([$tparam]);
+        $row = $st->fetch(PDO::FETCH_ASSOC);
+        if ($row && ($row['generation_mode'] ?? '') === 'magic') {
+            $initial_token = $tparam;
+            $initial_biz   = (string)$row['business_name'];
+            $initial_edits = max(0, 5 - (int)$row['edit_count']);
+            $initial_preview_url = '/preview/' . $tparam . '/v1/index.html';
+            $initial_view  = $success ? 'success' : 'reveal';
+        }
+    } catch (Throwable $e) { /* fall through to form */ }
+}
 ?><!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8">
@@ -76,34 +104,28 @@ if ($is_magic) {
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Nunito:wght@700;800;900&display=swap" rel="stylesheet">
 <style>
   :root{
-    --teal:#00C4A7;
-    --navy:#12184A;
-    --yellow:#FFBE00;
-    --cream:#FFF8E7;
+    --teal:#00C4A7;--navy:#12184A;--yellow:#FFBE00;--cream:#FFF8E7;
     --display:'Nunito',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
     --body:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
   }
   *,*::before,*::after{box-sizing:border-box;}
   html,body{margin:0;padding:0;}
-  body{
-    font-family:var(--body);color:var(--navy);background:var(--cream);
-    background-image:radial-gradient(rgba(18,24,74,0.07) 1.5px, transparent 1.5px);
-    background-size:24px 24px;
-    line-height:1.5;font-size:16px;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
-    min-height:100vh;
-  }
+  body{font-family:var(--body);color:var(--navy);background:var(--cream);
+    background-image:radial-gradient(rgba(18,24,74,0.07) 1.5px, transparent 1.5px);background-size:24px 24px;
+    line-height:1.5;font-size:16px;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;min-height:100vh;}
   a{color:var(--navy);}
 
   .view{opacity:0;visibility:hidden;height:0;overflow:hidden;transition:opacity 400ms ease;}
   body[data-view="form"]    .view-form    { opacity:1;visibility:visible;height:auto;overflow:visible; }
   body[data-view="loading"] .view-loading { opacity:1;visibility:visible;height:auto;overflow:visible; }
   body[data-view="reveal"]  .view-reveal  { opacity:1;visibility:visible;height:auto;overflow:visible; }
+  body[data-view="success"] .view-success { opacity:1;visibility:visible;height:auto;overflow:visible; }
 
   header.topbar{padding:20px 32px;display:flex;align-items:center;justify-content:space-between;}
   header.topbar .brand{font-family:var(--display);font-weight:900;font-size:22px;letter-spacing:-0.03em;color:var(--navy);text-decoration:none;}
   header.topbar .brand .dot{color:var(--yellow);}
 
-  /* ----------- Hero (Phase 1) ----------- */
+  /* ----------- Hero ----------- */
   main{padding:24px 32px 80px;max-width:1280px;margin:0 auto;}
   .hero{display:grid;grid-template-columns:1.5fr 1fr;gap:48px;align-items:center;margin-top:24px;}
   .hero-copy{max-width:640px;}
@@ -116,8 +138,7 @@ if ($is_magic) {
   .form-card label .opt{font-weight:400;font-size:12px;color:rgba(18,24,74,0.6);margin-left:6px;}
   .form-card input[type=text],.form-card textarea,.form-card input[type=email]{
     width:100%;background:var(--cream);border:2px solid var(--navy);border-radius:8px;
-    padding:14px 16px;font-family:var(--body);font-size:16px;color:var(--navy);font-weight:400;outline:none;transition:box-shadow 120ms ease;
-  }
+    padding:14px 16px;font-family:var(--body);font-size:16px;color:var(--navy);font-weight:400;outline:none;transition:box-shadow 120ms ease;}
   .form-card input[type=text],.form-card input[type=email]{height:48px;}
   .form-card textarea{min-height:108px;resize:vertical;line-height:1.45;}
   .form-card input:focus,.form-card textarea:focus{box-shadow:0 0 0 3px rgba(0,196,167,0.35);}
@@ -139,7 +160,7 @@ if ($is_magic) {
   .sticker{position:absolute;top:8px;right:-4px;transform:rotate(12deg);background:var(--yellow);color:var(--navy);border:2px solid var(--navy);border-radius:14px;padding:10px 14px;font-family:var(--display);font-weight:900;font-size:14px;letter-spacing:-0.01em;box-shadow:4px 4px 0 var(--navy);line-height:1.1;text-align:center;}
   .sticker small{display:block;font-family:var(--body);font-weight:600;font-size:10px;letter-spacing:0.12em;text-transform:uppercase;margin-top:2px;opacity:0.85;}
 
-  /* ----------- Loading (Phase 2) ----------- */
+  /* ----------- Loading ----------- */
   .view-loading{padding:40px 24px 60px;}
   .loading-wrap{max-width:600px;margin:0 auto;text-align:center;}
   .loading-mascot{width:280px;height:280px;margin:0 auto 8px;display:flex;align-items:center;justify-content:center;animation:bob 2s ease-in-out infinite;}
@@ -161,17 +182,11 @@ if ($is_magic) {
   .loading-err.on{display:block;}
   .loading-err .back-btn{display:inline-block;margin-top:10px;background:var(--navy);color:var(--cream);border:none;border-radius:8px;padding:8px 14px;font-family:var(--display);font-weight:900;font-size:13px;cursor:pointer;}
 
-  /* ----------- Reveal + Edit Chat (Phase 3) ----------- */
+  /* ----------- Reveal + Edit Chat ----------- */
   .view-reveal{padding:16px;}
-  .reveal-layout{
-    display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:24px;
-    max-width:1600px;margin:0 auto;align-items:start;
-  }
+  .reveal-layout{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:24px;max-width:1600px;margin:0 auto;align-items:start;}
   .reveal-frame-wrap{position:relative;}
-  .reveal-frame{
-    width:100%;height:80vh;border:2px solid var(--navy);border-radius:16px;
-    background:var(--cream);box-shadow:8px 8px 0 var(--yellow);overflow:hidden;
-  }
+  .reveal-frame{width:100%;height:80vh;border:2px solid var(--navy);border-radius:16px;background:var(--cream);box-shadow:8px 8px 0 var(--yellow);overflow:hidden;}
   .reveal-frame iframe{width:100%;height:100%;border:0;display:block;background:var(--cream);}
   .wizzy-badge-wrap{position:absolute;top:-20px;left:-20px;display:flex;align-items:flex-start;gap:12px;z-index:5;}
   .wizzy-badge{width:80px;height:80px;border-radius:50%;background:var(--cream);border:3px solid var(--navy);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;box-shadow:4px 4px 0 var(--yellow);}
@@ -180,101 +195,76 @@ if ($is_magic) {
   .speech-bubble::before{content:'';position:absolute;left:-12px;top:14px;width:0;height:0;border-top:8px solid transparent;border-bottom:8px solid transparent;border-right:12px solid var(--navy);}
   .speech-bubble::after{content:'';position:absolute;left:-9px;top:16px;width:0;height:0;border-top:6px solid transparent;border-bottom:6px solid transparent;border-right:10px solid var(--cream);}
 
-  /* ---- Edit panel ---- */
-  .edit-panel{
-    background:var(--cream);border:2px solid var(--navy);border-radius:16px;
-    box-shadow:6px 6px 0 var(--navy);
-    display:flex;flex-direction:column;
-    position:sticky;top:16px;
-    max-height:calc(100vh - 32px);
-    min-height:520px;
-    overflow:hidden;
-  }
-  .edit-header{
-    padding:16px 18px;border-bottom:2px solid var(--navy);
-    display:flex;align-items:center;gap:10px;
-    background:var(--cream);
-  }
-  .edit-header-wiz{
-    width:40px;height:40px;border-radius:50%;background:var(--cream);border:2px solid var(--navy);
-    display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;
-  }
+  .edit-panel{background:var(--cream);border:2px solid var(--navy);border-radius:16px;box-shadow:6px 6px 0 var(--navy);display:flex;flex-direction:column;position:sticky;top:16px;max-height:calc(100vh - 32px);min-height:520px;overflow:hidden;}
+  .edit-header{padding:16px 18px;border-bottom:2px solid var(--navy);display:flex;align-items:center;gap:10px;background:var(--cream);}
+  .edit-header-wiz{width:40px;height:40px;border-radius:50%;background:var(--cream);border:2px solid var(--navy);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;}
   .edit-header-wiz img{width:90%;height:90%;object-fit:contain;}
   .edit-header h3{flex:1;font-family:var(--display);font-weight:900;font-size:18px;color:var(--navy);margin:0;letter-spacing:-0.01em;}
-  .edits-chip{
-    background:var(--yellow);color:var(--navy);border:2px solid var(--navy);border-radius:999px;
-    padding:6px 12px;font-family:var(--body);font-weight:700;font-size:12px;letter-spacing:0.04em;
-    white-space:nowrap;
-  }
+  .edits-chip{background:var(--yellow);color:var(--navy);border:2px solid var(--navy);border-radius:999px;padding:6px 12px;font-family:var(--body);font-weight:700;font-size:12px;letter-spacing:0.04em;white-space:nowrap;}
   .edits-chip.zero{background:rgba(255,190,0,0.25);}
 
   .chat-history{flex:1;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:10px;}
-  .chat-history:empty::before{
-    content:'Tip: click a chip below or type your own tweak.';
-    display:block;color:rgba(18,24,74,0.5);font-size:13px;font-style:italic;
-  }
+  .chat-history:empty::before{content:'Tip: click a chip below or type your own tweak.';display:block;color:rgba(18,24,74,0.5);font-size:13px;font-style:italic;}
   .msg{font-family:var(--body);font-weight:400;font-size:14px;line-height:1.45;padding:10px 12px;border-radius:12px;max-width:75%;word-wrap:break-word;}
   .msg-user{background:var(--navy);color:var(--cream);align-self:flex-end;}
   .msg-wiz{background:var(--cream);border:2px solid var(--navy);color:var(--navy);align-self:flex-start;display:flex;gap:8px;align-items:flex-start;}
   .msg-wiz img.tinywiz{width:22px;height:22px;border-radius:50%;flex-shrink:0;}
   .msg-wiz.typing{font-style:italic;opacity:0.75;}
 
-  .suggested-row{
-    padding:12px 18px;border-top:1px solid rgba(18,24,74,0.15);
-    display:flex;flex-wrap:wrap;gap:6px;
-  }
-  .suggested-row .sugchip{
-    background:var(--cream);border:2px solid var(--navy);border-radius:999px;
-    padding:6px 12px;font-family:var(--body);font-weight:600;font-size:13px;color:var(--navy);
-    cursor:pointer;transition:background 120ms ease,color 120ms ease;line-height:1.2;
-  }
+  .suggested-row{padding:12px 18px;border-top:1px solid rgba(18,24,74,0.15);display:flex;flex-wrap:wrap;gap:6px;}
+  .suggested-row .sugchip{background:var(--cream);border:2px solid var(--navy);border-radius:999px;padding:6px 12px;font-family:var(--body);font-weight:600;font-size:13px;color:var(--navy);cursor:pointer;transition:background 120ms ease,color 120ms ease;line-height:1.2;}
   .suggested-row .sugchip:hover{background:var(--navy);color:var(--cream);}
   .suggested-row .sugchip.upload{background:var(--yellow);border-color:var(--navy);}
   .suggested-row .sugchip.upload.pulse{animation:pulseChip 1s ease 1;}
   @keyframes pulseChip{0%{transform:scale(0.85);}50%{transform:scale(1.08);}100%{transform:scale(1);}}
 
   .chat-input-row{padding:12px 18px 16px;border-top:2px solid var(--navy);background:var(--cream);}
-  .chat-input-row textarea{
-    width:100%;background:var(--cream);border:2px solid var(--navy);border-radius:8px;
-    padding:10px 12px;font-family:var(--body);font-size:16px;color:var(--navy);
-    min-height:60px;resize:vertical;outline:none;line-height:1.4;
-  }
+  .chat-input-row textarea{width:100%;background:var(--cream);border:2px solid var(--navy);border-radius:8px;padding:10px 12px;font-family:var(--body);font-size:16px;color:var(--navy);min-height:60px;resize:vertical;outline:none;line-height:1.4;}
   .chat-input-row textarea:focus{box-shadow:0 0 0 3px rgba(0,196,167,0.35);}
   .chat-input-row .row{display:flex;gap:8px;margin-top:8px;justify-content:space-between;align-items:center;}
-  .chat-input-row .iloveit{
-    background:transparent;color:var(--navy);border:2px solid var(--navy);border-radius:8px;
-    padding:8px 12px;font-family:var(--display);font-weight:900;font-size:13px;cursor:pointer;
-  }
+  .chat-input-row .iloveit{background:transparent;color:var(--navy);border:2px solid var(--navy);border-radius:8px;padding:8px 12px;font-family:var(--display);font-weight:900;font-size:13px;cursor:pointer;}
   .chat-input-row .iloveit:hover{background:var(--navy);color:var(--cream);}
-  .chat-input-row .send-btn{
-    height:40px;padding:0 18px;background:var(--yellow);color:var(--navy);
-    border:2px solid var(--navy);border-radius:8px;font-family:var(--display);font-weight:900;font-size:14px;cursor:pointer;
-  }
+  .chat-input-row .send-btn{height:40px;padding:0 18px;background:var(--yellow);color:var(--navy);border:2px solid var(--navy);border-radius:8px;font-family:var(--display);font-weight:900;font-size:14px;cursor:pointer;}
   .chat-input-row .send-btn[disabled]{opacity:0.55;cursor:not-allowed;}
   body[data-cap="hit"] .chat-input-row textarea{opacity:0.5;cursor:not-allowed;background:rgba(248,239,211,0.5);}
-  body[data-cap="hit"] .chat-input-row textarea[readonly]{}
   body[data-cap="hit"] .suggested-row .sugchip{display:none;}
 
-  /* ---- Asset upload modal ---- */
-  .modal-backdrop{
-    display:none;position:fixed;inset:0;background:rgba(18,24,74,0.5);
-    z-index:50;align-items:center;justify-content:center;padding:16px;
-  }
+  /* When the conversion card takes over, hide the chat parts entirely. */
+  body[data-conv="on"] .chat-history,
+  body[data-conv="on"] .suggested-row,
+  body[data-conv="on"] .chat-input-row{display:none;}
+  body[data-conv="on"] .edit-panel{max-height:none;}
+
+  /* ----------- Conversion (Phase 4) ----------- */
+  .conv-card{display:none;padding:24px 22px;}
+  body[data-conv="on"] .conv-card{display:block;}
+  .conv-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px;}
+  .conv-head h2{font-family:var(--display);font-weight:900;font-size:32px;color:var(--navy);margin:0;letter-spacing:-0.02em;line-height:1.05;}
+  .conv-head .wiz-mini{width:54px;height:54px;border-radius:50%;background:var(--cream);border:2px solid var(--navy);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;}
+  .conv-head .wiz-mini img{width:90%;height:90%;object-fit:contain;}
+  .conv-lead{font-size:15px;color:var(--navy);margin:0 0 8px;}
+  .conv-checklist{list-style:none;padding:0;margin:8px 0 0;}
+  .conv-checklist li{display:flex;align-items:flex-start;gap:10px;padding:6px 0;font-size:14px;color:var(--navy);line-height:1.45;}
+  .conv-checklist li .ck{color:var(--teal);font-weight:900;font-size:18px;line-height:1;flex-shrink:0;margin-top:2px;}
+  .conv-price{margin-top:24px;background:var(--yellow);border:2px solid var(--navy);border-radius:16px;padding:20px;box-shadow:4px 4px 0 var(--navy);}
+  .conv-price .big{font-family:var(--display);font-weight:900;font-size:48px;color:var(--navy);letter-spacing:-0.02em;line-height:1;}
+  .conv-price .sub{font-size:16px;color:rgba(18,24,74,0.85);margin-top:4px;}
+  .conv-price .note{font-size:12px;color:rgba(18,24,74,0.65);margin-top:6px;}
+  .conv-cta{display:flex;align-items:center;justify-content:center;width:100%;height:56px;margin-top:24px;background:var(--yellow);color:var(--navy);border:2px solid var(--navy);border-radius:12px;font-family:var(--display);font-weight:900;font-size:18px;cursor:pointer;transition:transform 120ms ease,box-shadow 120ms ease;}
+  .conv-cta:hover{transform:translate(-2px,-2px);box-shadow:4px 4px 0 var(--navy);}
+  .conv-cta[disabled]{opacity:0.6;cursor:not-allowed;transform:none;}
+  .conv-foot{text-align:center;font-size:12px;color:rgba(18,24,74,0.6);margin-top:12px;}
+  .conv-err{display:none;background:#fde2e2;color:#5a0808;border:2px solid #8a0e0e;border-radius:8px;padding:10px 12px;font-size:13px;margin-top:12px;}
+  .conv-err.on{display:block;}
+  .conv-back{display:inline-block;margin-top:10px;background:transparent;color:var(--navy);text-decoration:underline;border:none;font-family:var(--body);font-weight:500;cursor:pointer;font-size:13px;padding:0;}
+
+  /* ----------- Asset upload modal ----------- */
+  .modal-backdrop{display:none;position:fixed;inset:0;background:rgba(18,24,74,0.5);z-index:50;align-items:center;justify-content:center;padding:16px;}
   .modal-backdrop.on{display:flex;}
-  .upload-modal{
-    background:var(--cream);border:2px solid var(--navy);border-radius:16px;
-    box-shadow:8px 8px 0 var(--yellow);
-    max-width:480px;width:100%;padding:24px;
-    max-height:90vh;overflow:auto;
-  }
+  .upload-modal{background:var(--cream);border:2px solid var(--navy);border-radius:16px;box-shadow:8px 8px 0 var(--yellow);max-width:480px;width:100%;padding:24px;max-height:90vh;overflow:auto;}
   .upload-modal h3{font-family:var(--display);font-weight:900;font-size:24px;color:var(--navy);margin:0 0 6px;letter-spacing:-0.01em;}
   .upload-modal .um-sub{font-family:var(--body);font-size:14px;color:rgba(18,24,74,0.7);margin:0 0 18px;}
-  .dropzone{
-    border:2px dashed var(--navy);border-radius:12px;padding:18px 14px;text-align:center;
-    background:rgba(255,248,231,0.5);color:rgba(18,24,74,0.7);
-    font-family:var(--body);font-weight:500;font-size:14px;cursor:pointer;
-    transition:background 120ms ease;margin-top:14px;
-  }
+  .dropzone{border:2px dashed var(--navy);border-radius:12px;padding:18px 14px;text-align:center;background:rgba(255,248,231,0.5);color:rgba(18,24,74,0.7);font-family:var(--body);font-weight:500;font-size:14px;cursor:pointer;transition:background 120ms ease;margin-top:14px;}
   .dropzone.logo{min-height:120px;display:flex;align-items:center;justify-content:center;}
   .dropzone.photos{min-height:200px;display:flex;align-items:center;justify-content:center;flex-direction:column;}
   .dropzone:hover,.dropzone.drag{background:rgba(255,190,0,0.18);}
@@ -282,15 +272,23 @@ if ($is_magic) {
   .dropzone input[type=file]{display:none;}
   .upload-modal .um-actions{display:flex;justify-content:space-between;align-items:center;margin-top:20px;gap:10px;}
   .upload-modal .never{background:none;border:none;color:var(--navy);text-decoration:underline;font-family:var(--body);font-weight:500;cursor:pointer;font-size:14px;padding:8px 0;}
-  .upload-modal .send-up{
-    background:var(--yellow);color:var(--navy);border:2px solid var(--navy);border-radius:10px;
-    height:46px;padding:0 18px;font-family:var(--display);font-weight:900;font-size:15px;cursor:pointer;
-  }
+  .upload-modal .send-up{background:var(--yellow);color:var(--navy);border:2px solid var(--navy);border-radius:10px;height:46px;padding:0 18px;font-family:var(--display);font-weight:900;font-size:15px;cursor:pointer;}
   .upload-modal .send-up[disabled]{opacity:0.55;cursor:not-allowed;}
   .upload-err{display:none;background:#fde2e2;color:#5a0808;border:2px solid #8a0e0e;border-radius:8px;padding:8px 12px;font-size:13px;margin-top:12px;}
   .upload-err.on{display:block;}
 
-  /* ---- Footer ---- */
+  /* ----------- Success ----------- */
+  .view-success{padding:60px 24px 80px;}
+  .success-wrap{max-width:640px;margin:0 auto;text-align:center;}
+  .success-wrap .wiz-circle.success{margin:0 auto 28px;width:200px;height:200px;position:relative;}
+  .success-wrap .wiz-circle.success::after{content:'👍';position:absolute;right:-18px;bottom:-6px;font-size:60px;transform:rotate(-12deg);}
+  .success-wrap h1.h-set{font-family:var(--display);font-weight:900;font-size:72px;letter-spacing:-0.03em;line-height:1.02;color:var(--navy);margin:0 0 14px;}
+  .success-wrap .s-lead{font-size:20px;color:var(--navy);opacity:0.9;margin:0 0 28px;line-height:1.5;}
+  .success-wrap .s-row{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;}
+  .success-wrap .s-row a{display:inline-flex;align-items:center;justify-content:center;height:48px;padding:0 22px;background:var(--yellow);color:var(--navy);border:2px solid var(--navy);border-radius:10px;font-family:var(--display);font-weight:900;font-size:15px;text-decoration:none;}
+  .success-wrap .s-row a.ghost{background:transparent;}
+
+  /* ----------- Footer ----------- */
   footer{border-top:1px solid var(--navy);padding:24px 32px;font-size:12px;color:rgba(18,24,74,0.7);}
   footer .row{max-width:1280px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;}
 
@@ -320,6 +318,11 @@ if ($is_magic) {
     .speech-bubble{font-size:13px;padding:8px 12px;max-width:200px;}
     .view-reveal{padding:12px;}
     .edit-panel{box-shadow:4px 4px 0 var(--navy);}
+    .conv-head h2{font-size:26px;}
+    .conv-price .big{font-size:40px;}
+    .success-wrap h1.h-set{font-size:48px;}
+    .success-wrap .s-lead{font-size:17px;}
+    .success-wrap .wiz-circle.success{width:160px;height:160px;}
   }
   @media (max-width:375px){
     h1{font-size:36px;} .form-card{padding:20px;} .chip{font-size:13px;padding:7px 12px;}
@@ -327,7 +330,7 @@ if ($is_magic) {
   }
 </style>
 </head>
-<body data-view="form" data-cap="ok">
+<body data-view="<?= htmlspecialchars($initial_view, ENT_QUOTES) ?>" data-cap="<?= $initial_edits === 0 ? 'hit' : 'ok' ?>">
 
 <header class="topbar">
   <a href="/try" class="brand">WebWiz<span class="dot">.</span></a>
@@ -362,9 +365,7 @@ if ($is_magic) {
     </div>
 
     <div class="hero-mascot">
-      <div class="wiz-circle">
-        <img src="/preview/wizzy-wave.gif" alt="Wizzy the WebWiz spider holding a laptop">
-      </div>
+      <div class="wiz-circle"><img src="/preview/wizzy-wave.gif" alt="Wizzy"></div>
       <div class="sticker">Made with care<small>by Wizzy</small></div>
     </div>
   </section>
@@ -399,7 +400,7 @@ if ($is_magic) {
   <div class="reveal-layout">
     <div class="reveal-frame-wrap">
       <div class="reveal-frame">
-        <iframe id="previewFrame" src="about:blank" loading="eager" title="Your new website preview"></iframe>
+        <iframe id="previewFrame" src="<?= htmlspecialchars($initial_preview_url ?: 'about:blank', ENT_QUOTES) ?>" loading="eager" title="Your new website preview"></iframe>
       </div>
       <div class="wizzy-badge-wrap">
         <div class="wizzy-badge"><img src="/preview/wizzy-wave.gif" alt="Wizzy"></div>
@@ -411,7 +412,7 @@ if ($is_magic) {
       <div class="edit-header">
         <div class="edit-header-wiz"><img src="/preview/wizzy-wave.gif" alt="Wizzy"></div>
         <h3>Chat with Wizzy</h3>
-        <span class="edits-chip" id="editsChip">5 edits remaining</span>
+        <span class="edits-chip <?= $initial_edits === 0 ? 'zero' : '' ?>" id="editsChip"><?= (int)$initial_edits ?> edit<?= $initial_edits === 1 ? '' : 's' ?> remaining</span>
       </div>
 
       <div class="chat-history" id="chatHistory" aria-live="polite"></div>
@@ -424,13 +425,55 @@ if ($is_magic) {
       </div>
 
       <div class="chat-input-row">
-        <textarea id="chatInput" placeholder="Tell Wizzy what to tweak..."></textarea>
+        <textarea id="chatInput" placeholder="Tell Wizzy what to tweak..."<?= $initial_edits === 0 ? ' readonly' : '' ?>></textarea>
         <div class="row">
           <button type="button" class="iloveit" id="iLoveIt">I love it &rarr;</button>
-          <button type="button" class="send-btn" id="chatSend">Send &rarr;</button>
+          <button type="button" class="send-btn" id="chatSend"<?= $initial_edits === 0 ? ' disabled' : '' ?>>Send &rarr;</button>
         </div>
       </div>
+
+      <!-- ============ Phase 4 conversion card (lives in same panel) ============ -->
+      <div class="conv-card" id="convCard">
+        <div class="conv-head">
+          <h2>Want to make it real?</h2>
+          <div class="wiz-mini"><img src="/preview/wizzy-wave.gif" alt="Wizzy"></div>
+        </div>
+        <p class="conv-lead">Wizzy&rsquo;s design is yours, free. To go live we&rsquo;ll:</p>
+        <ul class="conv-checklist">
+          <li><span class="ck">&#10003;</span> Polish the design by hand (real human designer review)</li>
+          <li><span class="ck">&#10003;</span> Set up your domain and point it to your new site</li>
+          <li><span class="ck">&#10003;</span> Host it on our servers and keep it running</li>
+          <li><span class="ck">&#10003;</span> Set up your business email</li>
+          <li><span class="ck">&#10003;</span> Be on call for small tweaks the first 30 days</li>
+        </ul>
+        <div class="conv-price">
+          <div class="big">$500 once</div>
+          <div class="sub">+ $50/month to host</div>
+          <div class="note">Cancel hosting anytime. The site stays yours either way.</div>
+        </div>
+        <button type="button" class="conv-cta" id="convCta">Make it real &rarr;</button>
+        <p class="conv-foot">We handle everything. You don&rsquo;t touch a thing.</p>
+        <div class="conv-err" id="convErr"></div>
+        <button type="button" class="conv-back" id="convBack">&larr; Not yet, more tweaks</button>
+      </div>
     </aside>
+  </div>
+</main>
+
+<!-- ===================== SUCCESS VIEW ===================== -->
+<main class="view view-success">
+  <div class="success-wrap">
+    <div class="wiz-circle success" style="border:3px solid var(--navy);box-shadow:8px 8px 0 var(--yellow);">
+      <img src="/preview/wizzy-wave.gif" alt="Wizzy">
+    </div>
+    <h1 class="h-set">You&rsquo;re set.</h1>
+    <p class="s-lead">Your site is on its way to going live. We&rsquo;ll be in touch within 24 hours.</p>
+    <div class="s-row">
+      <?php if ($initial_preview_url): ?>
+        <a href="<?= htmlspecialchars($initial_preview_url, ENT_QUOTES) ?>" target="_blank" rel="noopener">View your preview</a>
+      <?php endif; ?>
+      <a class="ghost" href="mailto:hello@trywebwiz.com">Email us</a>
+    </div>
   </div>
 </main>
 
@@ -439,19 +482,15 @@ if ($is_magic) {
   <div class="upload-modal">
     <h3 id="umTitle">Got assets? Send &rsquo;em over.</h3>
     <p class="um-sub">Logo and up to 3 photos. We&rsquo;ll work them in.</p>
-
     <div class="dropzone logo" id="dzLogo" data-kind="logo">
       <div class="dz-inner"><strong>Drop your logo</strong><br><small>PNG or SVG, up to 2 MB</small></div>
       <input type="file" id="logoInput" accept=".png,.svg,image/png,image/svg+xml,image/jpeg">
     </div>
-
     <div class="dropzone photos" id="dzPhotos" data-kind="photos">
       <div class="dz-inner"><strong>Drop photos</strong><br><small>JPG or PNG, up to 5 MB each, max 3</small></div>
       <input type="file" id="photosInput" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" multiple>
     </div>
-
     <div class="upload-err" id="uploadErr"></div>
-
     <div class="um-actions">
       <button type="button" class="never" id="uploadCancel">Never mind</button>
       <button type="button" class="send-up" id="uploadSend">Send to Wizzy &rarr;</button>
@@ -467,12 +506,20 @@ if ($is_magic) {
 </footer>
 
 <script>
+window.__TRY_INIT__ = {
+  token: <?= json_encode($initial_token) ?>,
+  businessName: <?= json_encode($initial_biz) ?>,
+  editsRemaining: <?= (int)$initial_edits ?>,
+  view: <?= json_encode($initial_view) ?>,
+  previewUrl: <?= json_encode($initial_preview_url) ?>
+};
+</script>
+<script>
 (function(){
-  // ---------- shared refs ----------
+  var INIT = window.__TRY_INIT__ || {};
   var body = document.body;
   var EDIT_CAP = 5;
 
-  // form view
   var form = document.getElementById('tryForm');
   var descField = form.querySelector('[data-field="description"]');
   var websiteField = form.querySelector('[data-field="website"]');
@@ -480,7 +527,6 @@ if ($is_magic) {
   var web = document.getElementById('website');
   var ctaBtn = document.getElementById('ctaBtn');
 
-  // loading view
   var loadingHead = document.getElementById('loadingHead');
   var loadingStatus = document.getElementById('loadingStatus');
   var progFill = document.getElementById('progFill');
@@ -492,7 +538,6 @@ if ($is_magic) {
   var loadingErrMsg = document.getElementById('loadingErrMsg');
   var backToForm = document.getElementById('backToForm');
 
-  // reveal/chat view
   var previewFrame = document.getElementById('previewFrame');
   var editsChip = document.getElementById('editsChip');
   var chatHistory = document.getElementById('chatHistory');
@@ -501,7 +546,11 @@ if ($is_magic) {
   var chatSend = document.getElementById('chatSend');
   var iLoveIt = document.getElementById('iLoveIt');
 
-  // upload modal
+  var convCard = document.getElementById('convCard');
+  var convCta = document.getElementById('convCta');
+  var convBack = document.getElementById('convBack');
+  var convErr = document.getElementById('convErr');
+
   var umBackdrop = document.getElementById('uploadModalBackdrop');
   var dzLogo = document.getElementById('dzLogo');
   var dzPhotos = document.getElementById('dzPhotos');
@@ -511,18 +560,14 @@ if ($is_magic) {
   var uploadSend = document.getElementById('uploadSend');
   var uploadCancel = document.getElementById('uploadCancel');
 
-  // state
-  var state = { token: null, businessName: null, editsRemaining: EDIT_CAP, sending: false };
+  var state = {
+    token: INIT.token || null,
+    businessName: INIT.businessName || null,
+    editsRemaining: typeof INIT.editsRemaining === 'number' ? INIT.editsRemaining : EDIT_CAP,
+    sending: false
+  };
 
-  var statusMessages = [
-    'Picking your colors…',
-    'Choosing fonts that fit you…',
-    'Writing your hero copy…',
-    'Laying out your homepage…',
-    'Wizzy is working fast…',
-    'Adding the finishing touches…'
-  ];
-
+  var statusMessages = ['Picking your colors…','Choosing fonts that fit you…','Writing your hero copy…','Laying out your homepage…','Wizzy is working fast…','Adding the finishing touches…'];
   var MIN_DESC = 20;
   var WEBSITE_RX = /^([\w-]+\.)+[a-z]{2,}([\/?#].*)?$/i;
 
@@ -532,34 +577,21 @@ if ($is_magic) {
     return WEBSITE_RX.test(stripped);
   }
   function validateDesc(){ return ((desc.value || '').trim().length >= MIN_DESC); }
-  desc.addEventListener('input', function(){
-    if (descField.classList.contains('invalid') && validateDesc()) descField.classList.remove('invalid');
-  });
-  web.addEventListener('input', function(){
-    if (websiteField.classList.contains('invalid') && (web.value.trim() === '' || validateWebsite())) websiteField.classList.remove('invalid');
-  });
+  desc.addEventListener('input', function(){ if (descField.classList.contains('invalid') && validateDesc()) descField.classList.remove('invalid'); });
+  web.addEventListener('input', function(){ if (websiteField.classList.contains('invalid') && (web.value.trim() === '' || validateWebsite())) websiteField.classList.remove('invalid'); });
 
   function setView(v){ body.setAttribute('data-view', v); window.scrollTo({top:0, behavior:'smooth'}); }
 
-  // ---------- loading state machine ----------
+  // ---------- loading ----------
   var statusIdx = 0, statusTimer = null, progressTimer = null, lateTimer = null, generating = false;
   function startLoadingTickers(){
-    var pct = 5;
-    progFill.style.width = pct + '%';
-    loadingStatus.textContent = statusMessages[0];
-    statusIdx = 0;
+    var pct = 5; progFill.style.width = pct + '%'; loadingStatus.textContent = statusMessages[0]; statusIdx = 0;
     statusTimer = setInterval(function(){
       statusIdx = Math.min(statusIdx + 1, statusMessages.length - 1);
       loadingStatus.style.opacity = '0';
-      setTimeout(function(){
-        loadingStatus.textContent = statusMessages[statusIdx];
-        loadingStatus.style.opacity = '1';
-      }, 220);
+      setTimeout(function(){ loadingStatus.textContent = statusMessages[statusIdx]; loadingStatus.style.opacity = '1'; }, 220);
     }, 4000);
-    progressTimer = setInterval(function(){
-      pct = Math.min(pct + 6, 88);
-      progFill.style.width = pct + '%';
-    }, 3000);
+    progressTimer = setInterval(function(){ pct = Math.min(pct + 6, 88); progFill.style.width = pct + '%'; }, 3000);
     lateTimer = setTimeout(function(){ lateFallback.classList.add('on'); }, 90000);
   }
   function stopLoadingTickers(){
@@ -570,39 +602,26 @@ if ($is_magic) {
   function showLoadingError(msg){
     stopLoadingTickers();
     loadingErrMsg.textContent = msg || 'Something went wrong on our end. Try again?';
-    loadingErr.classList.add('on');
-    generating = false;
+    loadingErr.classList.add('on'); generating = false;
   }
   backToForm.addEventListener('click', function(){
-    loadingErr.classList.remove('on');
-    lateFallback.classList.remove('on');
-    progFill.style.width = '5%';
-    setView('form');
+    loadingErr.classList.remove('on'); lateFallback.classList.remove('on');
+    progFill.style.width = '5%'; setView('form');
   });
 
-  // ---------- form submit ----------
   form.addEventListener('submit', function(e){
     e.preventDefault();
     if (generating) return;
-    var descOk = validateDesc();
-    var webOk  = validateWebsite();
-    descField.classList.toggle('invalid', !descOk);
-    websiteField.classList.toggle('invalid', !webOk);
+    var descOk = validateDesc(); var webOk  = validateWebsite();
+    descField.classList.toggle('invalid', !descOk); websiteField.classList.toggle('invalid', !webOk);
     if (!descOk) { desc.focus(); return; }
     if (!webOk)  { web.focus();  return; }
 
-    generating = true;
-    ctaBtn.disabled = true;
-
+    generating = true; ctaBtn.disabled = true;
     var hostGuess = '';
-    try {
-      var raw = web.value.trim().replace(/^https?:\/\//i,'').replace(/^www\./i,'');
-      hostGuess = raw.split('/')[0].split('?')[0];
-    } catch(e){}
+    try { var raw = web.value.trim().replace(/^https?:\/\//i,'').replace(/^www\./i,''); hostGuess = raw.split('/')[0].split('?')[0]; } catch(e){}
     loadingHead.innerHTML = 'Wizzy is designing ' + (hostGuess ? escapeHtml(hostGuess) : 'your site') + '…';
-
-    setView('loading');
-    startLoadingTickers();
+    setView('loading'); startLoadingTickers();
 
     fetch('/api/magic.php', {
       method: 'POST',
@@ -612,30 +631,21 @@ if ($is_magic) {
     .then(function(r){ return r.json().then(function(j){ return { ok: r.ok, body: j }; }); })
     .then(function(res){
       if (res.body && res.body.ok && (res.body.preview_url || res.body.url)) {
-        progFill.style.width = '100%';
-        loadingStatus.textContent = 'Ready! Opening your preview…';
+        progFill.style.width = '100%'; loadingStatus.textContent = 'Ready! Opening your preview…';
         state.token = res.body.token || null;
         state.businessName = res.body.business_name || res.body.business || 'your site';
         loadingHead.innerHTML = 'Wizzy is designing ' + escapeHtml(state.businessName) + '…';
         stopLoadingTickers();
         var previewUrl = res.body.preview_url || (res.body.url + 'v1/index.html');
-        setTimeout(function(){
-          previewFrame.src = previewUrl;
-          setView('reveal');
-          chatInput.focus();
-        }, 600);
+        setTimeout(function(){ previewFrame.src = previewUrl; setView('reveal'); chatInput.focus(); }, 600);
       } else {
         showLoadingError((res.body && res.body.error) ? res.body.error : 'Generation failed. Try again?');
         ctaBtn.disabled = false;
       }
     })
-    .catch(function(e){
-      showLoadingError('Network error: ' + (e && e.message ? e.message : 'unknown'));
-      ctaBtn.disabled = false;
-    });
+    .catch(function(e){ showLoadingError('Network error: ' + (e && e.message ? e.message : 'unknown')); ctaBtn.disabled = false; });
   });
 
-  // 90s late notify
   notifyForm.addEventListener('submit', function(e){
     e.preventDefault();
     var em = (notifyEmail.value || '').trim(); if (!em) return;
@@ -645,22 +655,17 @@ if ($is_magic) {
 
   // ---------- chat / edits ----------
   function appendMsg(kind, text){
-    var div = document.createElement('div');
-    div.className = 'msg msg-' + kind;
+    var div = document.createElement('div'); div.className = 'msg msg-' + kind;
     if (kind === 'wiz') {
       var img = document.createElement('img'); img.className='tinywiz'; img.src='/preview/wizzy-wave.gif'; img.alt='Wizzy';
       div.appendChild(img);
       var span = document.createElement('span'); span.textContent = text; div.appendChild(span);
-    } else {
-      div.textContent = text;
-    }
-    chatHistory.appendChild(div);
-    chatHistory.scrollTop = chatHistory.scrollHeight;
+    } else { div.textContent = text; }
+    chatHistory.appendChild(div); chatHistory.scrollTop = chatHistory.scrollHeight;
     return div;
   }
   function appendTyping(){
-    var div = document.createElement('div');
-    div.className = 'msg msg-wiz typing';
+    var div = document.createElement('div'); div.className = 'msg msg-wiz typing';
     var img = document.createElement('img'); img.className='tinywiz'; img.src='/preview/wizzy-wave.gif'; img.alt='Wizzy';
     div.appendChild(img);
     var span = document.createElement('span'); span.textContent = 'Updating now…'; div.appendChild(span);
@@ -672,39 +677,33 @@ if ($is_magic) {
     state.editsRemaining = n;
     editsChip.textContent = n === 1 ? '1 edit remaining' : (n + ' edits remaining');
     editsChip.classList.toggle('zero', n === 0);
-    // Unlock asset chip at 3rd edit (i.e. 2 remaining means 3 used).
     if ((EDIT_CAP - n) >= 3) addUploadChip();
     if (n === 0) {
       body.setAttribute('data-cap', 'hit');
-      chatInput.setAttribute('readonly', 'true');
-      chatSend.disabled = true;
+      chatInput.setAttribute('readonly', 'true'); chatSend.disabled = true;
     }
   }
 
   function addUploadChip(){
     if (suggestedRow.querySelector('.sugchip.upload')) return;
-    var s = document.createElement('span');
-    s.className = 'sugchip upload pulse';
+    var s = document.createElement('span'); s.className = 'sugchip upload pulse';
     s.innerHTML = '📎 Upload your logo or photos';
     s.addEventListener('click', openUploadModal);
     suggestedRow.appendChild(s);
     setTimeout(function(){ s.classList.remove('pulse'); }, 1100);
   }
 
-  // Chip click prefill
   suggestedRow.addEventListener('click', function(e){
     var c = e.target.closest('.sugchip'); if (!c) return;
     if (c.classList.contains('upload')) { openUploadModal(); return; }
     var fill = c.getAttribute('data-fill') || c.textContent;
-    chatInput.value = fill;
-    chatInput.focus();
+    chatInput.value = fill; chatInput.focus();
   });
 
   function sendEdit(message){
     if (!state.token || state.sending || state.editsRemaining <= 0) return;
     state.sending = true; chatSend.disabled = true;
-    appendMsg('user', message);
-    chatInput.value = '';
+    appendMsg('user', message); chatInput.value = '';
     var typing = appendTyping();
 
     fetch('/api/edit.php', {
@@ -717,15 +716,13 @@ if ($is_magic) {
       typing.remove();
       var b = res.body || {};
       if (b.ok) {
-        // Reload iframe with cache-bust
         var src = b.preview_url || (('/preview/' + state.token + '/v1/index.html?e=' + Date.now()));
         previewFrame.src = src;
         appendMsg('wiz', b.reply || "Done. How's that?");
         updateEditsChip(typeof b.edits_remaining === 'number' ? b.edits_remaining : (state.editsRemaining - 1));
-        if (b.cap_hit) showCapMessage();
+        if (b.cap_hit) onCapHit();
       } else if (b.cap_hit) {
-        // Cap was already reached server-side
-        updateEditsChip(0); showCapMessage(b.reply);
+        updateEditsChip(0); onCapHit(b.reply);
       } else {
         appendMsg('wiz', 'Hmm, that one didn\'t take. ' + (b.error || 'Try wording it a different way?'));
       }
@@ -737,11 +734,45 @@ if ($is_magic) {
     });
   }
 
-  function showCapMessage(customMsg){
+  function onCapHit(customMsg){
     var msg = customMsg || "That's all the tweaks I can do here. If you love where it's at, let's make it real. If it still needs work, my human teammates can take it from here once you launch it.";
     appendMsg('wiz', msg);
-    // Phase 4 will swap the panel content for the conversion card. For now, just disable input.
+    setTimeout(showConvCard, 700);
   }
+
+  function showConvCard(){
+    body.setAttribute('data-conv', 'on');
+    convErr.classList.remove('on');
+    setTimeout(function(){ convCard.scrollIntoView({ behavior:'smooth', block:'start' }); }, 50);
+  }
+  function hideConvCard(){
+    body.removeAttribute('data-conv');
+  }
+  convBack.addEventListener('click', hideConvCard);
+
+  convCta.addEventListener('click', function(){
+    if (!state.token) { convErr.textContent = 'Lost track of your preview — refresh and try again.'; convErr.classList.add('on'); return; }
+    convCta.disabled = true; convCta.textContent = 'Spinning up checkout…';
+    convErr.classList.remove('on');
+    fetch('/api/try_checkout.php', {
+      method:'POST',
+      headers: { 'Content-Type':'application/json','Accept':'application/json' },
+      body: JSON.stringify({ token: state.token })
+    })
+    .then(function(r){ return r.json().then(function(j){ return { ok:r.ok, body:j }; }); })
+    .then(function(res){
+      var b = res.body || {};
+      if (b.ok && b.checkout_url) { window.location.href = b.checkout_url; return; }
+      convErr.textContent = b.error || 'Could not start checkout. Try again?';
+      convErr.classList.add('on');
+      convCta.disabled = false; convCta.textContent = 'Make it real →';
+    })
+    .catch(function(e){
+      convErr.textContent = 'Network error: ' + (e && e.message || 'unknown');
+      convErr.classList.add('on');
+      convCta.disabled = false; convCta.textContent = 'Make it real →';
+    });
+  });
 
   chatSend.addEventListener('click', function(){
     var m = (chatInput.value || '').trim();
@@ -752,12 +783,10 @@ if ($is_magic) {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); chatSend.click(); }
   });
 
-  // "I love it" → for Phase 3 we just show the cap message immediately.
-  // Phase 4 will trigger the conversion card here.
   iLoveIt.addEventListener('click', function(){
     appendMsg('user', 'I love it.');
-    updateEditsChip(0);
-    showCapMessage();
+    appendMsg('wiz', 'Heck yes. Let\'s make it real.');
+    setTimeout(showConvCard, 500);
   });
 
   // ---------- upload modal ----------
@@ -766,13 +795,11 @@ if ($is_magic) {
 
   function openUploadModal(){
     if (state.editsRemaining <= 0) return;
-    umBackdrop.classList.add('on');
-    uploadErr.classList.remove('on');
+    umBackdrop.classList.add('on'); uploadErr.classList.remove('on');
     document.body.style.overflow = 'hidden';
   }
   function closeUploadModal(){
-    umBackdrop.classList.remove('on');
-    document.body.style.overflow = '';
+    umBackdrop.classList.remove('on'); document.body.style.overflow = '';
     pickedLogo = null; pickedPhotos = [];
     logoInput.value = ''; photosInput.value = '';
     resetDz(dzLogo, 'Drop your logo', 'PNG or SVG, up to 2 MB');
@@ -795,12 +822,8 @@ if ($is_magic) {
 
   uploadCancel.addEventListener('click', closeUploadModal);
   umBackdrop.addEventListener('click', function(e){ if (e.target === umBackdrop) closeUploadModal(); });
-
-  // Click dropzones to open file picker
   dzLogo.addEventListener('click', function(e){ if (e.target.tagName !== 'INPUT') logoInput.click(); });
   dzPhotos.addEventListener('click', function(e){ if (e.target.tagName !== 'INPUT') photosInput.click(); });
-
-  // File pickers
   logoInput.addEventListener('change', function(){
     if (!logoInput.files || !logoInput.files[0]) return;
     pickedLogo = logoInput.files[0]; showPickedLogo(pickedLogo);
@@ -811,25 +834,17 @@ if ($is_magic) {
     showPickedPhotos(pickedPhotos);
   });
 
-  // Drag-and-drop
   function makeDroppable(dz, handler){
     ['dragenter','dragover'].forEach(function(ev){ dz.addEventListener(ev, function(e){ e.preventDefault(); dz.classList.add('drag'); }); });
     ['dragleave','drop'].forEach(function(ev){ dz.addEventListener(ev, function(e){ e.preventDefault(); dz.classList.remove('drag'); }); });
-    dz.addEventListener('drop', function(e){
-      var files = e.dataTransfer && e.dataTransfer.files; if (!files || !files.length) return;
-      handler(files);
-    });
+    dz.addEventListener('drop', function(e){ var files = e.dataTransfer && e.dataTransfer.files; if (!files || !files.length) return; handler(files); });
   }
   makeDroppable(dzLogo, function(files){ pickedLogo = files[0]; showPickedLogo(pickedLogo); });
-  makeDroppable(dzPhotos, function(files){
-    pickedPhotos = Array.prototype.slice.call(files, 0, 3); showPickedPhotos(pickedPhotos);
-  });
+  makeDroppable(dzPhotos, function(files){ pickedPhotos = Array.prototype.slice.call(files, 0, 3); showPickedPhotos(pickedPhotos); });
 
   uploadSend.addEventListener('click', function(){
     uploadErr.classList.remove('on');
-    if (!pickedLogo && (!pickedPhotos || !pickedPhotos.length)) {
-      uploadErr.textContent = 'Pick a logo or at least one photo first.'; uploadErr.classList.add('on'); return;
-    }
+    if (!pickedLogo && (!pickedPhotos || !pickedPhotos.length)) { uploadErr.textContent = 'Pick a logo or at least one photo first.'; uploadErr.classList.add('on'); return; }
     if (!state.token) { uploadErr.textContent = 'No preview to attach to.'; uploadErr.classList.add('on'); return; }
 
     uploadSend.disabled = true; uploadSend.textContent = 'Sending...';
@@ -837,7 +852,6 @@ if ($is_magic) {
     fd.append('token', state.token);
     if (pickedLogo) fd.append('logo', pickedLogo, pickedLogo.name);
     if (pickedPhotos) pickedPhotos.forEach(function(p){ fd.append('photos[]', p, p.name); });
-
     appendMsg('user', '📎 Sent ' + (pickedLogo ? 'logo' : '') + (pickedLogo && pickedPhotos.length ? ' + ' : '') + (pickedPhotos.length ? (pickedPhotos.length + ' photo' + (pickedPhotos.length===1?'':'s')) : ''));
     var typing = appendTyping();
     closeUploadModal();
@@ -845,21 +859,23 @@ if ($is_magic) {
     fetch('/api/upload.php', { method:'POST', body: fd })
       .then(function(r){ return r.json().then(function(j){ return { ok:r.ok, body:j }; }); })
       .then(function(res){
-        typing.remove();
-        var b = res.body || {};
+        typing.remove(); var b = res.body || {};
         if (b.ok) {
           var src = b.preview_url || (('/preview/' + state.token + '/v1/index.html?e=' + Date.now()));
           previewFrame.src = src;
           appendMsg('wiz', b.reply || "Got it. I'll work these in.");
           updateEditsChip(typeof b.edits_remaining === 'number' ? b.edits_remaining : (state.editsRemaining - 1));
-          if (b.cap_hit) showCapMessage();
-        } else {
-          appendMsg('wiz', 'Upload failed: ' + (b.error || 'something went wrong'));
-        }
+          if (b.cap_hit) onCapHit();
+        } else { appendMsg('wiz', 'Upload failed: ' + (b.error || 'something went wrong')); }
       })
       .catch(function(e){ typing.remove(); appendMsg('wiz', 'Network hiccup on the upload: ' + (e && e.message || 'unknown')); })
       .finally(function(){ uploadSend.disabled = false; uploadSend.textContent = 'Send to Wizzy →'; });
   });
+
+  // ---------- on-load hydration ----------
+  // If PHP gave us an initial token (Stripe cancel recovery), the upload chip
+  // should be visible if we're already 3+ edits in.
+  if (state.token && state.editsRemaining <= 2) addUploadChip();
 
   // ---------- helpers ----------
   function escapeHtml(s){ return String(s).replace(/[&<>"']/g, function(c){
