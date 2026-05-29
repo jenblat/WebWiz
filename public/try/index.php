@@ -652,7 +652,7 @@ window.__TRY_INIT__ = {
     // Late-fallback ('want him to email you when it's ready?') stays at 90s
     // — that's when most generations should have landed; if not, give the
     // user the bail-out option.
-    lateTimer = setTimeout(function(){ lateFallback.classList.add('on'); }, 90000);
+    lateTimer = setTimeout(function(){ lateFallback.classList.add('on'); }, 45000);
   }
   function stopLoadingTickers(){
     if (statusTimer)   { clearInterval(statusTimer);   statusTimer = null; }

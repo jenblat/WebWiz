@@ -6,8 +6,11 @@
 // Scrapes the site, generates v variants synchronously, writes preview files,
 // returns JSON { ok, token, url, business }.
 declare(strict_types=1);
-@set_time_limit(0);
-ignore_user_abort(true);
+// Wall-clock cap so a stuck Anthropic call / cURL hang can't zombie an lsphp
+// worker and hold the SQLite writer lock for minutes (which is what happened
+// to Omar — a 16-minute stuck request blocked every subsequent gen).
+@set_time_limit(180);
+ignore_user_abort(false);
 header('Content-Type: application/json');
 
 require_once '/var/www/sites/trywebwiz/private/worker.php'; // provides generation functions (queue loop is CLI-only)
