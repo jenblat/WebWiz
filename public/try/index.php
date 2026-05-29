@@ -1,6 +1,6 @@
 <?php
 // /try/ — dual-mode landing.
-// 1. /try/ (no params) → ad-funnel landing page (form → loading → reveal flow).
+// 1. /try/ (no params) → ad-funnel landing page (form → loading → reveal → chat edits).
 // 2. /try/?website=... → existing cold-email magic-link loading screen.
 $website = trim((string)($_GET['website'] ?? $_GET['url'] ?? ''));
 $name    = trim((string)($_GET['name'] ?? ''));
@@ -75,7 +75,6 @@ if ($is_magic) {
 <link rel="preload" as="image" href="/preview/wizzy-wave.gif">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Nunito:wght@700;800;900&display=swap" rel="stylesheet">
 <style>
-  /* ---- Brand tokens (strict palette) ---- */
   :root{
     --teal:#00C4A7;
     --navy:#12184A;
@@ -87,31 +86,24 @@ if ($is_magic) {
   *,*::before,*::after{box-sizing:border-box;}
   html,body{margin:0;padding:0;}
   body{
-    font-family:var(--body);
-    color:var(--navy);
-    background:var(--cream);
+    font-family:var(--body);color:var(--navy);background:var(--cream);
     background-image:radial-gradient(rgba(18,24,74,0.07) 1.5px, transparent 1.5px);
     background-size:24px 24px;
-    line-height:1.5;
-    font-size:16px;
-    -webkit-font-smoothing:antialiased;
-    text-rendering:optimizeLegibility;
+    line-height:1.5;font-size:16px;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
     min-height:100vh;
   }
   a{color:var(--navy);}
 
-  /* ---- View state machine ---- */
   .view{opacity:0;visibility:hidden;height:0;overflow:hidden;transition:opacity 400ms ease;}
   body[data-view="form"]    .view-form    { opacity:1;visibility:visible;height:auto;overflow:visible; }
   body[data-view="loading"] .view-loading { opacity:1;visibility:visible;height:auto;overflow:visible; }
   body[data-view="reveal"]  .view-reveal  { opacity:1;visibility:visible;height:auto;overflow:visible; }
 
-  /* ---- Header ---- */
   header.topbar{padding:20px 32px;display:flex;align-items:center;justify-content:space-between;}
   header.topbar .brand{font-family:var(--display);font-weight:900;font-size:22px;letter-spacing:-0.03em;color:var(--navy);text-decoration:none;}
   header.topbar .brand .dot{color:var(--yellow);}
 
-  /* ---- Hero ---- */
+  /* ----------- Hero (Phase 1) ----------- */
   main{padding:24px 32px 80px;max-width:1280px;margin:0 auto;}
   .hero{display:grid;grid-template-columns:1.5fr 1fr;gap:48px;align-items:center;margin-top:24px;}
   .hero-copy{max-width:640px;}
@@ -119,15 +111,12 @@ if ($is_magic) {
   h1{font-family:var(--display);font-weight:900;font-size:72px;letter-spacing:-0.03em;line-height:1.02;color:var(--navy);margin:0 0 18px;}
   h1 .parens{display:block;font-size:0.55em;font-weight:800;letter-spacing:-0.02em;opacity:0.85;margin-top:6px;}
   .lead{font-size:22px;line-height:1.45;color:var(--navy);opacity:0.85;margin:0 0 28px;font-weight:400;}
-
-  /* ---- Form card ---- */
   .form-card{background:var(--cream);border:2px solid var(--navy);border-radius:16px;padding:32px;box-shadow:6px 6px 0 var(--navy);max-width:560px;}
   .form-card label{display:block;font-family:var(--body);font-weight:600;font-size:14px;color:var(--navy);margin-bottom:8px;letter-spacing:0.01em;}
   .form-card label .opt{font-weight:400;font-size:12px;color:rgba(18,24,74,0.6);margin-left:6px;}
   .form-card input[type=text],.form-card textarea,.form-card input[type=email]{
     width:100%;background:var(--cream);border:2px solid var(--navy);border-radius:8px;
-    padding:14px 16px;font-family:var(--body);font-size:16px;color:var(--navy);font-weight:400;
-    outline:none;transition:box-shadow 120ms ease;
+    padding:14px 16px;font-family:var(--body);font-size:16px;color:var(--navy);font-weight:400;outline:none;transition:box-shadow 120ms ease;
   }
   .form-card input[type=text],.form-card input[type=email]{height:48px;}
   .form-card textarea{min-height:108px;resize:vertical;line-height:1.45;}
@@ -137,147 +126,169 @@ if ($is_magic) {
   .form-card .field.invalid input,.form-card .field.invalid textarea{border-color:#8a0e0e;}
   .form-card .field.invalid .err-msg{display:block;}
 
-  .cta{
-    display:flex;align-items:center;justify-content:center;
-    width:100%;height:56px;margin-top:24px;
-    background:var(--yellow);color:var(--navy);border:2px solid var(--navy);border-radius:12px;
-    font-family:var(--display);font-weight:900;font-size:18px;letter-spacing:-0.01em;
-    cursor:pointer;transition:transform 120ms ease,box-shadow 120ms ease;
-    box-shadow:0 0 0 transparent;
-  }
+  .cta{display:flex;align-items:center;justify-content:center;width:100%;height:56px;margin-top:24px;background:var(--yellow);color:var(--navy);border:2px solid var(--navy);border-radius:12px;font-family:var(--display);font-weight:900;font-size:18px;letter-spacing:-0.01em;cursor:pointer;transition:transform 120ms ease,box-shadow 120ms ease;box-shadow:0 0 0 transparent;}
   .cta:hover{transform:translate(-2px,-2px);box-shadow:4px 4px 0 var(--navy);}
   .cta:active{transform:translate(0,0);box-shadow:0 0 0 var(--navy);}
   .cta[disabled]{opacity:0.55;cursor:not-allowed;transform:none;box-shadow:none;}
-
-  /* ---- Trust chips ---- */
   .trust{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px;}
   .chip{display:inline-flex;align-items:center;gap:6px;background:var(--cream);border:2px solid var(--navy);border-radius:999px;padding:8px 16px;font-family:var(--body);font-weight:600;font-size:14px;color:var(--navy);}
   .chip .tick{color:var(--teal);font-weight:900;}
-
-  /* ---- Wizzy column (hero) ---- */
   .hero-mascot{position:relative;display:flex;justify-content:center;align-items:center;min-height:520px;}
   .wiz-circle{width:480px;height:480px;border-radius:50%;background:var(--cream);border:3px solid var(--navy);display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative;box-shadow:8px 8px 0 var(--yellow);}
   .wiz-circle img{width:78%;height:78%;object-fit:contain;}
-  .sticker{
-    position:absolute;top:8px;right:-4px;transform:rotate(12deg);
-    background:var(--yellow);color:var(--navy);border:2px solid var(--navy);border-radius:14px;
-    padding:10px 14px;font-family:var(--display);font-weight:900;font-size:14px;letter-spacing:-0.01em;
-    box-shadow:4px 4px 0 var(--navy);line-height:1.1;text-align:center;
-  }
+  .sticker{position:absolute;top:8px;right:-4px;transform:rotate(12deg);background:var(--yellow);color:var(--navy);border:2px solid var(--navy);border-radius:14px;padding:10px 14px;font-family:var(--display);font-weight:900;font-size:14px;letter-spacing:-0.01em;box-shadow:4px 4px 0 var(--navy);line-height:1.1;text-align:center;}
   .sticker small{display:block;font-family:var(--body);font-weight:600;font-size:10px;letter-spacing:0.12em;text-transform:uppercase;margin-top:2px;opacity:0.85;}
 
-  /* ============================================================ */
-  /* ----                  LOADING VIEW                       ---- */
-  /* ============================================================ */
+  /* ----------- Loading (Phase 2) ----------- */
   .view-loading{padding:40px 24px 60px;}
   .loading-wrap{max-width:600px;margin:0 auto;text-align:center;}
-  .loading-mascot{
-    width:280px;height:280px;margin:0 auto 8px;display:flex;align-items:center;justify-content:center;
-    animation:bob 2s ease-in-out infinite;
-  }
+  .loading-mascot{width:280px;height:280px;margin:0 auto 8px;display:flex;align-items:center;justify-content:center;animation:bob 2s ease-in-out infinite;}
   .loading-mascot img{width:100%;height:100%;object-fit:contain;}
-  @keyframes bob{
-    0%,100%{transform:translateY(0);}
-    50%{transform:translateY(-8px);}
-  }
-  .loading-h2{
-    font-family:var(--display);font-weight:900;font-size:48px;letter-spacing:-0.02em;line-height:1.05;
-    color:var(--navy);margin:24px 0 0;
-  }
+  @keyframes bob{0%,100%{transform:translateY(0);}50%{transform:translateY(-8px);}}
+  .loading-h2{font-family:var(--display);font-weight:900;font-size:48px;letter-spacing:-0.02em;line-height:1.05;color:var(--navy);margin:24px 0 0;}
   .loading-sub{font-size:16px;color:rgba(18,24,74,0.7);margin:8px 0 0;}
-
-  .progress-track{
-    margin:24px auto 0;max-width:520px;height:12px;background:var(--cream);
-    border:2px solid var(--navy);border-radius:999px;overflow:hidden;
-  }
-  .progress-fill{
-    display:block;height:100%;width:5%;background:var(--teal);
-    border-radius:999px;transition:width 600ms ease;
-  }
-  .loading-status{
-    font-family:var(--body);font-weight:500;font-size:16px;color:var(--teal);
-    margin:16px 0 0;min-height:22px;
-    transition:opacity 250ms ease;
-  }
-
-  .powered-chip{
-    display:inline-block;margin-top:32px;
-    background:var(--navy);color:var(--cream);
-    font-family:var(--body);font-weight:600;font-size:12px;letter-spacing:0.14em;text-transform:uppercase;
-    padding:6px 14px;border-radius:999px;
-  }
-
-  .late-fallback{
-    display:none;max-width:520px;margin:32px auto 0;
-    background:var(--cream);border:2px solid var(--navy);border-radius:14px;padding:20px 22px;
-    text-align:left;box-shadow:4px 4px 0 var(--navy);
-  }
+  .progress-track{margin:24px auto 0;max-width:520px;height:12px;background:var(--cream);border:2px solid var(--navy);border-radius:999px;overflow:hidden;}
+  .progress-fill{display:block;height:100%;width:5%;background:var(--teal);border-radius:999px;transition:width 600ms ease;}
+  .loading-status{font-family:var(--body);font-weight:500;font-size:16px;color:var(--teal);margin:16px 0 0;min-height:22px;transition:opacity 250ms ease;}
+  .powered-chip{display:inline-block;margin-top:32px;background:var(--navy);color:var(--cream);font-family:var(--body);font-weight:600;font-size:12px;letter-spacing:0.14em;text-transform:uppercase;padding:6px 14px;border-radius:999px;}
+  .late-fallback{display:none;max-width:520px;margin:32px auto 0;background:var(--cream);border:2px solid var(--navy);border-radius:14px;padding:20px 22px;text-align:left;box-shadow:4px 4px 0 var(--navy);}
   .late-fallback.on{display:block;}
   .late-fallback p{margin:0 0 12px;font-size:15px;color:var(--navy);}
   .late-fallback .row{display:flex;gap:10px;flex-wrap:wrap;}
-  .late-fallback input{
-    flex:1;min-width:200px;height:46px;
-    background:var(--cream);border:2px solid var(--navy);border-radius:8px;
-    padding:0 14px;font-family:var(--body);font-size:15px;color:var(--navy);outline:none;
-  }
-  .late-fallback button{
-    height:46px;padding:0 18px;
-    background:var(--yellow);color:var(--navy);border:2px solid var(--navy);border-radius:8px;
-    font-family:var(--display);font-weight:900;font-size:14px;cursor:pointer;
-  }
-
-  .loading-err{
-    display:none;max-width:520px;margin:24px auto 0;
-    background:#fde2e2;border:2px solid #8a0e0e;color:#5a0808;
-    border-radius:12px;padding:14px 16px;font-size:14px;text-align:left;
-  }
+  .late-fallback input{flex:1;min-width:200px;height:46px;background:var(--cream);border:2px solid var(--navy);border-radius:8px;padding:0 14px;font-family:var(--body);font-size:15px;color:var(--navy);outline:none;}
+  .late-fallback button{height:46px;padding:0 18px;background:var(--yellow);color:var(--navy);border:2px solid var(--navy);border-radius:8px;font-family:var(--display);font-weight:900;font-size:14px;cursor:pointer;}
+  .loading-err{display:none;max-width:520px;margin:24px auto 0;background:#fde2e2;border:2px solid #8a0e0e;color:#5a0808;border-radius:12px;padding:14px 16px;font-size:14px;text-align:left;}
   .loading-err.on{display:block;}
-  .loading-err .back-btn{
-    display:inline-block;margin-top:10px;background:var(--navy);color:var(--cream);
-    border:none;border-radius:8px;padding:8px 14px;font-family:var(--display);font-weight:900;font-size:13px;cursor:pointer;
-  }
+  .loading-err .back-btn{display:inline-block;margin-top:10px;background:var(--navy);color:var(--cream);border:none;border-radius:8px;padding:8px 14px;font-family:var(--display);font-weight:900;font-size:13px;cursor:pointer;}
 
-  /* ============================================================ */
-  /* ----                  REVEAL VIEW                        ---- */
-  /* ============================================================ */
+  /* ----------- Reveal + Edit Chat (Phase 3) ----------- */
   .view-reveal{padding:16px;}
-  .reveal-frame-wrap{position:relative;max-width:1400px;margin:0 auto;}
+  .reveal-layout{
+    display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:24px;
+    max-width:1600px;margin:0 auto;align-items:start;
+  }
+  .reveal-frame-wrap{position:relative;}
   .reveal-frame{
     width:100%;height:80vh;border:2px solid var(--navy);border-radius:16px;
-    background:var(--cream);box-shadow:8px 8px 0 var(--yellow);
-    overflow:hidden;
+    background:var(--cream);box-shadow:8px 8px 0 var(--yellow);overflow:hidden;
   }
   .reveal-frame iframe{width:100%;height:100%;border:0;display:block;background:var(--cream);}
-
-  .wizzy-badge-wrap{
-    position:absolute;top:-20px;left:-20px;display:flex;align-items:flex-start;gap:12px;z-index:5;
-  }
-  .wizzy-badge{
-    width:80px;height:80px;border-radius:50%;background:var(--cream);border:3px solid var(--navy);
-    display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;
-    box-shadow:4px 4px 0 var(--yellow);
-  }
+  .wizzy-badge-wrap{position:absolute;top:-20px;left:-20px;display:flex;align-items:flex-start;gap:12px;z-index:5;}
+  .wizzy-badge{width:80px;height:80px;border-radius:50%;background:var(--cream);border:3px solid var(--navy);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;box-shadow:4px 4px 0 var(--yellow);}
   .wizzy-badge img{width:78%;height:78%;object-fit:contain;}
-  .speech-bubble{
-    margin-top:16px;background:var(--cream);border:2px solid var(--navy);border-radius:12px;
-    padding:10px 14px;font-family:var(--body);font-weight:600;font-size:14px;color:var(--navy);
-    box-shadow:3px 3px 0 var(--navy);max-width:320px;
-    position:relative;
-  }
-  .speech-bubble::before{
-    content:'';position:absolute;left:-12px;top:14px;width:0;height:0;
-    border-top:8px solid transparent;border-bottom:8px solid transparent;border-right:12px solid var(--navy);
-  }
-  .speech-bubble::after{
-    content:'';position:absolute;left:-9px;top:16px;width:0;height:0;
-    border-top:6px solid transparent;border-bottom:6px solid transparent;border-right:10px solid var(--cream);
-  }
+  .speech-bubble{margin-top:16px;background:var(--cream);border:2px solid var(--navy);border-radius:12px;padding:10px 14px;font-family:var(--body);font-weight:600;font-size:14px;color:var(--navy);box-shadow:3px 3px 0 var(--navy);max-width:280px;position:relative;}
+  .speech-bubble::before{content:'';position:absolute;left:-12px;top:14px;width:0;height:0;border-top:8px solid transparent;border-bottom:8px solid transparent;border-right:12px solid var(--navy);}
+  .speech-bubble::after{content:'';position:absolute;left:-9px;top:16px;width:0;height:0;border-top:6px solid transparent;border-bottom:6px solid transparent;border-right:10px solid var(--cream);}
 
-  .edit-placeholder{
-    margin:28px auto 0;max-width:1400px;background:var(--cream);border:2px solid var(--navy);
-    border-radius:16px;padding:24px;text-align:center;color:rgba(18,24,74,0.65);
-    font-family:var(--body);font-weight:500;font-size:14px;
+  /* ---- Edit panel ---- */
+  .edit-panel{
+    background:var(--cream);border:2px solid var(--navy);border-radius:16px;
+    box-shadow:6px 6px 0 var(--navy);
+    display:flex;flex-direction:column;
+    position:sticky;top:16px;
+    max-height:calc(100vh - 32px);
+    min-height:520px;
+    overflow:hidden;
   }
+  .edit-header{
+    padding:16px 18px;border-bottom:2px solid var(--navy);
+    display:flex;align-items:center;gap:10px;
+    background:var(--cream);
+  }
+  .edit-header-wiz{
+    width:40px;height:40px;border-radius:50%;background:var(--cream);border:2px solid var(--navy);
+    display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;
+  }
+  .edit-header-wiz img{width:90%;height:90%;object-fit:contain;}
+  .edit-header h3{flex:1;font-family:var(--display);font-weight:900;font-size:18px;color:var(--navy);margin:0;letter-spacing:-0.01em;}
+  .edits-chip{
+    background:var(--yellow);color:var(--navy);border:2px solid var(--navy);border-radius:999px;
+    padding:6px 12px;font-family:var(--body);font-weight:700;font-size:12px;letter-spacing:0.04em;
+    white-space:nowrap;
+  }
+  .edits-chip.zero{background:rgba(255,190,0,0.25);}
+
+  .chat-history{flex:1;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:10px;}
+  .chat-history:empty::before{
+    content:'Tip: click a chip below or type your own tweak.';
+    display:block;color:rgba(18,24,74,0.5);font-size:13px;font-style:italic;
+  }
+  .msg{font-family:var(--body);font-weight:400;font-size:14px;line-height:1.45;padding:10px 12px;border-radius:12px;max-width:75%;word-wrap:break-word;}
+  .msg-user{background:var(--navy);color:var(--cream);align-self:flex-end;}
+  .msg-wiz{background:var(--cream);border:2px solid var(--navy);color:var(--navy);align-self:flex-start;display:flex;gap:8px;align-items:flex-start;}
+  .msg-wiz img.tinywiz{width:22px;height:22px;border-radius:50%;flex-shrink:0;}
+  .msg-wiz.typing{font-style:italic;opacity:0.75;}
+
+  .suggested-row{
+    padding:12px 18px;border-top:1px solid rgba(18,24,74,0.15);
+    display:flex;flex-wrap:wrap;gap:6px;
+  }
+  .suggested-row .sugchip{
+    background:var(--cream);border:2px solid var(--navy);border-radius:999px;
+    padding:6px 12px;font-family:var(--body);font-weight:600;font-size:13px;color:var(--navy);
+    cursor:pointer;transition:background 120ms ease,color 120ms ease;line-height:1.2;
+  }
+  .suggested-row .sugchip:hover{background:var(--navy);color:var(--cream);}
+  .suggested-row .sugchip.upload{background:var(--yellow);border-color:var(--navy);}
+  .suggested-row .sugchip.upload.pulse{animation:pulseChip 1s ease 1;}
+  @keyframes pulseChip{0%{transform:scale(0.85);}50%{transform:scale(1.08);}100%{transform:scale(1);}}
+
+  .chat-input-row{padding:12px 18px 16px;border-top:2px solid var(--navy);background:var(--cream);}
+  .chat-input-row textarea{
+    width:100%;background:var(--cream);border:2px solid var(--navy);border-radius:8px;
+    padding:10px 12px;font-family:var(--body);font-size:16px;color:var(--navy);
+    min-height:60px;resize:vertical;outline:none;line-height:1.4;
+  }
+  .chat-input-row textarea:focus{box-shadow:0 0 0 3px rgba(0,196,167,0.35);}
+  .chat-input-row .row{display:flex;gap:8px;margin-top:8px;justify-content:space-between;align-items:center;}
+  .chat-input-row .iloveit{
+    background:transparent;color:var(--navy);border:2px solid var(--navy);border-radius:8px;
+    padding:8px 12px;font-family:var(--display);font-weight:900;font-size:13px;cursor:pointer;
+  }
+  .chat-input-row .iloveit:hover{background:var(--navy);color:var(--cream);}
+  .chat-input-row .send-btn{
+    height:40px;padding:0 18px;background:var(--yellow);color:var(--navy);
+    border:2px solid var(--navy);border-radius:8px;font-family:var(--display);font-weight:900;font-size:14px;cursor:pointer;
+  }
+  .chat-input-row .send-btn[disabled]{opacity:0.55;cursor:not-allowed;}
+  body[data-cap="hit"] .chat-input-row textarea{opacity:0.5;cursor:not-allowed;background:rgba(248,239,211,0.5);}
+  body[data-cap="hit"] .chat-input-row textarea[readonly]{}
+  body[data-cap="hit"] .suggested-row .sugchip{display:none;}
+
+  /* ---- Asset upload modal ---- */
+  .modal-backdrop{
+    display:none;position:fixed;inset:0;background:rgba(18,24,74,0.5);
+    z-index:50;align-items:center;justify-content:center;padding:16px;
+  }
+  .modal-backdrop.on{display:flex;}
+  .upload-modal{
+    background:var(--cream);border:2px solid var(--navy);border-radius:16px;
+    box-shadow:8px 8px 0 var(--yellow);
+    max-width:480px;width:100%;padding:24px;
+    max-height:90vh;overflow:auto;
+  }
+  .upload-modal h3{font-family:var(--display);font-weight:900;font-size:24px;color:var(--navy);margin:0 0 6px;letter-spacing:-0.01em;}
+  .upload-modal .um-sub{font-family:var(--body);font-size:14px;color:rgba(18,24,74,0.7);margin:0 0 18px;}
+  .dropzone{
+    border:2px dashed var(--navy);border-radius:12px;padding:18px 14px;text-align:center;
+    background:rgba(255,248,231,0.5);color:rgba(18,24,74,0.7);
+    font-family:var(--body);font-weight:500;font-size:14px;cursor:pointer;
+    transition:background 120ms ease;margin-top:14px;
+  }
+  .dropzone.logo{min-height:120px;display:flex;align-items:center;justify-content:center;}
+  .dropzone.photos{min-height:200px;display:flex;align-items:center;justify-content:center;flex-direction:column;}
+  .dropzone:hover,.dropzone.drag{background:rgba(255,190,0,0.18);}
+  .dropzone .picked{font-weight:600;color:var(--navy);}
+  .dropzone input[type=file]{display:none;}
+  .upload-modal .um-actions{display:flex;justify-content:space-between;align-items:center;margin-top:20px;gap:10px;}
+  .upload-modal .never{background:none;border:none;color:var(--navy);text-decoration:underline;font-family:var(--body);font-weight:500;cursor:pointer;font-size:14px;padding:8px 0;}
+  .upload-modal .send-up{
+    background:var(--yellow);color:var(--navy);border:2px solid var(--navy);border-radius:10px;
+    height:46px;padding:0 18px;font-family:var(--display);font-weight:900;font-size:15px;cursor:pointer;
+  }
+  .upload-modal .send-up[disabled]{opacity:0.55;cursor:not-allowed;}
+  .upload-err{display:none;background:#fde2e2;color:#5a0808;border:2px solid #8a0e0e;border-radius:8px;padding:8px 12px;font-size:13px;margin-top:12px;}
+  .upload-err.on{display:block;}
 
   /* ---- Footer ---- */
   footer{border-top:1px solid var(--navy);padding:24px 32px;font-size:12px;color:rgba(18,24,74,0.7);}
@@ -285,40 +296,38 @@ if ($is_magic) {
 
   /* ---- Breakpoints ---- */
   @media (max-width:1100px){
-    h1{font-size:60px;}
-    .wiz-circle{width:380px;height:380px;}
-    .hero{gap:32px;}
+    h1{font-size:60px;} .wiz-circle{width:380px;height:380px;} .hero{gap:32px;}
+    .reveal-layout{grid-template-columns:minmax(0,1fr) 320px;gap:18px;}
+  }
+  @media (max-width:900px){
+    .reveal-layout{grid-template-columns:1fr;}
+    .edit-panel{position:relative;top:auto;max-height:none;min-height:0;}
+    .reveal-frame{height:60vh;}
   }
   @media (max-width:768px){
-    main{padding:16px 20px 60px;}
-    header.topbar{padding:16px 20px;}
+    main{padding:16px 20px 60px;} header.topbar{padding:16px 20px;}
     .hero{grid-template-columns:1fr;gap:24px;}
     .hero-mascot{order:-1;min-height:0;margin-bottom:8px;}
     .wiz-circle{width:240px;height:240px;}
     .sticker{font-size:12px;padding:8px 12px;top:0;right:0;}
-    h1{font-size:42px;}
-    .lead{font-size:18px;}
+    h1{font-size:42px;} .lead{font-size:18px;}
     .form-card{padding:24px;box-shadow:4px 4px 0 var(--navy);}
     .cta{font-size:16px;height:52px;}
-    footer{padding:18px 20px;}
-    footer .row{flex-direction:column;text-align:center;}
-    .loading-h2{font-size:32px;}
-    .loading-mascot{width:200px;height:200px;}
-    .reveal-frame{height:60vh;}
-    .wizzy-badge{width:64px;height:64px;}
+    footer{padding:18px 20px;} footer .row{flex-direction:column;text-align:center;}
+    .loading-h2{font-size:32px;} .loading-mascot{width:200px;height:200px;}
+    .reveal-frame{height:55vh;} .wizzy-badge{width:64px;height:64px;}
     .wizzy-badge-wrap{top:-14px;left:-10px;}
     .speech-bubble{font-size:13px;padding:8px 12px;max-width:200px;}
     .view-reveal{padding:12px;}
+    .edit-panel{box-shadow:4px 4px 0 var(--navy);}
   }
   @media (max-width:375px){
-    h1{font-size:36px;}
-    .form-card{padding:20px;}
-    .chip{font-size:13px;padding:7px 12px;}
+    h1{font-size:36px;} .form-card{padding:20px;} .chip{font-size:13px;padding:7px 12px;}
     .loading-h2{font-size:28px;}
   }
 </style>
 </head>
-<body data-view="form">
+<body data-view="form" data-cap="ok">
 
 <header class="topbar">
   <a href="/try" class="brand">WebWiz<span class="dot">.</span></a>
@@ -364,19 +373,12 @@ if ($is_magic) {
 <!-- ===================== LOADING VIEW ===================== -->
 <main class="view view-loading">
   <div class="loading-wrap">
-    <div class="loading-mascot">
-      <img src="/preview/wizzy-wave.gif" alt="Wizzy">
-    </div>
+    <div class="loading-mascot"><img src="/preview/wizzy-wave.gif" alt="Wizzy"></div>
     <h2 class="loading-h2" id="loadingHead">Wizzy is designing your site&hellip;</h2>
     <p class="loading-sub">Hang tight. He&rsquo;s working fast.</p>
-
-    <div class="progress-track">
-      <span class="progress-fill" id="progFill"></span>
-    </div>
+    <div class="progress-track"><span class="progress-fill" id="progFill"></span></div>
     <p class="loading-status" id="loadingStatus">Picking your colors&hellip;</p>
-
     <div class="powered-chip">Powered by WebWiz</div>
-
     <div class="late-fallback" id="lateFallback">
       <p>Wizzy&rsquo;s taking his time on this one. Want him to email you when it&rsquo;s ready?</p>
       <form class="row" id="notifyForm">
@@ -385,7 +387,6 @@ if ($is_magic) {
       </form>
       <p class="loading-sub" id="notifySaid" style="display:none;margin-top:10px;color:var(--teal);font-weight:600;">Got it. We&rsquo;ll email you the moment it&rsquo;s ready.</p>
     </div>
-
     <div class="loading-err" id="loadingErr">
       <div id="loadingErrMsg"></div>
       <button type="button" class="back-btn" id="backToForm">&larr; Try again</button>
@@ -393,19 +394,70 @@ if ($is_magic) {
   </div>
 </main>
 
-<!-- ===================== REVEAL VIEW ===================== -->
+<!-- ===================== REVEAL + EDIT CHAT ===================== -->
 <main class="view view-reveal">
-  <div class="reveal-frame-wrap">
-    <div class="reveal-frame">
-      <iframe id="previewFrame" src="about:blank" loading="eager" title="Your new website preview"></iframe>
+  <div class="reveal-layout">
+    <div class="reveal-frame-wrap">
+      <div class="reveal-frame">
+        <iframe id="previewFrame" src="about:blank" loading="eager" title="Your new website preview"></iframe>
+      </div>
+      <div class="wizzy-badge-wrap">
+        <div class="wizzy-badge"><img src="/preview/wizzy-wave.gif" alt="Wizzy"></div>
+        <div class="speech-bubble">Here&rsquo;s what I made you. What do you think?</div>
+      </div>
     </div>
-    <div class="wizzy-badge-wrap">
-      <div class="wizzy-badge"><img src="/preview/wizzy-wave.gif" alt="Wizzy"></div>
-      <div class="speech-bubble">Here&rsquo;s what I made you. What do you think?</div>
+
+    <aside class="edit-panel">
+      <div class="edit-header">
+        <div class="edit-header-wiz"><img src="/preview/wizzy-wave.gif" alt="Wizzy"></div>
+        <h3>Chat with Wizzy</h3>
+        <span class="edits-chip" id="editsChip">5 edits remaining</span>
+      </div>
+
+      <div class="chat-history" id="chatHistory" aria-live="polite"></div>
+
+      <div class="suggested-row" id="suggestedRow">
+        <span class="sugchip" data-fill="Change the colors">Change the colors</span>
+        <span class="sugchip" data-fill="Make it feel more modern">Make it feel more modern</span>
+        <span class="sugchip" data-fill="Add a section about our services">Add a section about our services</span>
+        <span class="sugchip" data-fill="Update the contact info">Update the contact info</span>
+      </div>
+
+      <div class="chat-input-row">
+        <textarea id="chatInput" placeholder="Tell Wizzy what to tweak..."></textarea>
+        <div class="row">
+          <button type="button" class="iloveit" id="iLoveIt">I love it &rarr;</button>
+          <button type="button" class="send-btn" id="chatSend">Send &rarr;</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<!-- ===================== ASSET UPLOAD MODAL ===================== -->
+<div class="modal-backdrop" id="uploadModalBackdrop" role="dialog" aria-modal="true" aria-labelledby="umTitle">
+  <div class="upload-modal">
+    <h3 id="umTitle">Got assets? Send &rsquo;em over.</h3>
+    <p class="um-sub">Logo and up to 3 photos. We&rsquo;ll work them in.</p>
+
+    <div class="dropzone logo" id="dzLogo" data-kind="logo">
+      <div class="dz-inner"><strong>Drop your logo</strong><br><small>PNG or SVG, up to 2 MB</small></div>
+      <input type="file" id="logoInput" accept=".png,.svg,image/png,image/svg+xml,image/jpeg">
+    </div>
+
+    <div class="dropzone photos" id="dzPhotos" data-kind="photos">
+      <div class="dz-inner"><strong>Drop photos</strong><br><small>JPG or PNG, up to 5 MB each, max 3</small></div>
+      <input type="file" id="photosInput" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" multiple>
+    </div>
+
+    <div class="upload-err" id="uploadErr"></div>
+
+    <div class="um-actions">
+      <button type="button" class="never" id="uploadCancel">Never mind</button>
+      <button type="button" class="send-up" id="uploadSend">Send to Wizzy &rarr;</button>
     </div>
   </div>
-  <div class="edit-placeholder">Edit panel coming next.</div>
-</main>
+</div>
 
 <footer>
   <div class="row">
@@ -416,8 +468,11 @@ if ($is_magic) {
 
 <script>
 (function(){
-  // ---- elements ----
+  // ---------- shared refs ----------
   var body = document.body;
+  var EDIT_CAP = 5;
+
+  // form view
   var form = document.getElementById('tryForm');
   var descField = form.querySelector('[data-field="description"]');
   var websiteField = form.querySelector('[data-field="website"]');
@@ -425,6 +480,7 @@ if ($is_magic) {
   var web = document.getElementById('website');
   var ctaBtn = document.getElementById('ctaBtn');
 
+  // loading view
   var loadingHead = document.getElementById('loadingHead');
   var loadingStatus = document.getElementById('loadingStatus');
   var progFill = document.getElementById('progFill');
@@ -436,7 +492,27 @@ if ($is_magic) {
   var loadingErrMsg = document.getElementById('loadingErrMsg');
   var backToForm = document.getElementById('backToForm');
 
+  // reveal/chat view
   var previewFrame = document.getElementById('previewFrame');
+  var editsChip = document.getElementById('editsChip');
+  var chatHistory = document.getElementById('chatHistory');
+  var suggestedRow = document.getElementById('suggestedRow');
+  var chatInput = document.getElementById('chatInput');
+  var chatSend = document.getElementById('chatSend');
+  var iLoveIt = document.getElementById('iLoveIt');
+
+  // upload modal
+  var umBackdrop = document.getElementById('uploadModalBackdrop');
+  var dzLogo = document.getElementById('dzLogo');
+  var dzPhotos = document.getElementById('dzPhotos');
+  var logoInput = document.getElementById('logoInput');
+  var photosInput = document.getElementById('photosInput');
+  var uploadErr = document.getElementById('uploadErr');
+  var uploadSend = document.getElementById('uploadSend');
+  var uploadCancel = document.getElementById('uploadCancel');
+
+  // state
+  var state = { token: null, businessName: null, editsRemaining: EDIT_CAP, sending: false };
 
   var statusMessages = [
     'Picking your colors…',
@@ -450,17 +526,12 @@ if ($is_magic) {
   var MIN_DESC = 20;
   var WEBSITE_RX = /^([\w-]+\.)+[a-z]{2,}([\/?#].*)?$/i;
 
-  // ---- form validation ----
   function validateWebsite(){
-    var v = (web.value || '').trim();
-    if (v === '') return false;
-    // Accept "yourbusiness.com" OR "https://yourbusiness.com"
+    var v = (web.value || '').trim(); if (v === '') return false;
     var stripped = v.replace(/^https?:\/\//i,'').replace(/^www\./i,'');
     return WEBSITE_RX.test(stripped);
   }
-  function validateDesc(){
-    return ((desc.value || '').trim().length >= MIN_DESC);
-  }
+  function validateDesc(){ return ((desc.value || '').trim().length >= MIN_DESC); }
   desc.addEventListener('input', function(){
     if (descField.classList.contains('invalid') && validateDesc()) descField.classList.remove('invalid');
   });
@@ -468,10 +539,9 @@ if ($is_magic) {
     if (websiteField.classList.contains('invalid') && (web.value.trim() === '' || validateWebsite())) websiteField.classList.remove('invalid');
   });
 
-  // ---- view transitions ----
   function setView(v){ body.setAttribute('data-view', v); window.scrollTo({top:0, behavior:'smooth'}); }
 
-  // ---- loading state machine ----
+  // ---------- loading state machine ----------
   var statusIdx = 0, statusTimer = null, progressTimer = null, lateTimer = null, generating = false;
   function startLoadingTickers(){
     var pct = 5;
@@ -490,16 +560,13 @@ if ($is_magic) {
       pct = Math.min(pct + 6, 88);
       progFill.style.width = pct + '%';
     }, 3000);
-    lateTimer = setTimeout(function(){
-      lateFallback.classList.add('on');
-    }, 90000);
+    lateTimer = setTimeout(function(){ lateFallback.classList.add('on'); }, 90000);
   }
   function stopLoadingTickers(){
     if (statusTimer)   { clearInterval(statusTimer);   statusTimer = null; }
     if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
     if (lateTimer)     { clearTimeout(lateTimer);      lateTimer = null; }
   }
-
   function showLoadingError(msg){
     stopLoadingTickers();
     loadingErrMsg.textContent = msg || 'Something went wrong on our end. Try again?';
@@ -513,25 +580,20 @@ if ($is_magic) {
     setView('form');
   });
 
-  // ---- submit ----
+  // ---------- form submit ----------
   form.addEventListener('submit', function(e){
     e.preventDefault();
     if (generating) return;
-
     var descOk = validateDesc();
     var webOk  = validateWebsite();
-
     descField.classList.toggle('invalid', !descOk);
     websiteField.classList.toggle('invalid', !webOk);
-
     if (!descOk) { desc.focus(); return; }
     if (!webOk)  { web.focus();  return; }
 
     generating = true;
     ctaBtn.disabled = true;
 
-    // Tailor the H2 if possible. If website is fresh, take the host as best-guess
-    // business name until backend returns the real one.
     var hostGuess = '';
     try {
       var raw = web.value.trim().replace(/^https?:\/\//i,'').replace(/^www\./i,'');
@@ -545,26 +607,22 @@ if ($is_magic) {
     fetch('/api/magic.php', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify({
-        website:     web.value.trim(),
-        description: desc.value.trim()
-      })
+      body: JSON.stringify({ website: web.value.trim(), description: desc.value.trim() })
     })
-    .then(function(r){
-      return r.json().then(function(j){ return { ok: r.ok, body: j }; });
-    })
+    .then(function(r){ return r.json().then(function(j){ return { ok: r.ok, body: j }; }); })
     .then(function(res){
       if (res.body && res.body.ok && (res.body.preview_url || res.body.url)) {
-        // Bump bar to 100, swap to reveal after a beat
         progFill.style.width = '100%';
         loadingStatus.textContent = 'Ready! Opening your preview…';
-        var biz = res.body.business_name || res.body.business || 'your site';
-        loadingHead.innerHTML = 'Wizzy is designing ' + escapeHtml(biz) + '…';
+        state.token = res.body.token || null;
+        state.businessName = res.body.business_name || res.body.business || 'your site';
+        loadingHead.innerHTML = 'Wizzy is designing ' + escapeHtml(state.businessName) + '…';
         stopLoadingTickers();
         var previewUrl = res.body.preview_url || (res.body.url + 'v1/index.html');
         setTimeout(function(){
           previewFrame.src = previewUrl;
           setView('reveal');
+          chatInput.focus();
         }, 600);
       } else {
         showLoadingError((res.body && res.body.error) ? res.body.error : 'Generation failed. Try again?');
@@ -577,18 +635,233 @@ if ($is_magic) {
     });
   });
 
-  // ---- 90s late fallback: capture notify email ----
+  // 90s late notify
   notifyForm.addEventListener('submit', function(e){
     e.preventDefault();
-    var em = (notifyEmail.value || '').trim();
-    if (!em) return;
-    // Fire-and-forget log (no dedicated endpoint yet — drop into magic_hits via a header for now).
+    var em = (notifyEmail.value || '').trim(); if (!em) return;
     fetch('/api/magic.php?notify_email=' + encodeURIComponent(em), { method: 'POST' }).catch(function(){});
-    notifyForm.style.display = 'none';
-    notifySaid.style.display = 'block';
+    notifyForm.style.display = 'none'; notifySaid.style.display = 'block';
   });
 
-  // ---- helpers ----
+  // ---------- chat / edits ----------
+  function appendMsg(kind, text){
+    var div = document.createElement('div');
+    div.className = 'msg msg-' + kind;
+    if (kind === 'wiz') {
+      var img = document.createElement('img'); img.className='tinywiz'; img.src='/preview/wizzy-wave.gif'; img.alt='Wizzy';
+      div.appendChild(img);
+      var span = document.createElement('span'); span.textContent = text; div.appendChild(span);
+    } else {
+      div.textContent = text;
+    }
+    chatHistory.appendChild(div);
+    chatHistory.scrollTop = chatHistory.scrollHeight;
+    return div;
+  }
+  function appendTyping(){
+    var div = document.createElement('div');
+    div.className = 'msg msg-wiz typing';
+    var img = document.createElement('img'); img.className='tinywiz'; img.src='/preview/wizzy-wave.gif'; img.alt='Wizzy';
+    div.appendChild(img);
+    var span = document.createElement('span'); span.textContent = 'Updating now…'; div.appendChild(span);
+    chatHistory.appendChild(div); chatHistory.scrollTop = chatHistory.scrollHeight;
+    return div;
+  }
+
+  function updateEditsChip(n){
+    state.editsRemaining = n;
+    editsChip.textContent = n === 1 ? '1 edit remaining' : (n + ' edits remaining');
+    editsChip.classList.toggle('zero', n === 0);
+    // Unlock asset chip at 3rd edit (i.e. 2 remaining means 3 used).
+    if ((EDIT_CAP - n) >= 3) addUploadChip();
+    if (n === 0) {
+      body.setAttribute('data-cap', 'hit');
+      chatInput.setAttribute('readonly', 'true');
+      chatSend.disabled = true;
+    }
+  }
+
+  function addUploadChip(){
+    if (suggestedRow.querySelector('.sugchip.upload')) return;
+    var s = document.createElement('span');
+    s.className = 'sugchip upload pulse';
+    s.innerHTML = '📎 Upload your logo or photos';
+    s.addEventListener('click', openUploadModal);
+    suggestedRow.appendChild(s);
+    setTimeout(function(){ s.classList.remove('pulse'); }, 1100);
+  }
+
+  // Chip click prefill
+  suggestedRow.addEventListener('click', function(e){
+    var c = e.target.closest('.sugchip'); if (!c) return;
+    if (c.classList.contains('upload')) { openUploadModal(); return; }
+    var fill = c.getAttribute('data-fill') || c.textContent;
+    chatInput.value = fill;
+    chatInput.focus();
+  });
+
+  function sendEdit(message){
+    if (!state.token || state.sending || state.editsRemaining <= 0) return;
+    state.sending = true; chatSend.disabled = true;
+    appendMsg('user', message);
+    chatInput.value = '';
+    var typing = appendTyping();
+
+    fetch('/api/edit.php', {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json', 'Accept':'application/json' },
+      body: JSON.stringify({ token: state.token, message: message })
+    })
+    .then(function(r){ return r.json().then(function(j){ return { ok:r.ok, body:j }; }); })
+    .then(function(res){
+      typing.remove();
+      var b = res.body || {};
+      if (b.ok) {
+        // Reload iframe with cache-bust
+        var src = b.preview_url || (('/preview/' + state.token + '/v1/index.html?e=' + Date.now()));
+        previewFrame.src = src;
+        appendMsg('wiz', b.reply || "Done. How's that?");
+        updateEditsChip(typeof b.edits_remaining === 'number' ? b.edits_remaining : (state.editsRemaining - 1));
+        if (b.cap_hit) showCapMessage();
+      } else if (b.cap_hit) {
+        // Cap was already reached server-side
+        updateEditsChip(0); showCapMessage(b.reply);
+      } else {
+        appendMsg('wiz', 'Hmm, that one didn\'t take. ' + (b.error || 'Try wording it a different way?'));
+      }
+    })
+    .catch(function(e){ typing.remove(); appendMsg('wiz', 'Network hiccup — try again? (' + (e && e.message || 'unknown') + ')'); })
+    .finally(function(){
+      state.sending = false;
+      if (state.editsRemaining > 0) chatSend.disabled = false;
+    });
+  }
+
+  function showCapMessage(customMsg){
+    var msg = customMsg || "That's all the tweaks I can do here. If you love where it's at, let's make it real. If it still needs work, my human teammates can take it from here once you launch it.";
+    appendMsg('wiz', msg);
+    // Phase 4 will swap the panel content for the conversion card. For now, just disable input.
+  }
+
+  chatSend.addEventListener('click', function(){
+    var m = (chatInput.value || '').trim();
+    if (m.length < 3) { chatInput.focus(); return; }
+    sendEdit(m);
+  });
+  chatInput.addEventListener('keydown', function(e){
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); chatSend.click(); }
+  });
+
+  // "I love it" → for Phase 3 we just show the cap message immediately.
+  // Phase 4 will trigger the conversion card here.
+  iLoveIt.addEventListener('click', function(){
+    appendMsg('user', 'I love it.');
+    updateEditsChip(0);
+    showCapMessage();
+  });
+
+  // ---------- upload modal ----------
+  var pickedLogo = null;
+  var pickedPhotos = [];
+
+  function openUploadModal(){
+    if (state.editsRemaining <= 0) return;
+    umBackdrop.classList.add('on');
+    uploadErr.classList.remove('on');
+    document.body.style.overflow = 'hidden';
+  }
+  function closeUploadModal(){
+    umBackdrop.classList.remove('on');
+    document.body.style.overflow = '';
+    pickedLogo = null; pickedPhotos = [];
+    logoInput.value = ''; photosInput.value = '';
+    resetDz(dzLogo, 'Drop your logo', 'PNG or SVG, up to 2 MB');
+    resetDz(dzPhotos, 'Drop photos', 'JPG or PNG, up to 5 MB each, max 3');
+  }
+  function resetDz(dz, big, small){
+    var inner = dz.querySelector('.dz-inner');
+    if (inner) inner.innerHTML = '<strong>' + big + '</strong><br><small>' + small + '</small>';
+    dz.classList.remove('drag');
+  }
+  function showPickedLogo(file){
+    var inner = dzLogo.querySelector('.dz-inner');
+    inner.innerHTML = '<span class="picked">' + escapeHtml(file.name) + '</span><br><small>' + Math.round(file.size/1024) + ' KB · ready to send</small>';
+  }
+  function showPickedPhotos(files){
+    var inner = dzPhotos.querySelector('.dz-inner');
+    var names = Array.prototype.map.call(files, function(f){ return escapeHtml(f.name); }).join(', ');
+    inner.innerHTML = '<span class="picked">' + files.length + ' photo' + (files.length===1?'':'s') + ' picked</span><br><small>' + names + '</small>';
+  }
+
+  uploadCancel.addEventListener('click', closeUploadModal);
+  umBackdrop.addEventListener('click', function(e){ if (e.target === umBackdrop) closeUploadModal(); });
+
+  // Click dropzones to open file picker
+  dzLogo.addEventListener('click', function(e){ if (e.target.tagName !== 'INPUT') logoInput.click(); });
+  dzPhotos.addEventListener('click', function(e){ if (e.target.tagName !== 'INPUT') photosInput.click(); });
+
+  // File pickers
+  logoInput.addEventListener('change', function(){
+    if (!logoInput.files || !logoInput.files[0]) return;
+    pickedLogo = logoInput.files[0]; showPickedLogo(pickedLogo);
+  });
+  photosInput.addEventListener('change', function(){
+    if (!photosInput.files) return;
+    pickedPhotos = Array.prototype.slice.call(photosInput.files, 0, 3);
+    showPickedPhotos(pickedPhotos);
+  });
+
+  // Drag-and-drop
+  function makeDroppable(dz, handler){
+    ['dragenter','dragover'].forEach(function(ev){ dz.addEventListener(ev, function(e){ e.preventDefault(); dz.classList.add('drag'); }); });
+    ['dragleave','drop'].forEach(function(ev){ dz.addEventListener(ev, function(e){ e.preventDefault(); dz.classList.remove('drag'); }); });
+    dz.addEventListener('drop', function(e){
+      var files = e.dataTransfer && e.dataTransfer.files; if (!files || !files.length) return;
+      handler(files);
+    });
+  }
+  makeDroppable(dzLogo, function(files){ pickedLogo = files[0]; showPickedLogo(pickedLogo); });
+  makeDroppable(dzPhotos, function(files){
+    pickedPhotos = Array.prototype.slice.call(files, 0, 3); showPickedPhotos(pickedPhotos);
+  });
+
+  uploadSend.addEventListener('click', function(){
+    uploadErr.classList.remove('on');
+    if (!pickedLogo && (!pickedPhotos || !pickedPhotos.length)) {
+      uploadErr.textContent = 'Pick a logo or at least one photo first.'; uploadErr.classList.add('on'); return;
+    }
+    if (!state.token) { uploadErr.textContent = 'No preview to attach to.'; uploadErr.classList.add('on'); return; }
+
+    uploadSend.disabled = true; uploadSend.textContent = 'Sending...';
+    var fd = new FormData();
+    fd.append('token', state.token);
+    if (pickedLogo) fd.append('logo', pickedLogo, pickedLogo.name);
+    if (pickedPhotos) pickedPhotos.forEach(function(p){ fd.append('photos[]', p, p.name); });
+
+    appendMsg('user', '📎 Sent ' + (pickedLogo ? 'logo' : '') + (pickedLogo && pickedPhotos.length ? ' + ' : '') + (pickedPhotos.length ? (pickedPhotos.length + ' photo' + (pickedPhotos.length===1?'':'s')) : ''));
+    var typing = appendTyping();
+    closeUploadModal();
+
+    fetch('/api/upload.php', { method:'POST', body: fd })
+      .then(function(r){ return r.json().then(function(j){ return { ok:r.ok, body:j }; }); })
+      .then(function(res){
+        typing.remove();
+        var b = res.body || {};
+        if (b.ok) {
+          var src = b.preview_url || (('/preview/' + state.token + '/v1/index.html?e=' + Date.now()));
+          previewFrame.src = src;
+          appendMsg('wiz', b.reply || "Got it. I'll work these in.");
+          updateEditsChip(typeof b.edits_remaining === 'number' ? b.edits_remaining : (state.editsRemaining - 1));
+          if (b.cap_hit) showCapMessage();
+        } else {
+          appendMsg('wiz', 'Upload failed: ' + (b.error || 'something went wrong'));
+        }
+      })
+      .catch(function(e){ typing.remove(); appendMsg('wiz', 'Network hiccup on the upload: ' + (e && e.message || 'unknown')); })
+      .finally(function(){ uploadSend.disabled = false; uploadSend.textContent = 'Send to Wizzy →'; });
+  });
+
+  // ---------- helpers ----------
   function escapeHtml(s){ return String(s).replace(/[&<>"']/g, function(c){
     return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
   });}
