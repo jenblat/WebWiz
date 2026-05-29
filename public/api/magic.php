@@ -81,16 +81,13 @@ try {
         $user_content = build_user_prompt($scrape, $biz, $industry, $i) . $desc_block;
         $reqs[$i] = ['system' => $system, 'messages' => [['role' => 'user', 'content' => $user_content]]];
     }
-    $res = anthropic_multi('claude-haiku-4-5-20251001', $reqs, 14000, 0.7, null, ['</html>']);
+    // Sonnet only — Haiku output looked too rough in live testing (broken hero
+    // images, gray placeholders even when source images existed). The cost is
+    // longer wall time (~45-90s for the model call) but quality is what the
+    // ad-funnel needs. Front-end progress bar is tuned for that window.
+    $res = anthropic_multi('claude-sonnet-4-6', $reqs, 14000, 0.7, null, ['</html>']);
     $htmls = []; $cost = 0.0;
     foreach ($reqs as $i => $_) { $cost += (float)($res[$i]['cost_usd'] ?? 0); $cand = finalize_html($res[$i]['text'] ?? ''); if ($cand && quality_gate($cand)['ok']) $htmls[$i] = $cand; }
-    // Haiku is ~3x faster but sometimes fails the structural quality gate
-    // (typically by under-using the scraped images). Fall back to Sonnet once
-    // before giving up — the user-facing speed cost is acceptable vs a hard fail.
-    if (!$htmls) {
-        $res = anthropic_multi('claude-sonnet-4-6', $reqs, 14000, 0.7, null, ['</html>']);
-        foreach ($reqs as $i => $_) { $cost += (float)($res[$i]['cost_usd'] ?? 0); $cand = finalize_html($res[$i]['text'] ?? ''); if ($cand && quality_gate($cand)['ok']) $htmls[$i] = $cand; }
-    }
     if (!$htmls) throw new Exception('generation produced no usable site');
     ksort($htmls);
 
@@ -106,10 +103,13 @@ try {
     // for the whole batch. Eliminates the "database is locked" errors we saw
     // when concurrent magic-link gens piled up on a single big transaction.
     $exec_retry = function (string $sql, array $params) use ($db): void {
-        $st = $db->prepare($sql);
-        $delay_us = 100000; // 100ms
+        // Re-prepare per attempt — once a PDOStatement.execute() throws, the
+        // handle can land in a state where the next execute() raises SQLite
+        // MISUSE ("21 bad parameter or other API misuse"). Preparing fresh
+        // each iteration is cheap (~microseconds) and avoids that edge case.
+        $delay_us = 100000;
         for ($try = 0; $try < 40; $try++) {
-            try { $st->execute($params); return; }
+            try { $st = $db->prepare($sql); $st->execute($params); return; }
             catch (Throwable $e) {
                 $msg = strtolower($e->getMessage());
                 if (strpos($msg, 'lock') === false && strpos($msg, 'busy') === false) throw $e;

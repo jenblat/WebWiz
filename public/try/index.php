@@ -621,13 +621,25 @@ window.__TRY_INIT__ = {
   // ---------- loading ----------
   var statusIdx = 0, statusTimer = null, progressTimer = null, lateTimer = null, generating = false;
   function startLoadingTickers(){
-    var pct = 5; progFill.style.width = pct + '%'; loadingStatus.textContent = statusMessages[0]; statusIdx = 0;
+    // Tuned for a ~120s Sonnet generation window: progress drifts up smoothly
+    // to ~92% over the 2 minutes (then jumps to 100% on success). Status
+    // copy rotates every 8s so users see all 6 messages over the full wait.
+    var pct = 4; progFill.style.width = pct + '%'; loadingStatus.textContent = statusMessages[0]; statusIdx = 0;
     statusTimer = setInterval(function(){
       statusIdx = Math.min(statusIdx + 1, statusMessages.length - 1);
       loadingStatus.style.opacity = '0';
       setTimeout(function(){ loadingStatus.textContent = statusMessages[statusIdx]; loadingStatus.style.opacity = '1'; }, 220);
-    }, 4000);
-    progressTimer = setInterval(function(){ pct = Math.min(pct + 6, 88); progFill.style.width = pct + '%'; }, 3000);
+    }, 8000);
+    // ~4% every 5s → ~92% in 110s (drift slows as we approach the cap so it
+    // doesn't visibly stall mid-wait)
+    progressTimer = setInterval(function(){
+      var bump = pct < 70 ? 4 : (pct < 85 ? 2 : 1);
+      pct = Math.min(pct + bump, 92);
+      progFill.style.width = pct + '%';
+    }, 5000);
+    // Late-fallback ('want him to email you when it's ready?') stays at 90s
+    // — that's when most generations should have landed; if not, give the
+    // user the bail-out option.
     lateTimer = setTimeout(function(){ lateFallback.classList.add('on'); }, 90000);
   }
   function stopLoadingTickers(){
