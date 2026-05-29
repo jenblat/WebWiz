@@ -163,13 +163,19 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
   .hero-mascot{position:relative;display:flex;justify-content:center;align-items:center;min-height:520px;}
   .wiz-circle{width:480px;height:480px;border-radius:50%;background:var(--cream);border:3px solid var(--navy);display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative;box-shadow:8px 8px 0 var(--yellow);}
   .wiz-circle img{width:78%;height:78%;object-fit:contain;}
+  .wizzy-vid{width:100%;height:100%;object-fit:contain;background:transparent;}
+  .wiz-circle .wizzy-vid,.wiz-circle.success .wizzy-vid{width:78%;height:78%;}
+  .wizzy-badge .wizzy-vid{width:78%;height:78%;}
+  .loading-mascot .wizzy-vid{width:100%;height:100%;}
+  .edit-header-wiz .wizzy-vid{width:90%;height:90%;}
+  .conv-head .wiz-mini .wizzy-vid{width:90%;height:90%;}
   .sticker{position:absolute;top:8px;right:-4px;transform:rotate(12deg);background:var(--yellow);color:var(--navy);border:2px solid var(--navy);border-radius:14px;padding:10px 14px;font-family:var(--display);font-weight:900;font-size:14px;letter-spacing:-0.01em;box-shadow:4px 4px 0 var(--navy);line-height:1.1;text-align:center;}
   .sticker small{display:block;font-family:var(--body);font-weight:600;font-size:10px;letter-spacing:0.12em;text-transform:uppercase;margin-top:2px;opacity:0.85;}
 
   /* ----------- Loading ----------- */
   .view-loading{padding:40px 24px 60px;}
   .loading-wrap{max-width:600px;margin:0 auto;text-align:center;}
-  .loading-mascot{width:280px;height:280px;margin:0 auto 8px;display:flex;align-items:center;justify-content:center;animation:bob 2s ease-in-out infinite;}
+  .loading-mascot{width:280px;height:280px;margin:0 auto 8px;display:flex;align-items:center;justify-content:center;}
   .loading-mascot img{width:100%;height:100%;object-fit:contain;}
   @keyframes bob{0%,100%{transform:translateY(0);}50%{transform:translateY(-8px);}}
   .loading-h2{font-family:var(--display);font-weight:900;font-size:48px;letter-spacing:-0.02em;line-height:1.05;color:var(--navy);margin:24px 0 0;}
@@ -354,8 +360,9 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
 
       <form class="form-card" id="tryForm" novalidate>
         <div class="field" data-field="website">
-          <label for="website">What&rsquo;s your website? <span class="opt">(optional, but helps Wizzy a lot)</span></label>
-          <input type="text" id="website" name="website" inputmode="url" autocomplete="url" placeholder="yourbusiness.com">
+          <label for="website">What&rsquo;s your website?</label>
+          <input type="text" id="website" name="website" inputmode="url" autocomplete="url" placeholder="yourbusiness.com" required>
+          <div class="err-msg">Drop your website here so Wizzy has something real to start from.</div>
         </div>
         <div class="field" data-field="description">
           <label for="description">Tell Wizzy about your business</label>
@@ -373,7 +380,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
     </div>
 
     <div class="hero-mascot">
-      <div class="wiz-circle"><img src="/preview/wizzy-wave.gif" alt="Wizzy"></div>
+      <div class="wiz-circle"><video class="wizzy-vid" autoplay loop muted playsinline preload="metadata" poster="/preview/wizzy-waving-poster.jpg" aria-label="Wizzy waving"><source src="/preview/wizzy-waving.webm" type="video/webm"><source src="/preview/wizzy-waving.mp4" type="video/mp4"><img src="/preview/wizzy-wave.gif" alt="Wizzy waving"></video></div>
       <div class="sticker">Made with care<small>by Wizzy</small></div>
     </div>
   </section>
@@ -382,7 +389,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
 <!-- ===================== LOADING VIEW ===================== -->
 <main class="view view-loading">
   <div class="loading-wrap">
-    <div class="loading-mascot"><img src="/preview/wizzy-wave.gif" alt="Wizzy"></div>
+    <div class="loading-mascot"><video class="wizzy-vid" autoplay loop muted playsinline preload="metadata" poster="/preview/wizzy-waving-poster.jpg" aria-label="Wizzy waving"><source src="/preview/wizzy-waving.webm" type="video/webm"><source src="/preview/wizzy-waving.mp4" type="video/mp4"><img src="/preview/wizzy-wave.gif" alt="Wizzy waving"></video></div>
     <h2 class="loading-h2" id="loadingHead">Wizzy is designing your site&hellip;</h2>
     <p class="loading-sub">Hang tight. He&rsquo;s working fast.</p>
     <div class="progress-track"><span class="progress-fill" id="progFill"></span></div>
@@ -411,14 +418,14 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
         <iframe id="previewFrame" src="<?= htmlspecialchars($initial_preview_url ?: 'about:blank', ENT_QUOTES) ?>" loading="eager" title="Your new website preview"></iframe>
       </div>
       <div class="wizzy-badge-wrap">
-        <div class="wizzy-badge"><img src="/preview/wizzy-wave.gif" alt="Wizzy"></div>
+        <div class="wizzy-badge"><video class="wizzy-vid" autoplay loop muted playsinline preload="metadata" poster="/preview/wizzy-waving-poster.jpg" aria-label="Wizzy waving"><source src="/preview/wizzy-waving.webm" type="video/webm"><source src="/preview/wizzy-waving.mp4" type="video/mp4"><img src="/preview/wizzy-wave.gif" alt="Wizzy waving"></video></div>
         <div class="speech-bubble">Here&rsquo;s what I made you. What do you think?</div>
       </div>
     </div>
 
     <aside class="edit-panel">
       <div class="edit-header">
-        <div class="edit-header-wiz"><img src="/preview/wizzy-wave.gif" alt="Wizzy"></div>
+        <div class="edit-header-wiz"><video class="wizzy-vid" autoplay loop muted playsinline preload="metadata" poster="/preview/wizzy-waving-poster.jpg" aria-label="Wizzy waving"><source src="/preview/wizzy-waving.webm" type="video/webm"><source src="/preview/wizzy-waving.mp4" type="video/mp4"><img src="/preview/wizzy-wave.gif" alt="Wizzy waving"></video></div>
         <h3>Chat with Wizzy</h3>
         <span class="edits-chip <?= $initial_edits === 0 ? 'zero' : '' ?>" id="editsChip"><?= (int)$initial_edits ?> edit<?= $initial_edits === 1 ? '' : 's' ?> remaining</span>
       </div>
@@ -444,7 +451,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
       <div class="conv-card" id="convCard">
         <div class="conv-head">
           <h2>Want to make it real?</h2>
-          <div class="wiz-mini"><img src="/preview/wizzy-wave.gif" alt="Wizzy"></div>
+          <div class="wiz-mini"><video class="wizzy-vid" autoplay loop muted playsinline preload="metadata" poster="/preview/wizzy-waving-poster.jpg" aria-label="Wizzy waving"><source src="/preview/wizzy-waving.webm" type="video/webm"><source src="/preview/wizzy-waving.mp4" type="video/mp4"><img src="/preview/wizzy-wave.gif" alt="Wizzy waving"></video></div>
         </div>
         <p class="conv-lead">Wizzy&rsquo;s design is yours, free. To go live we&rsquo;ll:</p>
         <ul class="conv-checklist">
@@ -472,7 +479,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
 <main class="view view-success">
   <div class="success-wrap">
     <div class="wiz-circle success" style="border:3px solid var(--navy);box-shadow:8px 8px 0 var(--yellow);">
-      <img src="/preview/wizzy-wave.gif" alt="Wizzy">
+      <video class="wizzy-vid" autoplay loop muted playsinline preload="metadata" poster="/preview/wizzy-waving-poster.jpg" aria-label="Wizzy waving"><source src="/preview/wizzy-waving.webm" type="video/webm"><source src="/preview/wizzy-waving.mp4" type="video/mp4"><img src="/preview/wizzy-wave.gif" alt="Wizzy waving"></video>
     </div>
     <h1 class="h-set">You&rsquo;re set.</h1>
     <p class="s-lead">Your site is on its way to going live. We&rsquo;ll be in touch within 24 hours.</p>
@@ -629,7 +636,16 @@ window.__TRY_INIT__ = {
   }
   function showLoadingError(msg){
     stopLoadingTickers();
-    loadingErrMsg.textContent = msg || 'Something went wrong on our end. Try again?';
+    var clean = String(msg || 'Something went wrong on our end. Try again?');
+    // Translate raw scrape errors into something a customer can act on.
+    if (/Scrape failed \(0\)/i.test(clean) || /Scrape failed \(\)/i.test(clean)) {
+      clean = "Wizzy couldn't reach that website. Double-check the URL, or try again in a minute if the site is just slow to respond.";
+    } else if (/Scrape failed \(40\d\)/i.test(clean)) {
+      clean = "That URL came back as not found. Make sure you typed it correctly.";
+    } else if (/Scrape failed \(5\d\d\)/i.test(clean)) {
+      clean = "The site is having server trouble right now. Give it a minute and try again.";
+    }
+    loadingErrMsg.textContent = clean;
     loadingErr.classList.add('on'); generating = false;
   }
   backToForm.addEventListener('click', function(){
