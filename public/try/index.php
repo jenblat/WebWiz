@@ -174,7 +174,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
   .sticker small{display:block;font-family:var(--body);font-weight:600;font-size:10px;letter-spacing:0.12em;text-transform:uppercase;margin-top:2px;opacity:0.85;}
 
   /* ----------- Loading ----------- */
-  .view-loading{padding:40px 24px 60px;}
+  .view-loading{padding:0 24px 60px;}
   .loading-wrap{max-width:600px;margin:0 auto;text-align:center;}
   .loading-mascot{width:280px;height:280px;margin:0 auto 8px;display:flex;align-items:center;justify-content:center;background:var(--wizbg);border:3px solid var(--navy);border-radius:50%;overflow:hidden;box-shadow:8px 8px 0 var(--yellow);}
   .loading-mascot img{width:100%;height:100%;object-fit:contain;}

@@ -81,9 +81,16 @@ try {
         $user_content = build_user_prompt($scrape, $biz, $industry, $i) . $desc_block;
         $reqs[$i] = ['system' => $system, 'messages' => [['role' => 'user', 'content' => $user_content]]];
     }
-    $res = anthropic_multi('claude-sonnet-4-6', $reqs, 14000, 0.7, null, ['</html>']);
+    $res = anthropic_multi('claude-haiku-4-5-20251001', $reqs, 14000, 0.7, null, ['</html>']);
     $htmls = []; $cost = 0.0;
     foreach ($reqs as $i => $_) { $cost += (float)($res[$i]['cost_usd'] ?? 0); $cand = finalize_html($res[$i]['text'] ?? ''); if ($cand && quality_gate($cand)['ok']) $htmls[$i] = $cand; }
+    // Haiku is ~3x faster but sometimes fails the structural quality gate
+    // (typically by under-using the scraped images). Fall back to Sonnet once
+    // before giving up — the user-facing speed cost is acceptable vs a hard fail.
+    if (!$htmls) {
+        $res = anthropic_multi('claude-sonnet-4-6', $reqs, 14000, 0.7, null, ['</html>']);
+        foreach ($reqs as $i => $_) { $cost += (float)($res[$i]['cost_usd'] ?? 0); $cand = finalize_html($res[$i]['text'] ?? ''); if ($cand && quality_gate($cand)['ok']) $htmls[$i] = $cand; }
+    }
     if (!$htmls) throw new Exception('generation produced no usable site');
     ksort($htmls);
 
@@ -94,43 +101,40 @@ try {
     if (!is_file($dir . '/index.php')) file_put_contents($dir . '/index.php', "<?php\n\$_GET['t'] = basename(__DIR__);\nrequire __DIR__ . '/../index.php';\n");
 
     // 2) persist to DB inside one transaction, retrying if SQLite is briefly locked by the cron worker
-    $persist = function () use ($db, $email, $name, $biz, $website, $cost, $htmls, $token, $ip) {
-        $db->beginTransaction();
-        $db->prepare("INSERT INTO prospects (email, name, business_name, current_url, source) VALUES (?, ?, ?, ?, 'magic')")->execute([$email, $name, $biz, $website]);
-        $pid = (int)$db->lastInsertId();
-        $db->prepare("INSERT INTO jobs (type, prospect_id, customer_email, business_name, status, scheduled_for, token, generation_mode, item_status, total_cost_cents, completed_at, qa_status) VALUES ('outbound', ?, ?, ?, 'ready', datetime('now'), ?, 'magic', 'done', ?, datetime('now'), 'magic')")
-           ->execute([$pid, $email, $biz, $token, (int)round($cost * 100)]);
-        $jid = (int)$db->lastInsertId();
-        $ins = $db->prepare("INSERT INTO previews (job_id, variant_n, html_path, qa_score, qa_pass, qa_issues) VALUES (?, ?, ?, NULL, NULL, NULL)");
-        foreach ($htmls as $i => $html) { $ins->execute([$jid, $i, '/preview/' . $token . '/v' . $i . '/index.html']); }
-        $db->prepare("INSERT INTO magic_hits (ip, token) VALUES (?, ?)")->execute([$ip, $token]);
-        $db->commit();
+    // Per-row retry helper. Each INSERT is its own atomic WAL write — no explicit
+    // transaction, so the writer lock is held for ~10ms per row instead of 1-2s
+    // for the whole batch. Eliminates the "database is locked" errors we saw
+    // when concurrent magic-link gens piled up on a single big transaction.
+    $exec_retry = function (string $sql, array $params) use ($db): void {
+        $st = $db->prepare($sql);
+        $delay_us = 100000; // 100ms
+        for ($try = 0; $try < 40; $try++) {
+            try { $st->execute($params); return; }
+            catch (Throwable $e) {
+                $msg = strtolower($e->getMessage());
+                if (strpos($msg, 'lock') === false && strpos($msg, 'busy') === false) throw $e;
+                usleep($delay_us);
+                $delay_us = min(800000, (int)($delay_us * 1.2));
+            }
+        }
+        throw new Exception('Our database is busy right now. Please try again in a few seconds.');
     };
-    // Beefier retry — up to ~25s of total wait (vs prior 7s) with light backoff,
-    // because peak concurrent magic-link generations can hold the writer for
-    // longer than the SQLite busy_timeout alone covers.
-    $persisted = false; $lastErr = null;
-    $delay_us = 200000; // 200ms
-    for ($try = 0; $try < 60 && !$persisted; $try++) {
-        try { $persist(); $persisted = true; }
-        catch (Throwable $e) {
-            $lastErr = $e;
-            if ($db->inTransaction()) { try { $db->rollBack(); } catch (Throwable $x) {} }
-            $msg = strtolower($e->getMessage());
-            $is_lock = (strpos($msg, 'lock') !== false) || (strpos($msg, 'busy') !== false) || (strpos($msg, 'database is locked') !== false);
-            if (!$is_lock) throw $e;
-            usleep($delay_us);
-            $delay_us = min(800000, (int)($delay_us * 1.2));
+
+    $persist = function () use ($db, $email, $name, $biz, $website, $cost, $htmls, $token, $ip, $exec_retry) {
+        $exec_retry("INSERT INTO prospects (email, name, business_name, current_url, source) VALUES (?, ?, ?, ?, 'magic')", [$email, $name, $biz, $website]);
+        $pid = (int)$db->lastInsertId();
+        $exec_retry("INSERT INTO jobs (type, prospect_id, customer_email, business_name, status, scheduled_for, token, generation_mode, item_status, total_cost_cents, completed_at, qa_status) VALUES ('outbound', ?, ?, ?, 'ready', datetime('now'), ?, 'magic', 'done', ?, datetime('now'), 'magic')",
+            [$pid, $email, $biz, $token, (int)round($cost * 100)]);
+        $jid = (int)$db->lastInsertId();
+        foreach ($htmls as $i => $html) {
+            $exec_retry("INSERT INTO previews (job_id, variant_n, html_path, qa_score, qa_pass, qa_issues) VALUES (?, ?, ?, NULL, NULL, NULL)",
+                [$jid, $i, '/preview/' . $token . '/v' . $i . '/index.html']);
         }
-    }
-    if (!$persisted) {
-        $msg = $lastErr ? $lastErr->getMessage() : 'could not save the result';
-        // Surface a friendlier message instead of leaking the SQLite error string.
-        if (stripos($msg, 'lock') !== false || stripos($msg, 'busy') !== false) {
-            throw new Exception('Our database is busy right now. Please try again in a few seconds.');
-        }
-        throw new Exception($msg);
-    }
+        $exec_retry("INSERT INTO magic_hits (ip, token) VALUES (?, ?)", [$ip, $token]);
+    };
+    // Row-level retries live inside $persist(); a thrown error here is already
+    // user-friendly via the helper above.
+    $persist();
 
     echo json_encode(['ok' => true, 'token' => $token, 'url' => '/preview/' . $token . '/', 'preview_url' => '/preview/' . $token . '/v1/index.html', 'variants' => count($htmls), 'business' => $biz, 'business_name' => $biz]);
     exit;
