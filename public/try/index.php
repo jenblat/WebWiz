@@ -395,6 +395,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
     <p class="loading-sub">Hang tight. He&rsquo;s working fast.</p>
     <div class="progress-track"><span class="progress-fill" id="progFill"></span></div>
     <p class="loading-status" id="loadingStatus">Picking your colors&hellip;</p>
+    <p class="loading-elapsed" id="loadingElapsed" aria-live="polite" style="font-family:var(--body);font-weight:500;font-size:13px;color:rgba(18,24,74,0.55);margin:6px 0 0;letter-spacing:0.04em;">0s elapsed</p>
     <div class="powered-chip">Powered by WebWiz</div>
     <div class="late-fallback" id="lateFallback">
       <p>Wizzy&rsquo;s taking his time on this one. Want him to email you when it&rsquo;s ready?</p>
@@ -620,11 +621,22 @@ window.__TRY_INIT__ = {
 
   // ---------- loading ----------
   var statusIdx = 0, statusTimer = null, progressTimer = null, lateTimer = null, generating = false;
+  var elapsedTimer = null, elapsedStart = 0;
   function startLoadingTickers(){
     // Tuned for a ~120s Sonnet generation window: progress drifts up smoothly
     // to ~92% over the 2 minutes (then jumps to 100% on success). Status
     // copy rotates every 8s so users see all 6 messages over the full wait.
     var pct = 4; progFill.style.width = pct + '%'; loadingStatus.textContent = statusMessages[0]; statusIdx = 0;
+    // Visible elapsed timer (Omar's request to see how long the gen takes)
+    elapsedStart = Date.now();
+    var elapsedEl = document.getElementById('loadingElapsed');
+    if (elapsedEl) elapsedEl.textContent = '0s elapsed';
+    elapsedTimer = setInterval(function(){
+      if (!elapsedEl) return;
+      var s = Math.floor((Date.now() - elapsedStart) / 1000);
+      var label = s < 60 ? (s + 's elapsed') : (Math.floor(s/60) + 'm ' + (s%60) + 's elapsed');
+      elapsedEl.textContent = label;
+    }, 1000);
     statusTimer = setInterval(function(){
       statusIdx = Math.min(statusIdx + 1, statusMessages.length - 1);
       loadingStatus.style.opacity = '0';
@@ -646,6 +658,7 @@ window.__TRY_INIT__ = {
     if (statusTimer)   { clearInterval(statusTimer);   statusTimer = null; }
     if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
     if (lateTimer)     { clearTimeout(lateTimer);      lateTimer = null; }
+    if (elapsedTimer)  { clearInterval(elapsedTimer);  elapsedTimer = null; }
   }
   function showLoadingError(msg){
     stopLoadingTickers();
@@ -966,7 +979,8 @@ window.__TRY_INIT__ = {
     vids.forEach(function(v){
       v.removeAttribute('loop');
       v.addEventListener('ended', function(){
-        setTimeout(function(){ try { v.currentTime = 0; v.play().catch(function(){}); } catch(e){} }, 5000);
+        // 1s pause between loops — feels alive without being frantic
+        setTimeout(function(){ try { v.currentTime = 0; v.play().catch(function(){}); } catch(e){} }, 1000);
       });
     });
   }

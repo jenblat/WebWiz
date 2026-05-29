@@ -47,6 +47,33 @@ $db->exec("CREATE TABLE IF NOT EXISTS magic_hits (id INTEGER PRIMARY KEY AUTOINC
 // ---- rate limiting (per-IP/hour + daily global cap) ----
 $ip = (string)($_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '');
 $ip = trim(explode(',', $ip)[0]);
+
+// ---- Per-IP in-flight gate ----
+// Without this, a user clicking 'Try again' while their first request is
+// still cooking will stack N parallel Sonnet calls. All N then race to
+// UPDATE api_keys.last_used_at + INSERT INTO api_calls, exhausting the
+// SQLite writer lock and surfacing the 'database is busy' error.
+$ip_lock_path = '/tmp/wwmagic_' . substr(sha1($ip), 0, 16) . '.lock';
+$ip_lock_fp = @fopen($ip_lock_path, 'c');
+if (!$ip_lock_fp || !flock($ip_lock_fp, LOCK_EX | LOCK_NB)) {
+    // Already in flight. Honor it if it's recent (<180s); else assume the
+    // prior request crashed and steal the lock.
+    $age = is_file($ip_lock_path) ? (time() - filemtime($ip_lock_path)) : 999;
+    if ($age >= 0 && $age < 180) {
+        ml_fail('Wizzy is still working on your last request. Hang tight — refreshing the page will not help.', 429);
+    }
+    if ($ip_lock_fp) { @fclose($ip_lock_fp); }
+    @unlink($ip_lock_path);
+    $ip_lock_fp = @fopen($ip_lock_path, 'c');
+    if ($ip_lock_fp) { flock($ip_lock_fp, LOCK_EX | LOCK_NB); }
+}
+// Release the lock when the request ends, whether by success, exception, or
+// user abort.
+register_shutdown_function(function () use (&$ip_lock_fp, $ip_lock_path) {
+    if ($ip_lock_fp) { @flock($ip_lock_fp, LOCK_UN); @fclose($ip_lock_fp); }
+    @unlink($ip_lock_path);
+});
+
 $perIp = (int)ml_sget($db, 'magic_rl_per_ip_hour', '3');
 $daily = (int)ml_sget($db, 'magic_rl_daily_cap', '100');
 if ($perIp > 0) { $c = $db->prepare("SELECT COUNT(*) FROM magic_hits WHERE ip=? AND created_at > datetime('now','-1 hour')"); $c->execute([$ip]); if ((int)$c->fetchColumn() >= $perIp) ml_fail('You have reached the limit for now. Please try again a bit later.', 429); }

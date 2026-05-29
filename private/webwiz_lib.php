@@ -21,7 +21,7 @@ function ww_db(): PDO {
     $pdo = new PDO('sqlite:' . $path);
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $pdo->exec('PRAGMA journal_mode = WAL');
-    $pdo->exec('PRAGMA busy_timeout = 8000');
+    $pdo->exec('PRAGMA busy_timeout = 30000'); // 30s — longer than typical Sonnet gen contention window
     // NORMAL fsync is durable enough under WAL and is ~2-3x faster than FULL
     // for writes. Reduces the per-tx hold time so concurrent magic-link
     // generations don't pile up on the writer.
