@@ -1,7 +1,10 @@
 <?php
 // Public "magic link" real-time generator.
-// GET: website (required), name (optional), email (optional), v / variants (1-3, default from settings).
-// Scrapes the site, generates v variants synchronously, writes a preview, returns JSON { token, url }.
+// Accepts GET (existing cold-email links) OR POST (new /try ad-funnel page).
+// Inputs: website (required), name (optional), email (optional), description (optional —
+//         steers the prompt for the ad-funnel flow), v / variants (1-3, default from settings).
+// Scrapes the site, generates v variants synchronously, writes preview files,
+// returns JSON { ok, token, url, business }.
 declare(strict_types=1);
 @set_time_limit(0);
 ignore_user_abort(true);
@@ -9,18 +12,32 @@ header('Content-Type: application/json');
 
 require_once '/var/www/sites/trywebwiz/private/worker.php'; // provides generation functions (queue loop is CLI-only)
 
+// ---- Merge POST body into $_GET so all existing $_GET reads work for both transports.
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $raw = file_get_contents('php://input') ?: '';
+    if ($raw !== '') {
+        $d = json_decode($raw, true);
+        if (is_array($d)) {
+            foreach ($d as $k => $v) { if (!isset($_GET[$k])) $_GET[$k] = $v; }
+        }
+    }
+    foreach ($_POST as $k => $v) { if (!isset($_GET[$k])) $_GET[$k] = $v; }
+}
+
 $db = ww_db();
 function ml_sget(PDO $db, string $k, string $d = ''): string { $s = $db->prepare("SELECT value FROM settings WHERE key=?"); $s->execute([$k]); $r = $s->fetchColumn(); return $r === false ? $d : (string)$r; }
 function ml_fail(string $m, int $code = 400) { http_response_code($code); echo json_encode(['error' => $m]); exit; }
 
 if (ml_sget($db, 'magic_link_enabled', '1') !== '1') ml_fail('Instant preview is currently turned off.', 403);
 
-$website = trim((string)($_GET['website'] ?? $_GET['url'] ?? ''));
-$name    = trim((string)($_GET['name'] ?? ''));
-$email   = trim((string)($_GET['email'] ?? ''));
-$v       = (int)($_GET['v'] ?? $_GET['variants'] ?? ml_sget($db, 'magic_default_variants', '1'));
+$website     = trim((string)($_GET['website'] ?? $_GET['url'] ?? ''));
+$name        = trim((string)($_GET['name'] ?? ''));
+$email       = trim((string)($_GET['email'] ?? ''));
+$description = trim((string)($_GET['description'] ?? '')); // NEW — ad-funnel form notes
+$v           = (int)($_GET['v'] ?? $_GET['variants'] ?? ml_sget($db, 'magic_default_variants', '1'));
 $v = max(1, min(3, $v ?: 1));
-if ($website === '') ml_fail('Missing website.');
+
+if ($website === '') ml_fail('Add your website so Wizzy has something to start from.');
 if (!preg_match('~^https?://~i', $website)) $website = 'https://' . $website;
 if (!filter_var($website, FILTER_VALIDATE_URL)) ml_fail('That website URL looks invalid.');
 
@@ -44,8 +61,26 @@ try {
     $industry = '';
     $usable = array_values(array_filter($scrape['images'] ?? [], fn($i) => empty($i['is_logo']) && empty($i['is_thumb']) && empty($i['is_team_card'])));
     $system = build_system_prompt($industry, count($usable));
+
+    // If the user typed a description in the /try ad-funnel form, weave it into
+    // each variant's user prompt as authoritative business context. We append it
+    // as an extra block on the prompt so it lands in the message body without
+    // disturbing the existing build_user_prompt() format.
+    $desc_block = '';
+    if ($description !== '') {
+        $clean = preg_replace('/[\x00-\x1F]+/', ' ', $description);
+        $clean = mb_substr($clean, 0, 1500); // cap to avoid prompt bloat
+        $desc_block = "\n\n<business_notes_from_owner>\n" . $clean . "\n</business_notes_from_owner>\n"
+                    . "Treat the notes above as the most authoritative description of the business. "
+                    . "If the scraped content disagrees, prefer what the owner wrote. Reflect the tone "
+                    . "and specifics (years in business, neighborhoods, signature offerings) in the hero and copy.";
+    }
+
     $reqs = [];
-    for ($i = 1; $i <= $v; $i++) { $reqs[$i] = ['system' => $system, 'messages' => [['role' => 'user', 'content' => build_user_prompt($scrape, $biz, $industry, $i)]]]; }
+    for ($i = 1; $i <= $v; $i++) {
+        $user_content = build_user_prompt($scrape, $biz, $industry, $i) . $desc_block;
+        $reqs[$i] = ['system' => $system, 'messages' => [['role' => 'user', 'content' => $user_content]]];
+    }
     $res = anthropic_multi('claude-sonnet-4-6', $reqs, 14000, 0.7, null, ['</html>']);
     $htmls = []; $cost = 0.0;
     foreach ($reqs as $i => $_) { $cost += (float)($res[$i]['cost_usd'] ?? 0); $cand = finalize_html($res[$i]['text'] ?? ''); if ($cand && quality_gate($cand)['ok']) $htmls[$i] = $cand; }
@@ -83,7 +118,7 @@ try {
     }
     if (!$persisted) throw ($lastErr ?: new Exception('could not save the result'));
 
-    echo json_encode(['ok' => true, 'token' => $token, 'url' => '/preview/' . $token . '/', 'variants' => count($htmls), 'business' => $biz]);
+    echo json_encode(['ok' => true, 'token' => $token, 'url' => '/preview/' . $token . '/', 'preview_url' => '/preview/' . $token . '/v1/index.html', 'variants' => count($htmls), 'business' => $biz, 'business_name' => $biz]);
     exit;
 } catch (Throwable $e) {
     ml_fail('Generation failed: ' . preg_replace('/[\x00-\x1F]+/', ' ', $e->getMessage()), 500);
