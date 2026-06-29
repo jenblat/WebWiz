@@ -38,7 +38,17 @@ if ($is_magic) {
   .err{background:#fde8e8;border:2px solid #c0392b;color:#7a1f17;padding:14px 16px;border-radius:12px;margin-top:18px;font-size:14px;}
   .err a{color:var(--navy);font-weight:700;}
   .brand{margin-top:30px;font-size:12px;letter-spacing:.16em;text-transform:uppercase;opacity:.55;font-weight:800;}
-</style><!-- Meta Pixel -->
+
+  /* ----------- Testimonials ----------- */
+  .testi-row{max-width:1180px;margin:36px auto 0;padding:0 24px;}
+  .testi-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;}
+  .testi-card{background:#fff;border:3px solid var(--navy);border-radius:18px;padding:22px;box-shadow:6px 6px 0 var(--yellow);}
+  .testi-stars{color:#F7C84A;font-size:18px;letter-spacing:2px;line-height:1;margin-bottom:10px;}
+  .testi-q{font-family:var(--body),system-ui,sans-serif;font-size:15px;line-height:1.55;color:var(--navy);margin:0 0 12px;font-weight:500;}
+  .testi-who{font-family:var(--body),system-ui,sans-serif;font-size:13px;color:var(--navy);opacity:0.7;}
+  .testi-who strong{opacity:1;font-weight:700;}
+  @media(max-width:900px){.testi-grid{grid-template-columns:1fr;gap:14px;}.testi-row{margin-top:24px;}}
+  </style><!-- Meta Pixel -->
 <script>!function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');fbq('init','1974530180093513');fbq('track','PageView');window.wwMetaTrack=function(name,params,userParams){var eid='ww_'+Date.now().toString(36)+Math.random().toString(36).slice(2,14);try{if(window.fbq)fbq('track',name,params||{},{eventID:eid});}catch(e){}try{var body=Object.assign({event_name:name,event_id:eid,event_source_url:location.href},params||{},userParams||{});if(navigator.sendBeacon){var blob=new Blob([JSON.stringify(body)],{type:'application/json'});navigator.sendBeacon('/api/capi.php',blob);}else{fetch('/api/capi.php',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),keepalive:true});}}catch(e){}return eid;};</script>
 <noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=1974530180093513&ev=PageView&noscript=1"/></noscript>
 <!-- End Meta Pixel -->
@@ -584,8 +594,9 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
               <div class="err-msg">Please add an email so we can save your preview.</div>
             </div>
           </div>
-          <label for="lead_company" style="margin-top:14px;display:block;">Business name <span class="opt-tag">(optional)</span></label>
-          <input type="text" id="lead_company" name="company" autocomplete="organization" placeholder="We&rsquo;ll guess from your website if you skip this">
+          <label for="lead_company" style="margin-top:14px;display:block;">Business name</label>
+          <input type="text" id="lead_company" name="company" autocomplete="organization" placeholder="What&rsquo;s your business called?" required>
+            <div class="err-msg" id="errCompany">Tell Wizzy your business name.</div>
         </div>
         <div class="field" data-field="description">
           <label for="description">Tell Wizzy about your business</label>
@@ -606,6 +617,27 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
     <div class="hero-mascot">
       <div class="wiz-circle"><video class="wizzy-vid" autoplay muted playsinline preload="metadata" poster="/preview/wizzy-waving-poster.jpg" aria-label="Wizzy waving"><source src="/preview/wizzy-waving.webm" type="video/webm"><source src="/preview/wizzy-waving.mp4" type="video/mp4"><img src="/preview/wizzy-wave.gif" alt="Wizzy waving"></video></div>
       <div class="sticker">Made with care<small>by Wizzy</small></div>
+    </div>
+  </section>
+
+  <!-- Testimonial row — small-business social proof for ads -->
+  <section class="testi-row" aria-label="What clients say">
+    <div class="testi-grid">
+      <div class="testi-card">
+        <div class="testi-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+        <p class="testi-q">Sent Wizzy our shop info on a Tuesday. By the weekend we had a site that actually looked like our place. We just said yes.</p>
+        <div class="testi-who"><strong>Maria</strong> &middot; bakery owner</div>
+      </div>
+      <div class="testi-card">
+        <div class="testi-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+        <p class="testi-q">Filling out the form took five minutes. The website was up the same day. My business looks legit online for the first time ever.</p>
+        <div class="testi-who"><strong>Jake</strong> &middot; contractor</div>
+      </div>
+      <div class="testi-card">
+        <div class="testi-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+        <p class="testi-q">I put off building a site for two years. Wizzy did it in an afternoon and handled the domain. Wish I'd done this sooner.</p>
+        <div class="testi-who"><strong>Sarah</strong> &middot; salon owner</div>
+      </div>
     </div>
   </section>
 </main>
@@ -1026,6 +1058,15 @@ window.__TRY_INIT__ = {
     var leadName    = (document.getElementById('lead_name')    || {}).value || '';
     var leadEmail   = (document.getElementById('lead_email')   || {}).value || '';
     var leadCompany = (document.getElementById('lead_company') || {}).value || '';
+    if (!leadCompany.trim()) {
+      var compEl = document.getElementById('lead_company');
+      if (compEl) {
+        compEl.focus();
+        compEl.style.borderColor = '#8a0e0e';
+      }
+      var errC = document.getElementById('errCompany'); if (errC) errC.style.display = 'block';
+      return;
+    }
     fetch('/api/magic.php', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },

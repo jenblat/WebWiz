@@ -142,39 +142,145 @@ function ww_nurture_compute_next_send(string $created_at, int $step_just_sent, ?
 }
 
 /**
- * Step 1-5 are the initial sequence. Step 6+ alternates monthly A (even step) and B (odd step).
+ * Structured templates rendered via the shared bold-editorial chrome from
+ * _email_templates.php. Each template defines an eyebrow (star marquee),
+ * a two-part hero headline, body paragraphs, and a CTA. Merge tags
+ * {{name}} / {{company}} / {{preview_url}} are applied at send time.
+ *
  * No em dashes anywhere. Wizzy is he/him. No AI/speed/automation language.
+ *
+ * Step 1-5 = front-loaded sequence. Step 6+ = monthly recurring,
+ * alternating A (even step) and B (odd step).
  */
 function ww_nurture_template(int $step): array {
     if ($step === 1) return [
-        'subject' => 'Your {{company}} site is still up, {{name}}',
-        'body'    => "Hi {{name}},\n\nJust checking in. The website we built for {{company}} is still live and waiting for you here:\n\n{{preview_url}}\n\nIt's free to look at for as long as you like, and you only pay if you decide to keep it. Have a look and tell me what you think.\n\nWizzy from WebWiz",
+        'subject'         => 'The free website we made for {{company}}',
+        'eyebrow'         => 'YOUR FREE WEBSITE IS STILL LIVE',
+        'hero_before'     => "It's still",
+        'hero_emphasized' => 'here.',
+        'paragraphs'      => [
+            "Hi <strong>{{name}}</strong>, this is the website we built for <strong>{{company}}</strong>, free of charge, and it&rsquo;s still live and waiting for you to take a look.",
+            "Have it as long as you like at no cost. You only pay if you decide to keep it and put it on your own domain.",
+        ],
+        'cta_label'       => 'See your free website',
+        'cta_url'         => '{{preview_url}}',
+        'subtext'         => 'Have a look and tell me what you think. Just hit reply.',
     ];
     if ($step === 2) return [
-        'subject' => 'A quick note on how this works',
-        'body'    => "Hi {{name}},\n\nI know a free website can sound too good to be true, so here's the honest version. We're a small design studio. We build the site, host it, set up your domain, and handle the technical bits so you never have to. You just say yes.\n\nYour {{company}} site is right here whenever you want another look:\n\n{{preview_url}}\n\nWizzy from WebWiz",
+        'subject'         => 'A note on the free site we made for you',
+        'eyebrow'         => 'HOW WEBWIZ WORKS',
+        'hero_before'     => "The honest",
+        'hero_emphasized' => 'version.',
+        'paragraphs'      => [
+            "Hi <strong>{{name}}</strong>, I know a free website sounds too good to be true, so here&rsquo;s how this actually works.",
+            "We&rsquo;re a small design studio. We built this site for <strong>{{company}}</strong> hoping you&rsquo;d love it. When you&rsquo;re ready, we host it, set up your domain, and handle the technical bits. You just say yes.",
+        ],
+        'cta_label'       => 'See your free {{company}} site',
+        'cta_url'         => '{{preview_url}}',
+        'subtext'         => 'Questions? Reply to this email. A real human reads every one.',
     ];
     if ($step === 3) return [
-        'subject' => 'Want to change anything on it?',
-        'body'    => "Hi {{name}},\n\nNot quite right yet? That's the easy part. Tell our team what to change, whether it's different colors, your own photos, or new wording, and we'll make it yours.\n\nStart here and let us know what you'd tweak:\n\n{{preview_url}}\n\nWizzy from WebWiz",
+        'subject'         => 'Want to change anything on the free site we made?',
+        'eyebrow'         => 'WIZZY CAN TWEAK ANYTHING',
+        'hero_before'     => 'Make',
+        'hero_emphasized' => 'it yours.',
+        'paragraphs'      => [
+            "Hi <strong>{{name}}</strong>, not quite right yet? That&rsquo;s the easy part.",
+            "Tell our team what to change on the free site we made for <strong>{{company}}</strong>, whether it&rsquo;s different colors, your own photos, or new wording, and we&rsquo;ll make it match.",
+        ],
+        'cta_label'       => 'Open {{company}} and tweak it',
+        'cta_url'         => '{{preview_url}}',
+        'subtext'         => 'You can chat with Wizzy right on the preview page.',
     ];
     if ($step === 4) return [
-        'subject' => "We'll even handle the domain",
-        'body'    => "Hi {{name}},\n\nThe thing people worry about most is the technical setup. Don't. When you're ready, we point your domain, set up hosting and email, and include a domain on us. You never touch a single setting.\n\nYour site is still here:\n\n{{preview_url}}\n\nWizzy from WebWiz",
+        'subject'         => "We'll even handle the domain for your free site",
+        'eyebrow'         => 'WE HANDLE THE TECH BITS',
+        'hero_before'     => "We've",
+        'hero_emphasized' => 'got you.',
+        'paragraphs'      => [
+            "Hi <strong>{{name}}</strong>, the thing people worry about most is the technical setup. Don&rsquo;t.",
+            "Your free <strong>{{company}}</strong> site is ready to go live whenever you are. We point your domain, set up hosting and email, and include a domain on us. You never touch a single setting.",
+        ],
+        'cta_label'       => 'Your free site is still here',
+        'cta_url'         => '{{preview_url}}',
+        'subtext'         => 'Got a domain in mind? Just tell us when you reply.',
     ];
     if ($step === 5) return [
-        'subject' => "I'll stop crowding your inbox",
-        'body'    => "Hi {{name}},\n\nI don't want to be a pest, so I'll ease off and just check in now and then. Nothing changes on our end. The {{company}} site stays live and ready, and the offer stands whenever you are.\n\nIt's right here when you want it:\n\n{{preview_url}}\n\nWizzy from WebWiz",
+        'subject'         => "I'll stop crowding your inbox",
+        'eyebrow'         => 'TAKING A STEP BACK',
+        'hero_before'     => "No",
+        'hero_emphasized' => 'pressure.',
+        'paragraphs'      => [
+            "Hi <strong>{{name}}</strong>, I don&rsquo;t want to be a pest, so I&rsquo;ll ease off and just check in now and then.",
+            "Nothing changes on our end. The free site we built for <strong>{{company}}</strong> stays live and ready, and the offer stands whenever you are.",
+        ],
+        'cta_label'       => "It's right here when you want it",
+        'cta_url'         => '{{preview_url}}',
+        'subtext'         => 'See you next month.',
     ];
+    // Step 6+ monthly recurring. Even step = variant A, odd step = variant B.
     $is_a = ($step % 2) === 0;
     if ($is_a) return [
-        'subject' => 'Still holding your site, {{name}}',
-        'body'    => "Hi {{name}},\n\nQuick hello from Wizzy. Your {{company}} website is still live and still yours for the taking. No rush, just letting you know it hasn't gone anywhere.\n\n{{preview_url}}\n\nWizzy from WebWiz",
+        'subject'         => 'Still holding your free site, {{name}}',
+        'eyebrow'         => 'YOUR FREE WEBSITE IS STILL READY',
+        'hero_before'     => 'Quick',
+        'hero_emphasized' => 'hello.',
+        'paragraphs'      => [
+            "Hi <strong>{{name}}</strong>, quick hello from Wizzy.",
+            "The free website we made for <strong>{{company}}</strong> is still live and still yours for the taking. No rush. Just letting you know it hasn&rsquo;t gone anywhere.",
+        ],
+        'cta_label'       => 'See your free {{company}} site',
+        'cta_url'         => '{{preview_url}}',
+        'subtext'         => 'Reply anytime. I read every one.',
     ];
     return [
-        'subject' => 'Your website is here whenever you are',
-        'body'    => "Hi {{name}},\n\nJust keeping the light on. The site we built for {{company}} is ready when you are, and we're happy to change anything you like before it goes live.\n\n{{preview_url}}\n\nWizzy from WebWiz",
+        'subject'         => 'Your free website is here whenever you are',
+        'eyebrow'         => "KEEPING THE LIGHT ON",
+        'hero_before'     => 'Ready',
+        'hero_emphasized' => 'when you are.',
+        'paragraphs'      => [
+            "Hi <strong>{{name}}</strong>, just keeping the light on.",
+            "The free site we built for <strong>{{company}}</strong> is ready when you are, and we&rsquo;re happy to change anything you like before it goes live on your domain.",
+        ],
+        'cta_label'       => 'Open your free site',
+        'cta_url'         => '{{preview_url}}',
+        'subtext'         => 'No rush. Reply with anything you want changed.',
     ];
+}
+
+/** Build the showcase image URL if a screenshot exists for the contact's token. */
+function ww_nurture_showcase_url(string $token): ?string {
+    if ($token === '') return null;
+    $token = preg_replace('~[^a-zA-Z0-9_-]~', '', $token);
+    if ($token === '') return null;
+    $path = '/var/www/sites/trywebwiz/public/preview/' . $token . '/showcase.jpg';
+    if (is_file($path) && filesize($path) > 1000) {
+        return 'https://trywebwiz.com/preview/' . $token . '/showcase.jpg';
+    }
+    return null;
+}
+
+/**
+ * Image card block: clickable screenshot of the generated site with a
+ * "Made for {company} for free" yellow badge below. Renders the same brand
+ * chrome (navy border + yellow shadow + cream backing) as the order-summary card.
+ */
+function ww_email_image_card(string $img_url, string $href, string $company): string {
+    $img_esc  = htmlspecialchars($img_url,  ENT_QUOTES);
+    $href_esc = htmlspecialchars($href,     ENT_QUOTES);
+    $biz_esc  = htmlspecialchars($company !== '' ? $company : 'you');
+    return '<tr><td style="padding:22px 36px 4px;">'
+         . '<a href="' . $href_esc . '" style="text-decoration:none;display:block;">'
+         . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:3px solid #12184A;border-radius:18px;background:#F8EFD3;box-shadow:6px 6px 0 #F7C84A;">'
+         . '<tr><td style="padding:10px;">'
+         . '<img src="' . $img_esc . '" alt="The website Wizzy built for ' . $biz_esc . '" width="100%" style="display:block;width:100%;height:auto;border-radius:10px;border:2px solid #12184A;">'
+         . '</td></tr>'
+         . '<tr><td style="padding:6px 14px 12px;font-family:\'Nunito\',sans-serif;font-weight:900;font-size:11px;letter-spacing:0.22em;text-transform:uppercase;color:#12184A;text-align:center;">'
+         . '&#9733;&nbsp; Built for ' . $biz_esc . ' &nbsp;&middot;&nbsp; Free to keep &nbsp;&#9733;'
+         . '</td></tr>'
+         . '</table>'
+         . '</a>'
+         . '</td></tr>';
 }
 
 function ww_nurture_apply_merge(string $tpl, array $contact): string {
@@ -191,43 +297,77 @@ function ww_nurture_apply_merge(string $tpl, array $contact): string {
     ]);
 }
 
-function ww_nurture_render_html(string $body_text, string $unsub_url, string $mailing_address): string {
-    $body_html = '';
-    foreach (preg_split('~\R~', $body_text) as $line) {
-        $line = trim($line);
-        if ($line === '') { $body_html .= "<br>\n"; continue; }
-        $linked = preg_replace_callback('~(https?://\S+)~', function ($m) {
-            $u = $m[1];
-            return '<a href="' . htmlspecialchars($u, ENT_QUOTES) . '" style="color:#12184A;text-decoration:underline;">' . htmlspecialchars($u, ENT_QUOTES) . '</a>';
-        }, htmlspecialchars($line, ENT_QUOTES));
-        $body_html .= '<p style="margin:0 0 12px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;font-size:16px;line-height:1.6;color:#12184A;">' . $linked . '</p>' . "\n";
+/**
+ * Render a structured nurture template into the bold-editorial brand shell.
+ * Uses the same chrome helpers as the transactional webhook emails so every
+ * touch from WebWiz looks like the same brand.
+ */
+function ww_nurture_render_html(array $tpl, array $contact, string $unsub_url, string $mailing_address): string {
+    require_once __DIR__ . '/_email_templates.php';
+
+    $eyebrow   = ww_nurture_apply_merge($tpl['eyebrow'] ?? 'A NOTE FROM WIZZY', $contact);
+    $h_before  = ww_nurture_apply_merge($tpl['hero_before'] ?? '', $contact);
+    $h_emph    = ww_nurture_apply_merge($tpl['hero_emphasized'] ?? '', $contact);
+    $h_after   = ww_nurture_apply_merge($tpl['hero_after'] ?? '', $contact);
+    $cta_label = ww_nurture_apply_merge($tpl['cta_label'] ?? 'See your website', $contact);
+    $cta_url   = ww_nurture_apply_merge($tpl['cta_url']   ?? NURTURE_DOMAIN . '/try/', $contact);
+    $subtext   = ww_nurture_apply_merge($tpl['subtext']   ?? '', $contact);
+
+    $body = ww_email_hero($h_before, $h_emph, $h_after);
+
+    // Insert a clickable screenshot of the generated site directly under the
+    // hero so the recipient can recognize their own preview at a glance.
+    $token = (string)($contact['token'] ?? '');
+    $showcase = ww_nurture_showcase_url($token);
+    if ($showcase !== null && $cta_url !== '') {
+        $body .= ww_email_image_card($showcase, $cta_url, (string)($contact['company'] ?? ''));
     }
-    $addr_html = $mailing_address !== ''
-        ? '<div style="font-size:12px;color:#12184A;opacity:0.55;line-height:1.5;">' . nl2br(htmlspecialchars($mailing_address, ENT_QUOTES)) . '</div>'
-        : '';
+
+    foreach (($tpl['paragraphs'] ?? []) as $i => $p) {
+        $merged = ww_nurture_apply_merge($p, $contact);
+        $body  .= ww_email_para($merged, $i === 0 ? 14 : 16);
+    }
+    if ($cta_label !== '' && $cta_url !== '') {
+        $body .= ww_email_cta($cta_label, $cta_url);
+    }
+    if ($subtext !== '') {
+        $body .= ww_email_subtext($subtext);
+    }
+
+    // Unsubscribe + mailing address row, inside the card, above the brand footer
     $unsub_esc = htmlspecialchars($unsub_url, ENT_QUOTES);
-    return <<<HTML
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#FFF8E7;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;color:#12184A;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#FFF8E7;">
-<tr><td align="center" style="padding:32px 16px;">
-<table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;width:100%;background:#fff;border:1px solid rgba(18,24,74,0.08);border-radius:14px;">
-<tr><td style="padding:36px 36px 8px;">
-{$body_html}
-</td></tr>
-<tr><td style="padding:24px 36px 28px;border-top:1px solid rgba(18,24,74,0.08);">
-<div style="font-size:12px;color:#12184A;opacity:0.7;line-height:1.5;">
-<a href="{$unsub_esc}" style="color:#12184A;opacity:0.85;text-decoration:underline;">Unsubscribe</a> &nbsp;&middot;&nbsp;
-<a href="https://trywebwiz.com" style="color:#12184A;opacity:0.85;text-decoration:underline;">trywebwiz.com</a> &nbsp;&middot;&nbsp;
-<a href="mailto:hello@trywebwiz.com" style="color:#12184A;opacity:0.85;text-decoration:underline;">hello@trywebwiz.com</a>
-</div>
-<div style="height:10px;"></div>
-{$addr_html}
-</td></tr>
-</table>
-</td></tr></table>
-</body></html>
-HTML;
+    $addr_html = $mailing_address !== ''
+        ? '<div style="font-size:11px;color:#12184A;opacity:0.55;line-height:1.5;margin-top:6px;">' . nl2br(htmlspecialchars($mailing_address, ENT_QUOTES)) . '</div>'
+        : '';
+    $body .= '<tr><td style="padding:6px 36px 18px;text-align:center;border-top:1px solid rgba(18,24,74,0.08);">'
+           . '<div style="font-family:Inter,sans-serif;font-size:11px;color:#12184A;opacity:0.7;line-height:1.5;padding-top:14px;">'
+           . '<a href="' . $unsub_esc . '" style="color:#12184A;opacity:0.85;text-decoration:underline;">Unsubscribe from these emails</a>'
+           . '</div>'
+           . $addr_html
+           . '</td></tr>';
+
+    $title = trim($h_before . ' ' . $h_emph . ' ' . $h_after) ?: 'A note from Wizzy';
+    return ww_email_shell($eyebrow, $title, $body);
+}
+
+/** Plain-text fallback derived from the same structured template. */
+function ww_nurture_render_text(array $tpl, array $contact, string $unsub_url, string $mailing_address): string {
+    $out = '';
+    foreach (($tpl['paragraphs'] ?? []) as $p) {
+        $merged = ww_nurture_apply_merge($p, $contact);
+        // Strip HTML tags for the text version
+        $out .= trim(html_entity_decode(strip_tags($merged), ENT_QUOTES)) . "\n\n";
+    }
+    $cta_url   = ww_nurture_apply_merge($tpl['cta_url']   ?? NURTURE_DOMAIN . '/try/', $contact);
+    $cta_label = ww_nurture_apply_merge($tpl['cta_label'] ?? 'See your website', $contact);
+    if ($cta_url !== '') {
+        $out .= $cta_label . ":\n" . $cta_url . "\n\n";
+    }
+    $subtext = ww_nurture_apply_merge($tpl['subtext'] ?? '', $contact);
+    if ($subtext !== '') $out .= trim(html_entity_decode(strip_tags($subtext), ENT_QUOTES)) . "\n\n";
+    $out .= "Wizzy from WebWiz\n\n----\nUnsubscribe: " . $unsub_url;
+    if ($mailing_address !== '') $out .= "\n\n" . $mailing_address;
+    return $out;
 }
 
 function ww_nurture_upsert_contact(PDO $db, array $data): int {
@@ -281,7 +421,6 @@ function ww_nurture_send_one(PDO $db, array $contact, string $brevo_key, string 
     $step = (int)$contact['current_step'] + 1;
     $tpl = ww_nurture_template($step);
     $subject_merged = ww_nurture_apply_merge($tpl['subject'], $contact);
-    $body_merged    = ww_nurture_apply_merge($tpl['body'], $contact);
     $unsub_url      = ww_nurture_unsub_url((int)$contact['id'], $hmac_secret);
 
     // Reserve the send_id BEFORE building HTML so we can stamp the tracking
@@ -290,14 +429,14 @@ function ww_nurture_send_one(PDO $db, array $contact, string $brevo_key, string 
     $ins->execute([(int)$contact['id'], $step, $subject_merged]);
     $send_id = (int)$db->lastInsertId();
 
-    // Plain-text body (no tracking — many clients don't render images, so this
-    // stays clean and clickable as-is).
-    $text_with_unsub = $body_merged . "\n\n----\nUnsubscribe: " . $unsub_url . ($mailing_address !== '' ? "\n\n" . $mailing_address : '');
+    // Plain-text body for non-HTML clients
+    $text_with_unsub = ww_nurture_render_text($tpl, $contact, $unsub_url, $mailing_address);
 
-    // HTML body — render then post-process to (1) wrap every external link
-    // (other than the unsubscribe) in /api/track.php click tracking, and (2)
-    // append the 1x1 open pixel just before </body>.
-    $body_html = ww_nurture_render_html($body_merged, $unsub_url, $mailing_address);
+    // HTML body — render via the bold-editorial brand shell, then
+    // (1) wrap every external link (other than the unsubscribe) in
+    // /api/track.php click tracking and (2) append the 1x1 open pixel
+    // just before </body>.
+    $body_html = ww_nurture_render_html($tpl, $contact, $unsub_url, $mailing_address);
     $body_html = preg_replace_callback(
         '~<a\s+href="([^"]+)"~i',
         function ($m) use ($send_id, $hmac_secret, $unsub_url) {
