@@ -1,0 +1,17 @@
+# WebWiz Studio
+
+> WebWiz Studio — official website. The links below cover the site's main pages and content.
+
+This file follows the llms.txt convention (https://llmstxt.org) to help AI assistants understand and cite this site.
+
+## Pages
+
+- [WebWiz — Your business deserves a better website.](https://trywebwiz.com/): Hand-designed websites for small businesses. Flat $499 build. Care plans from $49/month — fully secured, backed up daily, multiple redundancies, unlimited traffic.
+- [Order cancelled · WebWiz](https://trywebwiz.com/cancel.html)
+- [Privacy Policy · WebWiz](https://trywebwiz.com/privacy.html): WebWiz Privacy Policy. What data we collect, why, how it
+- [Start a site · WebWiz](https://trywebwiz.com/start.html): Tell us about your business and we
+- [Terms of Service · WebWiz](https://trywebwiz.com/terms.html): WebWiz Terms of Service. The agreement between you and WebWiz when you hire us to design, build, host, or maintain your website.
+
+## Sitemap
+
+- [XML sitemap](https://trywebwiz.com/sitemap.xml)

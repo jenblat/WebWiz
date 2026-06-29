@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Start a site · WebWiz</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Tell us about your business and we'll build you a beautiful website. Flat $499. Pick a care plan if you want hosting and edits handled for you.">
+<meta name="robots" content="index, follow">
+<link rel="stylesheet" href="/legal_shared.css">
+<style>
+  .start-hero{padding:64px 0 24px;background:var(--paper);border-bottom:5px solid var(--navy);}
+  .start-hero h1{font-family:var(--display);font-weight:900;font-size:72px;line-height:0.95;letter-spacing:-0.03em;margin:14px 0 8px;}
+  .start-hero h1 em{font-style:normal;color:var(--yellow);background:var(--navy);padding:0 14px;border-radius:14px;display:inline-block;}
+  .start-hero .lead{font-family:var(--body);font-size:19px;line-height:1.5;max-width:620px;color:var(--navy);}
+  .start-hero .eyebrow{display:inline-block;background:var(--navy);color:var(--cream);padding:8px 18px;border-radius:999px;font-family:var(--display);font-weight:900;font-size:12px;letter-spacing:0.22em;text-transform:uppercase;}
+
+  .start-body{padding:48px 0 96px;background:var(--cream);}
+  form.order{display:grid;grid-template-columns:1fr;gap:36px;max-width:780px;margin:0 auto;}
+  .field{display:flex;flex-direction:column;gap:8px;}
+  .field label.lbl{font-family:var(--display);font-weight:900;font-size:14px;letter-spacing:0.16em;text-transform:uppercase;color:var(--navy);}
+  .field .hint{font-family:var(--body);font-size:13px;color:var(--navy);opacity:0.65;margin-top:2px;}
+  .field input[type=text], .field input[type=email], .field input[type=tel], .field input[type=url], .field textarea{
+    font-family:var(--body);font-size:16px;line-height:1.45;color:var(--navy);
+    background:#fff;border:3px solid var(--navy);border-radius:14px;padding:14px 16px;
+    transition:.15s box-shadow;
+  }
+  .field input:focus, .field textarea:focus{outline:none;box-shadow:6px 6px 0 var(--yellow);}
+  .field textarea{min-height:120px;resize:vertical;}
+  .field .row{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
+  @media (max-width:680px){.field .row{grid-template-columns:1fr;}}
+
+  .section-title{font-family:var(--display);font-weight:900;font-size:32px;letter-spacing:-0.02em;color:var(--navy);margin:8px 0 -8px;}
+
+  /* Customize banner shown when ?customize=1 */
+  .customize-card{background:#fff;border:4px solid var(--navy);border-radius:22px;padding:28px 26px;box-shadow:10px 10px 0 var(--yellow);}
+  .customize-card .cz-tag{display:inline-block;background:var(--teal);color:var(--navy);font-family:var(--display);font-weight:900;font-size:12px;letter-spacing:0.18em;text-transform:uppercase;padding:6px 14px;border-radius:999px;margin-bottom:12px;}
+  .customize-card h2{font-family:var(--display);font-weight:900;font-size:32px;letter-spacing:-0.02em;color:var(--navy);margin-bottom:8px;line-height:1.1;}
+  .customize-card .sub{font-family:var(--body);font-size:15px;color:var(--navy);opacity:0.75;margin-bottom:16px;}
+  .customize-card textarea{width:100%;min-height:150px;font-family:var(--body);font-size:16px;line-height:1.5;color:var(--navy);background:var(--cream);border:3px solid var(--navy);border-radius:14px;padding:16px 18px;resize:vertical;transition:.15s box-shadow;}
+  .customize-card textarea:focus{outline:none;box-shadow:6px 6px 0 var(--yellow);background:#fff;}
+
+  .plans{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;}
+  @media (max-width:900px){.plans{grid-template-columns:1fr;}}
+  .plan{position:relative;cursor:pointer;}
+  .plan input{position:absolute;opacity:0;pointer-events:none;}
+  .plan .card{
+    background:#fff;border:4px solid var(--navy);border-radius:22px;padding:26px 22px;
+    display:flex;flex-direction:column;gap:8px;height:100%;transition:.18s transform, .18s box-shadow;
+  }
+  .plan:hover .card{transform:translate(-2px,-2px);box-shadow:8px 8px 0 var(--navy);}
+  .plan input:checked + .card{background:var(--yellow);box-shadow:8px 8px 0 var(--navy);transform:translate(-2px,-2px);}
+  .plan .pick-pill{align-self:flex-start;background:var(--navy);color:var(--cream);padding:5px 12px;border-radius:999px;font-family:var(--display);font-weight:900;font-size:11px;letter-spacing:0.16em;text-transform:uppercase;}
+  .plan .name{font-family:var(--display);font-weight:900;font-size:18px;color:var(--navy);margin-top:6px;}
+  .plan .price{font-family:var(--display);font-weight:900;font-size:48px;line-height:0.9;color:var(--navy);letter-spacing:-0.04em;margin-top:4px;}
+  .plan .price small{font-size:18px;font-weight:900;}
+  .plan .price .per{display:block;font-size:13px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;opacity:0.7;margin-top:4px;}
+  .plan .desc{font-family:var(--body);font-size:13.5px;line-height:1.5;color:var(--navy);}
+  .plan .desc b{font-weight:700;}
+  .plan.featured .card{border-width:4px;}
+  .plan.featured .pick-pill{background:var(--teal);color:var(--navy);}
+
+  .submit-row{display:flex;flex-direction:column;align-items:center;gap:14px;margin-top:8px;}
+  .submit-btn{
+    background:var(--navy);color:var(--cream);font-family:var(--display);font-weight:900;font-size:18px;letter-spacing:0.02em;
+    padding:18px 36px;border:0;border-radius:999px;cursor:pointer;transition:.18s transform, .18s box-shadow;
+    box-shadow:6px 6px 0 var(--yellow);
+  }
+  .submit-btn:hover{transform:translate(-2px,-2px);box-shadow:10px 10px 0 var(--yellow);}
+  .submit-btn:active{transform:translate(0,0);box-shadow:3px 3px 0 var(--yellow);}
+  .pay-note{font-family:var(--mono);font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:var(--navy);opacity:0.55;text-align:center;}
+  .pay-note a{color:var(--navy);}
+  .stripe-row{display:flex;align-items:center;justify-content:center;gap:8px;font-family:var(--body);font-size:13px;color:var(--navy);opacity:0.7;margin-top:8px;}
+  .stripe-row svg{width:46px;height:auto;}
+
+  .legal-line{font-family:var(--body);font-size:13px;color:var(--navy);opacity:0.7;text-align:center;line-height:1.5;}
+  .legal-line a{color:var(--navy);}
+</style>
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png">
+<link rel="icon" href="/favicon.ico">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+<!-- Meta Pixel -->
+<script>!function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');fbq('init','1974530180093513');fbq('track','PageView');window.wwMetaTrack=function(name,params,userParams){var eid='ww_'+Date.now().toString(36)+Math.random().toString(36).slice(2,14);try{if(window.fbq)fbq('track',name,params||{},{eventID:eid});}catch(e){}try{var body=Object.assign({event_name:name,event_id:eid,event_source_url:location.href},params||{},userParams||{});if(navigator.sendBeacon){var blob=new Blob([JSON.stringify(body)],{type:'application/json'});navigator.sendBeacon('/api/capi.php',blob);}else{fetch('/api/capi.php',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),keepalive:true});}}catch(e){}return eid;};</script>
+<noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=1974530180093513&ev=PageView&noscript=1"/></noscript>
+<!-- End Meta Pixel -->
+</head>
+<body>
+
+<nav class="nav">
+  <div class="wrap nav-inner">
+    <a href="/" class="brandmark">
+      <span class="ring"><img src="/assets/aaaa1111-2222-3333-4444-555566667777.png" alt="Wizzy"></span>
+      <span class="word">WebWiz<span class="dot">.</span></span>
+    </a>
+    <div class="nav-links">
+      <a href="/#how">How it works</a>
+      <a href="/#pricing">Pricing</a>
+      <a href="/#care">Care plans</a>
+      <a href="/#kind-words">Kind words</a>
+    </div>
+    <a href="/start" class="nav-cta">Start a site &rarr;</a>
+  </div>
+</nav>
+
+<section class="start-hero">
+  <div class="wrap">
+    <span class="eyebrow" id="cz-eyebrow">&star; Start a site</span>
+    <h1 id="cz-heading">Tell us about<br>your <em>business.</em></h1>
+    <p class="lead" id="cz-lead">Five minutes of questions, then pick a plan and pay. We'll be in touch shortly to get the details we need from you.</p>
+  </div>
+</section>
+
+<section class="start-body">
+  <form class="order" action="/api/checkout.php" method="post" autocomplete="on" novalidate>
+
+    <!-- Customize step (only shown when ?customize=1) -->
+    <div class="field customize-card" id="czCard" style="display:none;">
+      <span class="cz-tag" id="czTag">&star; Customizing Variant 1</span>
+      <h2>What would you like to customize?</h2>
+      <p class="sub">Tell us what to change — copy, layout, colors, sections to add or remove, photos to swap, anything at all. Your account manager will work through this list with you after kickoff.</p>
+      <textarea id="customize_request" name="customize_request" placeholder="e.g. Change the hero headline to '...', swap the team photo for one I'll send, add a testimonials section, use my brand colors (#A12B3D and #FFE8C2), shorten the FAQ to 3 questions, drop the marquee strip..." maxlength="4000"></textarea>
+    </div>
+
+    <input type="hidden" name="variant_choice" id="variantChoice" value="">
+    <input type="hidden" name="preview_token" id="previewToken" value="">
+
+    <div class="field">
+      <span class="section-title">Pick a plan.</span>
+      <div class="plans">
+        <label class="plan">
+          <input type="radio" name="plan" value="build_only" required>
+          <div class="card">
+            <span class="pick-pill">&star; Build only</span>
+            <span class="name">Just the files.</span>
+            <span class="price"><small>$</small>499<span class="per">one-time</span></span>
+            <span class="desc">Hand-designed site, delivered as ready-to-deploy files. <b>You arrange your own hosting &amp; domain.</b> No ongoing support.</span>
+          </div>
+        </label>
+
+        <label class="plan featured">
+          <input type="radio" name="plan" value="build_plus_49" checked>
+          <div class="card">
+            <span class="pick-pill">&star; Most popular</span>
+            <span class="name">Build + Hosting &amp; Care.</span>
+            <span class="price"><small>$</small>499<span class="per">+ $49/mo</span></span>
+            <span class="desc"><b>Site + always-on hosting:</b> security, daily backups, SSL renewals, unlimited traffic, 99.9% uptime. Cancel anytime.</span>
+          </div>
+        </label>
+
+        <label class="plan">
+          <input type="radio" name="plan" value="build_plus_99">
+          <div class="card">
+            <span class="pick-pill">&star; Full service</span>
+            <span class="name">Build + Care + Edits.</span>
+            <span class="price"><small>$</small>499<span class="per">+ $99/mo</span></span>
+            <span class="desc">Everything above, plus <b>10 edits/month</b> (text, photos, links). Usually same-day turnaround.</span>
+          </div>
+        </label>
+      </div>
+    </div>
+
+    <span class="section-title">About you.</span>
+
+    <div class="field">
+      <div class="row">
+        <div class="field">
+          <label class="lbl" for="business_name">Business name</label>
+          <input type="text" id="business_name" name="business_name" required maxlength="200" autocomplete="organization">
+        </div>
+        <div class="field">
+          <label class="lbl" for="contact_name">Your name</label>
+          <input type="text" id="contact_name" name="contact_name" required maxlength="200" autocomplete="name">
+        </div>
+      </div>
+    </div>
+
+    <div class="field">
+      <div class="row">
+        <div class="field">
+          <label class="lbl" for="email">Email</label>
+          <input type="email" id="email" name="email" required maxlength="200" autocomplete="email">
+        </div>
+        <div class="field">
+          <label class="lbl" for="phone">Phone (optional)</label>
+          <input type="tel" id="phone" name="phone" maxlength="50" autocomplete="tel">
+        </div>
+      </div>
+    </div>
+
+    <div class="field">
+      <label class="lbl" for="current_site">Current website (optional)</label>
+      <input type="url" id="current_site" name="current_site" placeholder="https://" maxlength="500" autocomplete="url">
+      <span class="hint">Got a site we should look at? Drop the link. Don't have one? Skip it.</span>
+    </div>
+
+    <span class="section-title">About your project.</span>
+
+    <div class="field">
+      <label class="lbl" for="what_you_do">What does your business do?</label>
+      <textarea id="what_you_do" name="what_you_do" required maxlength="2000" placeholder="In a sentence or two, what do you sell or offer?"></textarea>
+    </div>
+
+    <div class="field">
+      <label class="lbl" for="audience">Who's it for?</label>
+      <textarea id="audience" name="audience" maxlength="1000" placeholder="Your customers, in their words."></textarea>
+    </div>
+
+    <div class="field">
+      <label class="lbl" for="inspiration">Sites you like</label>
+      <textarea id="inspiration" name="inspiration" maxlength="1000" placeholder="Drop 2 or 3 URLs. Anything you want yours to feel like."></textarea>
+    </div>
+
+    <div class="field">
+      <label class="lbl" for="notes">Anything else?</label>
+      <textarea id="notes" name="notes" maxlength="4000" placeholder="Brand colors, photos you have, deadline, special features &mdash; whatever we should know."></textarea>
+    </div>
+
+    <div class="submit-row">
+      <button type="submit" class="submit-btn">Continue to secure checkout &rarr;</button>
+      <p class="pay-note">&star; Payments powered by Stripe &middot; SSL secured</p>
+      <p class="legal-line">By submitting, you agree to our <a href="/terms">Terms</a> and <a href="/privacy">Privacy Policy</a>.<br>$499 build is non-refundable once the kickoff call has happened. Care plan billing is monthly and cancellable anytime.</p>
+    </div>
+
+  </form>
+</section>
+
+<footer class="foot">
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <div class="signoff">WebWiz<span class="dot">.</span></div>
+        <p class="blurb">A tiny design studio making beautiful websites for small businesses. We're in your corner.</p>
+      </div>
+      <div>
+        <h4>The site</h4>
+        <a href="/#how">How it works</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#care">Care plans</a>
+        <a href="/#kind-words">Kind words</a>
+      </div>
+      <div>
+        <h4>Talk</h4>
+        <a href="mailto:hello@trywebwiz.com">hello@trywebwiz.com</a>
+        <a href="/start">Start a site</a>
+      </div>
+      <div>
+        <h4>Legal</h4>
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="/privacy#cookies">Cookies</a>
+      </div>
+    </div>
+    <div class="foot-bottom">
+      <span>&copy; 2026 WEBWIZ STUDIO &middot; MADE WITH &hearts; &amp; CSS</span>
+      <span class="bs-credit">MADE BY <a href="https://www.busyseed.com/" target="_blank" rel="noopener" aria-label="BusySeed"><img src="https://i.imgur.com/iQr9LKx.png" alt="BusySeed" loading="lazy"></a></span>
+    </div>
+  </div>
+</footer>
+
+<style id="bs-credit-css">.foot-bottom .bs-credit{display:inline-flex;align-items:center;gap:10px;text-transform:none;letter-spacing:0.16em;}.foot-bottom .bs-credit a{display:inline-flex;align-items:center;line-height:0;}.foot-bottom .bs-credit img{height:22px;width:auto;display:block;vertical-align:middle;opacity:0.95;transition:opacity .15s;}.foot-bottom .bs-credit a:hover img{opacity:1;}</style>
+
+<script>
+(function() {
+  var p = new URLSearchParams(window.location.search);
+  var biz = p.get('b') || '';
+  var email = p.get('e') || '';
+  var name = p.get('n') || '';
+  var current = p.get('u') || '';
+  var customize = p.get('customize') === '1';
+  var variant = parseInt(p.get('variant') || '0', 10);
+  var token = p.get('token') || '';
+
+  function setIfEmpty(id, val) { var el = document.getElementById(id); if (el && !el.value && val) el.value = val; }
+  setIfEmpty('business_name', biz);
+  setIfEmpty('email', email);
+  setIfEmpty('contact_name', name);
+  setIfEmpty('current_site', current);
+
+  if (customize) {
+    var variantNames = { 1: 'Bold Editorial', 2: 'Modern Maximalist', 3: 'Refined Minimal' };
+    var label = 'Customizing Variant ' + (variant || 1);
+    var sub = variantNames[variant] || '';
+    if (sub) label += ' · ' + sub;
+    document.getElementById('czTag').textContent = '★ ' + label;
+    document.getElementById('czCard').style.display = '';
+    document.getElementById('cz-eyebrow').textContent = '★ Customize your site';
+    document.getElementById('cz-heading').innerHTML = "Let's <em>tweak</em> it.";
+    document.getElementById('cz-lead').textContent =
+      "Tell us what to change about the design you picked. Then choose a plan and we'll get to work.";
+
+
+    document.getElementById('variantChoice').value = variant || '';
+    document.getElementById('previewToken').value = token;
+    setTimeout(function() {
+      var ta = document.getElementById('customize_request');
+      if (ta) { ta.focus(); ta.scrollIntoView({behavior: 'smooth', block: 'center'}); }
+    }, 250);
+  } else if (variant) {
+    document.getElementById('variantChoice').value = variant;
+  }
+})();
+
+(function() {
+  var form = document.querySelector('form.order');
+  if (!form) return;
+  var btn = form.querySelector('.submit-btn');
+  var required = ['plan','business_name','contact_name','email','what_you_do'];
+  function emailOk(v) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v||''); }
+  function getVal(name) {
+    var el = form.elements[name];
+    if (!el) return '';
+    if (el.length && el[0] && el[0].type === 'radio') {
+      for (var i = 0; i < el.length; i++) if (el[i].checked) return el[i].value;
+      return '';
+    }
+    return (el.value||'').trim();
+  }
+  function check() {
+    for (var i = 0; i < required.length; i++) {
+      var v = getVal(required[i]);
+      if (!v) return false;
+      if (required[i] === 'email' && !emailOk(v)) return false;
+    }
+    return true;
+  }
+  function paint() {
+    var ok = check();
+    btn.disabled = !ok;
+    btn.style.opacity = ok ? '1' : '0.45';
+    btn.style.cursor = ok ? 'pointer' : 'not-allowed';
+  }
+  form.addEventListener('input', paint);
+  form.addEventListener('change', paint);
+  paint();
+})();
+
+// Meta Pixel: ViewContent on landing, InitiateCheckout on submit.
+(function(){
+  if(window.wwMetaTrack){
+    window.wwMetaTrack('ViewContent', {content_name:'start_form', content_category:'checkout'});
+  }
+  var form = document.querySelector('form.order');
+  if(!form) return;
+  form.addEventListener('submit', function(){
+    if(!window.wwMetaTrack) return;
+    var plan = (form.elements['plan'] && form.elements['plan'].value) || '';
+    var email = (form.elements['email'] && form.elements['email'].value || '').trim();
+    var name = (form.elements['contact_name'] && form.elements['contact_name'].value || '').trim();
+    var phone = (form.elements['phone'] && form.elements['phone'].value || '').trim();
+    var first = name.split(' ')[0] || '';
+    var last  = name.split(' ').slice(1).join(' ') || '';
+    var valueByPlan = {build_only:499, build_plus_49:548, build_plus_99:598};
+    var value = valueByPlan[plan] || 499;
+    window.wwMetaTrack('InitiateCheckout',
+      {value:value, currency:'USD', content_name:plan, content_category:'website_build', num_items:1},
+      {email:email, first_name:first, last_name:last, phone:phone}
+    );
+  }, {capture:true});
+})();
+</script>
+</body>
+</html>

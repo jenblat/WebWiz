@@ -1,0 +1,8 @@
+# Managed by SeedSite SEO
+User-agent: *
+Allow: /
+Disallow: /wp-admin/
+Disallow: /admin/
+Disallow: /api/
+
+Sitemap: https://trywebwiz.com/sitemap.xml

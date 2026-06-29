@@ -1,0 +1,40 @@
+# WebWiz .gitignore — keep secrets, generated content, caches, and backups out of git.
+secrets.php
+secrets.local.php
+
+# SQLite DBs + queued JSON
+data/
+logs/
+*.sqlite
+*.sqlite3
+*.db
+pending_magic/
+
+# Generated previews (per-user gen output)
+public/preview/
+
+# Image cache + showcase screenshots
+public/data/imgcache/
+public/showcase_cache/
+
+# Backup files written by SeedSite atomic writes
+*.bak
+*.bak.*
+.bak/
+
+# Temp + log files
+/tmp/
+*.log
+
+# Node
+node_modules/
+package-lock.json.bak
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/
+*.swp

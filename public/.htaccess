@@ -1,0 +1,44 @@
+# Force HTTPS BEFORE anything else
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteCond %{HTTPS} !=on
+  RewriteCond %{HTTP_HOST} ^trywebwiz\.com$ [NC]
+  RewriteRule ^ https://trywebwiz.com%{REQUEST_URI} [R=301,L]
+</IfModule>
+
+<IfModule LiteSpeed>
+  CacheEnable public /
+  CacheMaxExpire 86400
+  CacheDefaultExpire 86400
+  CacheEnable off /api/
+  CacheEnable off /admin/
+  CacheEnable off /admin
+  CacheEnable off /preview/
+  CacheEnable off /success.php
+  CacheEnable off /success
+</IfModule>
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # Preview token URLs MUST be rewritten before the file/dir bypass
+  # because /preview/{token}/ is a real directory that we want to route to index.php
+  RewriteRule ^preview/([a-f0-9]+)/?$ preview/index.php [L,QSA]
+
+  # Existing files/dirs (except the preview token route above) pass through
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  RewriteRule ^privacy/?$ privacy.html [L]
+  RewriteRule ^terms/?$   terms.html   [L]
+  RewriteRule ^start/?$   start.html   [L]
+  RewriteRule ^success/?$ success.php  [L,QSA]
+  RewriteRule ^cancel/?$  cancel.html  [L]
+  RewriteRule ^admin/?$   admin/index.php [L,QSA]
+  RewriteRule ^cookies/?$ privacy.html#cookies [L,R=302]
+</IfModule>
+
+Header always set Cache-Control "public, max-age=86400, s-maxage=86400"
+Header always append Vary Accept-Encoding
