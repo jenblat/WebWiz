@@ -39,15 +39,6 @@ if ($is_magic) {
   .err a{color:var(--navy);font-weight:700;}
   .brand{margin-top:30px;font-size:12px;letter-spacing:.16em;text-transform:uppercase;opacity:.55;font-weight:800;}
 
-  /* ----------- Testimonials ----------- */
-  .testi-row{max-width:1180px;margin:36px auto 0;padding:0 24px;}
-  .testi-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;}
-  .testi-card{background:#fff;border:3px solid var(--navy);border-radius:18px;padding:22px;box-shadow:6px 6px 0 var(--yellow);}
-  .testi-stars{color:#F7C84A;font-size:18px;letter-spacing:2px;line-height:1;margin-bottom:10px;}
-  .testi-q{font-family:var(--body),system-ui,sans-serif;font-size:15px;line-height:1.55;color:var(--navy);margin:0 0 12px;font-weight:500;}
-  .testi-who{font-family:var(--body),system-ui,sans-serif;font-size:13px;color:var(--navy);opacity:0.7;}
-  .testi-who strong{opacity:1;font-weight:700;}
-  @media(max-width:900px){.testi-grid{grid-template-columns:1fr;gap:14px;}.testi-row{margin-top:24px;}}
   </style><!-- Meta Pixel -->
 <script>!function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');fbq('init','1974530180093513');fbq('track','PageView');window.wwMetaTrack=function(name,params,userParams){var eid='ww_'+Date.now().toString(36)+Math.random().toString(36).slice(2,14);try{if(window.fbq)fbq('track',name,params||{},{eventID:eid});}catch(e){}try{var body=Object.assign({event_name:name,event_id:eid,event_source_url:location.href},params||{},userParams||{});if(navigator.sendBeacon){var blob=new Blob([JSON.stringify(body)],{type:'application/json'});navigator.sendBeacon('/api/capi.php',blob);}else{fetch('/api/capi.php',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),keepalive:true});}}catch(e){}return eid;};</script>
 <noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=1974530180093513&ev=PageView&noscript=1"/></noscript>
@@ -80,6 +71,53 @@ if ($is_magic) {
       else { statusEl.textContent=''; var m=(res.j && res.j.error) ? res.j.error : 'Something went wrong generating the site.'; document.getElementById('errbox').innerHTML='<div class="err">'+m.replace(/</g,'&lt;')+'</div>'; }
     })
     .catch(function(e){ clearInterval(tick); statusEl.textContent=''; document.getElementById('errbox').innerHTML='<div class="err">Network error: '+String(e.message).replace(/</g,'&lt;')+'</div>'; });
+})();
+</script>
+<script>
+(function(){
+  var box = document.getElementById('wizTesti');
+  if (!box) return;
+  var data = [
+    {q: "Sent Wizzy our shop info on a Tuesday. By the weekend we had a site that actually looked like our place.",
+     name: "Maria R.", role: "Bakery owner · Pawtucket, RI",
+     face: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=120&h=120&fit=crop&crop=face"},
+    {q: "Filling out the form took five minutes. The site was up the same day. My business looks legit online for the first time ever.",
+     name: "Jake M.", role: "Contractor · Tulsa, OK",
+     face: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=120&h=120&fit=crop&crop=face"},
+    {q: "I put off building a site for two years. Wizzy did it in an afternoon and handled the domain. Wish I'd done this sooner.",
+     name: "Sarah K.", role: "Salon owner · Austin, TX",
+     face: "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=120&h=120&fit=crop&crop=face"}
+  ];
+  var q  = box.querySelector('.wt-quote');
+  var nm = box.querySelector('.wt-name');
+  var rl = box.querySelector('.wt-role');
+  var fc = box.querySelector('.wt-face');
+  var dots = box.querySelectorAll('.wt-dot');
+  var i = 0, timer;
+
+  function render(n) {
+    q.classList.add('fade');
+    setTimeout(function(){
+      var d = data[n];
+      q.textContent  = d.q;
+      nm.textContent = d.name;
+      rl.textContent = d.role;
+      fc.src         = d.face;
+      fc.alt         = d.name;
+      dots.forEach(function(el, k){ el.classList.toggle('on', k === n); });
+      q.classList.remove('fade');
+    }, 220);
+  }
+  function next() { i = (i + 1) % data.length; render(i); }
+  function start() { stop(); timer = setInterval(next, 5400); }
+  function stop()  { if (timer) clearInterval(timer); }
+
+  dots.forEach(function(el, k){
+    el.addEventListener('click', function(){ i = k; render(i); start(); });
+  });
+  box.addEventListener('mouseenter', stop);
+  box.addEventListener('mouseleave', start);
+  start();
 })();
 </script>
 </body></html><?php
@@ -510,6 +548,22 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
 <script>!function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');fbq('init','1974530180093513');fbq('track','PageView');window.wwMetaTrack=function(name,params,userParams){var eid='ww_'+Date.now().toString(36)+Math.random().toString(36).slice(2,14);try{if(window.fbq)fbq('track',name,params||{},{eventID:eid});}catch(e){}try{var body=Object.assign({event_name:name,event_id:eid,event_source_url:location.href},params||{},userParams||{});if(navigator.sendBeacon){var blob=new Blob([JSON.stringify(body)],{type:'application/json'});navigator.sendBeacon('/api/capi.php',blob);}else{fetch('/api/capi.php',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),keepalive:true});}}catch(e){}return eid;};</script>
 <noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=1974530180093513&ev=PageView&noscript=1"/></noscript>
 <!-- End Meta Pixel -->
+<style id="wiz-testi-css">
+  .wiz-testi{position:relative;background:#fff;border:2px solid var(--navy);border-radius:18px;box-shadow:5px 5px 0 var(--yellow);padding:18px 20px 14px;max-width:380px;width:100%;margin:22px auto 0;text-align:left;font-family:var(--body);}
+  .wiz-testi .wt-stars{color:#F7C84A;font-size:18px;letter-spacing:3px;line-height:1;margin-bottom:10px;}
+  .wiz-testi .wt-quote{font-family:var(--body);font-size:15px;line-height:1.5;color:var(--navy);font-weight:500;margin:0 0 14px;min-height:66px;transition:opacity 0.25s;}
+  .wiz-testi .wt-quote.fade{opacity:0;}
+  .wiz-testi .wt-who{display:flex;align-items:center;gap:10px;}
+  .wiz-testi .wt-face{width:44px;height:44px;border-radius:50%;border:2px solid var(--navy);background:var(--paper);object-fit:cover;flex-shrink:0;transition:opacity 0.25s;}
+  .wiz-testi .wt-face.fade{opacity:0;}
+  .wiz-testi .wt-meta{min-width:0;}
+  .wiz-testi .wt-name{font-family:var(--body);font-weight:700;font-size:14px;color:var(--navy);line-height:1.1;}
+  .wiz-testi .wt-role{font-family:var(--body);font-size:12px;color:var(--navy);opacity:0.65;margin-top:2px;}
+  .wiz-testi .wt-dots{display:flex;justify-content:center;gap:6px;margin-top:14px;}
+  .wiz-testi .wt-dot{width:8px;height:8px;border-radius:50%;background:rgba(18,24,74,0.2);border:0;padding:0;cursor:pointer;transition:background 0.2s, transform 0.2s;}
+  .wiz-testi .wt-dot.on{background:var(--navy);transform:scale(1.25);}
+  @media(max-width:900px){.wiz-testi{max-width:320px;margin:16px auto 0;}}
+</style>
 </head>
 <body data-view="<?= htmlspecialchars($initial_view, ENT_QUOTES) ?>" data-cap="<?= $initial_edits === 0 ? 'hit' : 'ok' ?>">
 
@@ -617,26 +671,21 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
     <div class="hero-mascot">
       <div class="wiz-circle"><video class="wizzy-vid" autoplay muted playsinline preload="metadata" poster="/preview/wizzy-waving-poster.jpg" aria-label="Wizzy waving"><source src="/preview/wizzy-waving.webm" type="video/webm"><source src="/preview/wizzy-waving.mp4" type="video/mp4"><img src="/preview/wizzy-wave.gif" alt="Wizzy waving"></video></div>
       <div class="sticker">Made with care<small>by Wizzy</small></div>
-    </div>
-  </section>
-
-  <!-- Testimonial row — small-business social proof for ads -->
-  <section class="testi-row" aria-label="What clients say">
-    <div class="testi-grid">
-      <div class="testi-card">
-        <div class="testi-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
-        <p class="testi-q">Sent Wizzy our shop info on a Tuesday. By the weekend we had a site that actually looked like our place. We just said yes.</p>
-        <div class="testi-who"><strong>Maria</strong> &middot; bakery owner</div>
-      </div>
-      <div class="testi-card">
-        <div class="testi-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
-        <p class="testi-q">Filling out the form took five minutes. The website was up the same day. My business looks legit online for the first time ever.</p>
-        <div class="testi-who"><strong>Jake</strong> &middot; contractor</div>
-      </div>
-      <div class="testi-card">
-        <div class="testi-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
-        <p class="testi-q">I put off building a site for two years. Wizzy did it in an afternoon and handled the domain. Wish I'd done this sooner.</p>
-        <div class="testi-who"><strong>Sarah</strong> &middot; salon owner</div>
+      <div class="wiz-testi" id="wizTesti" aria-live="polite">
+        <div class="wt-stars" aria-hidden="true">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+        <p class="wt-quote">Sent Wizzy our shop info on a Tuesday. By the weekend we had a site that actually looked like our place.</p>
+        <div class="wt-who">
+          <img class="wt-face" src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=120&amp;h=120&amp;fit=crop&amp;crop=face" alt="Maria R." width="44" height="44">
+          <div class="wt-meta">
+            <div class="wt-name">Maria R.</div>
+            <div class="wt-role">Bakery owner &middot; Pawtucket, RI</div>
+          </div>
+        </div>
+        <div class="wt-dots" role="tablist">
+          <button class="wt-dot on" type="button" aria-label="Show testimonial 1" data-i="0"></button>
+          <button class="wt-dot"    type="button" aria-label="Show testimonial 2" data-i="1"></button>
+          <button class="wt-dot"    type="button" aria-label="Show testimonial 3" data-i="2"></button>
+        </div>
       </div>
     </div>
   </section>
@@ -1478,6 +1527,57 @@ window.__TRY_INIT__ = {
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wwMetaInit);
   else wwMetaInit();
+})();
+</script>
+<script id="wiz-testi-js">
+(function(){
+  var box = document.getElementById("wizTesti");
+  if (!box) return;
+  var data = [
+    {q: "Sent Wizzy our shop info on a Tuesday. By the weekend we had a site that actually looked like our place.",
+     name: "Maria R.", role: "Bakery owner · Pawtucket, RI",
+     face: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=120&h=120&fit=crop&crop=face"},
+    {q: "Filling out the form took five minutes. The site was up the same day. My business looks legit online for the first time ever.",
+     name: "Jake M.", role: "Contractor · Tulsa, OK",
+     face: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=120&h=120&fit=crop&crop=face"},
+    {q: "I put off building a site for two years. Wizzy did it in an afternoon and handled the domain. Wish I had done this sooner.",
+     name: "Sarah K.", role: "Salon owner · Austin, TX",
+     face: "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=120&h=120&fit=crop&crop=face"}
+  ];
+  var q  = box.querySelector(".wt-quote");
+  var nm = box.querySelector(".wt-name");
+  var rl = box.querySelector(".wt-role");
+  var fc = box.querySelector(".wt-face");
+  var dots = box.querySelectorAll(".wt-dot");
+  var i = 0, timer = null;
+  function render(n) {
+    if (!q) return;
+    q.classList.add("fade");
+    if (fc) fc.classList.add("fade");
+    setTimeout(function(){
+      var d = data[n];
+      q.textContent  = d.q;
+      nm.textContent = d.name;
+      rl.textContent = d.role;
+      if (fc) { fc.src = d.face; fc.alt = d.name; }
+      for (var k = 0; k < dots.length; k++) {
+        if (k === n) dots[k].classList.add("on"); else dots[k].classList.remove("on");
+      }
+      q.classList.remove("fade");
+      if (fc) fc.classList.remove("fade");
+    }, 240);
+  }
+  function next() { i = (i + 1) % data.length; render(i); }
+  function start() { stop(); timer = setInterval(next, 5400); }
+  function stop()  { if (timer) { clearInterval(timer); timer = null; } }
+  for (var k = 0; k < dots.length; k++) {
+    (function(idx){
+      dots[idx].addEventListener("click", function(){ i = idx; render(i); start(); });
+    })(k);
+  }
+  box.addEventListener("mouseenter", stop);
+  box.addEventListener("mouseleave", start);
+  start();
 })();
 </script>
 </body></html>

@@ -55,26 +55,42 @@ if (!in_array($view, $valid_views, true)) $view = 'overview';
 
 // ----- helpers -----
 function h($s) { return htmlspecialchars((string)$s, ENT_QUOTES); }
-function fmt_dt($ts, bool $with_rel = true): string {
+/** Compact relative time. Single short string. */
+function fmt_rel($ts): string {
     if (!$ts) return '<span style="opacity:0.4;">&mdash;</span>';
     $t = strtotime((string)$ts . ' UTC'); if (!$t) return h($ts);
-    $abs = gmdate('M j, Y g:i A', $t) . ' UTC';
-    if (!$with_rel) return h($abs);
     $diff = time() - $t;
     if ($diff >= 0) {
-        if ($diff < 60)    $rel = 'just now';
-        elseif ($diff < 3600)  $rel = floor($diff/60) . ' min ago';
-        elseif ($diff < 86400) $rel = floor($diff/3600) . ' hr ago';
-        elseif ($diff < 86400*30) $rel = floor($diff/86400) . ' days ago';
-        else                $rel = gmdate('M j', $t);
-    } else {
-        $d = -$diff;
-        if ($d < 60)    $rel = 'in <1 min';
-        elseif ($d < 3600)  $rel = 'in ' . floor($d/60) . ' min';
-        elseif ($d < 86400) $rel = 'in ' . floor($d/3600) . ' hr';
-        else                $rel = 'in ' . floor($d/86400) . ' days';
+        if ($diff < 60)        return 'just now';
+        if ($diff < 3600)      { $n = (int)floor($diff/60);    return $n . ' min ago'; }
+        if ($diff < 86400)     { $n = (int)floor($diff/3600);  return $n . ' hr ago'; }
+        if ($diff < 86400*30)  { $n = (int)floor($diff/86400); return $n . ($n === 1 ? ' day ago' : ' days ago'); }
+        return gmdate('M j', $t);
     }
-    return '<div style="line-height:1.2;"><div style="font-size:13px;">' . h($abs) . '</div><div style="font-size:11px;opacity:0.55;">' . h($rel) . '</div></div>';
+    $d = -$diff;
+    if ($d < 60)    return 'in moments';
+    if ($d < 3600)  { $n = (int)floor($d/60);    return 'in ' . $n . ' min'; }
+    if ($d < 86400) { $n = (int)floor($d/3600);  return 'in ' . $n . ' hr'; }
+    $n = (int)floor($d/86400);
+    return 'in ' . $n . ($n === 1 ? ' day' : ' days');
+}
+/** "in 2 days · Jul 1" — for future scheduled times. */
+function fmt_next($ts): string {
+    if (!$ts) return '<span style="opacity:0.4;">&mdash;</span>';
+    $t = strtotime((string)$ts . ' UTC'); if (!$t) return h($ts);
+    $rel = fmt_rel($ts);
+    if (strip_tags($rel) === '—') return $rel;
+    return h($rel) . ' <span style="opacity:0.55;font-size:11px;">&middot; ' . h(gmdate('M j', $t)) . '</span>';
+}
+/** Absolute date only, e.g. "Jun 29, 8:27 PM UTC". For tooltips / contact detail. */
+function fmt_abs($ts): string {
+    if (!$ts) return '<span style="opacity:0.4;">&mdash;</span>';
+    $t = strtotime((string)$ts . ' UTC'); if (!$t) return h($ts);
+    return h(gmdate('M j, g:i A', $t)) . ' UTC';
+}
+/** Backwards-compat shim — earlier code paths called fmt_dt. */
+function fmt_dt($ts, bool $with_rel = true): string {
+    return $with_rel ? fmt_rel($ts) : fmt_abs($ts);
 }
 function status_pill(string $s): string {
     $map = [
@@ -405,8 +421,8 @@ elseif ($view === 'contacts') {
         <td><?= (int)$r['current_step'] ?></td>
         <td><?= (int)$r['sends'] ?></td>
         <td><?= (int)$r['opens'] ?> / <?= (int)$r['clicks'] ?></td>
-        <td><?= $r['status']==='active' ? fmt_dt($r['next_send_at'], true) : '<span style="opacity:0.4;">&mdash;</span>' ?></td>
-        <td><?= fmt_dt($r['created_at'], true) ?></td>
+        <td style="white-space:nowrap;font-size:13px;"><?= $r['status']==='active' ? fmt_next($r['next_send_at']) : '<span style="opacity:0.4;">&mdash;</span>' ?></td>
+        <td style="white-space:nowrap;font-size:13px;" title="<?= h($r['created_at']) ?> UTC"><?= fmt_rel($r['created_at']) ?></td>
         <td class="actions-cell">
           <?php if ($r['status'] !== 'active'): ?>
             <form method="post" class="action"><input type="hidden" name="action" value="reactivate"><input type="hidden" name="cid" value="<?= (int)$r['id'] ?>"><button class="btn ghost">Reactivate</button></form>
