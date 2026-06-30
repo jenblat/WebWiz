@@ -271,8 +271,8 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
   body[data-view="reveal"] .topbar-buy{display:inline-flex;align-items:center;gap:6px;}
 
   /* ----------- Hero ----------- */
-  main{padding:24px 32px 80px;max-width:1280px;margin:0 auto;}
-  .hero{display:grid;grid-template-columns:1.5fr 1fr;gap:48px;align-items:center;margin-top:24px;}
+  main{padding:24px 32px 48px;max-width:1280px;margin:0 auto;}
+  .hero{display:grid;grid-template-columns:1.4fr 1fr;gap:48px;align-items:start;margin-top:24px;}
   .hero-copy{max-width:640px;}
   .eyebrow{display:inline-block;background:var(--yellow);color:var(--navy);border:2px solid var(--navy);border-radius:999px;padding:6px 14px;font-family:var(--body);font-weight:600;font-size:12px;letter-spacing:0.14em;text-transform:uppercase;margin-bottom:18px;}
   h1{font-family:var(--display);font-weight:900;font-size:72px;letter-spacing:-0.03em;line-height:1.02;color:var(--navy);margin:0 0 18px;}
@@ -296,10 +296,10 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
   .cta:hover{transform:translate(-2px,-2px);box-shadow:4px 4px 0 var(--navy);}
   .cta:active{transform:translate(0,0);box-shadow:0 0 0 var(--navy);}
   .cta[disabled]{opacity:0.55;cursor:not-allowed;transform:none;box-shadow:none;}
-  .trust{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px;}
+  .trust{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;margin-top:20px;}
   .chip{display:inline-flex;align-items:center;gap:6px;background:var(--cream);border:2px solid var(--navy);border-radius:999px;padding:8px 16px;font-family:var(--body);font-weight:600;font-size:14px;color:var(--navy);}
   .chip .tick{color:var(--teal);font-weight:900;}
-  .hero-mascot{position:relative;display:flex;flex-direction:column;justify-content:center;align-items:center;min-height:520px;min-width:0;}
+  .hero-mascot{position:relative;display:flex;flex-direction:column;justify-content:flex-start;align-items:center;min-height:0;min-width:0;}
   .wiz-circle{width:min(420px,100%);aspect-ratio:1;height:auto;flex-shrink:0;border-radius:50%;background:var(--wizbg);border:3px solid var(--navy);display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative;box-shadow:8px 8px 0 var(--yellow);}
   .wiz-circle img{width:78%;height:78%;object-fit:contain;}
   .wizzy-vid{width:100%;height:100%;object-fit:contain;background:transparent;}
@@ -549,7 +549,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
 <noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=1974530180093513&ev=PageView&noscript=1"/></noscript>
 <!-- End Meta Pixel -->
 <style id="wiz-testi-css">
-  .wiz-testi{position:relative;background:#fff;border:2px solid var(--navy);border-radius:18px;box-shadow:5px 5px 0 var(--yellow);padding:18px 20px 14px;max-width:380px;width:100%;margin:22px auto 0;text-align:left;font-family:var(--body);}
+  .wiz-testi{position:relative;background:#fff;border:2px solid var(--navy);border-radius:18px;box-shadow:5px 5px 0 var(--yellow);padding:20px 24px 16px;max-width:460px;width:100%;margin:22px auto 0;text-align:left;font-family:var(--body);}
   .wiz-testi .wt-stars{color:#F7C84A;font-size:18px;letter-spacing:3px;line-height:1;margin-bottom:10px;}
   .wiz-testi .wt-quote{font-family:var(--body);font-size:15px;line-height:1.5;color:var(--navy);font-weight:500;margin:0 0 14px;min-height:66px;transition:opacity 0.25s;}
   .wiz-testi .wt-quote.fade{opacity:0;}
@@ -625,7 +625,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
           <label for="website">What&rsquo;s your website?</label>
           <input type="text" id="website" name="website" inputmode="url" autocomplete="url" placeholder="yourbusiness.com" required>
           <div class="field-helper">If you don&rsquo;t have one yet, just type the business name and we&rsquo;ll figure out the rest.</div>
-          <div class="err-msg">That URL doesn&rsquo;t look quite right. Try again.</div>
+          <div class="err-msg">Add your website, or just your business name.</div>
         </div>
         <div class="field" data-field="lead">
           <style>
@@ -639,8 +639,9 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
           </style>
           <div class="lead-row">
             <div class="lead-col">
-              <label for="lead_name">Your name <span class="opt-tag">(optional)</span></label>
-              <input type="text" id="lead_name" name="name" autocomplete="name" placeholder="Your first name">
+              <label for="lead_name">Your name</label>
+              <input type="text" id="lead_name" name="name" autocomplete="name" placeholder="Your first name" required>
+              <div class="err-msg" id="errName" style="color:#b34;font-size:13px;margin-top:6px;display:none;">Please add your name.</div>
             </div>
             <div class="lead-col">
               <label for="lead_email">Your email</label>
@@ -654,18 +655,12 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
         </div>
         <div class="field" data-field="description">
           <label for="description">Tell Wizzy about your business</label>
-          <textarea id="description" name="description" rows="4" placeholder="We&rsquo;re a family bakery in Pawtucket. Custom cakes, weekend pastries, been here 15 years."></textarea>
+          <textarea id="description" name="description" rows="4" placeholder="We&rsquo;re a family bakery in Pawtucket. Custom cakes, weekend pastries, been here 15 years." required></textarea>
           <div class="err-msg">Give Wizzy a few sentences (at least 20 characters) so he can pick the right look.</div>
         </div>
         <button type="submit" class="cta" id="ctaBtn">Make my website &rarr;</button>
         <p class="cta-microcopy">Free to see. No credit card needed.</p>
       </form>
-
-      <div class="trust">
-        <span class="chip"><span class="tick">&#10003;</span> Free to design</span>
-        <span class="chip"><span class="tick">&#10003;</span> Live in 60 seconds</span>
-        <span class="chip"><span class="tick">&#10003;</span> No credit card</span>
-      </div>
     </div>
 
     <div class="hero-mascot">
@@ -686,6 +681,11 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
           <button class="wt-dot"    type="button" aria-label="Show testimonial 2" data-i="1"></button>
           <button class="wt-dot"    type="button" aria-label="Show testimonial 3" data-i="2"></button>
         </div>
+      </div>
+      <div class="trust">
+        <span class="chip"><span class="tick">&#10003;</span> Free to design</span>
+        <span class="chip"><span class="tick">&#10003;</span> Live in 60 seconds</span>
+        <span class="chip"><span class="tick">&#10003;</span> No credit card</span>
       </div>
     </div>
   </section>
@@ -1083,7 +1083,7 @@ window.__TRY_INIT__ = {
     var descOk = validateDesc();
     // Website is optional. If the user typed something, it must be a valid URL.
     var webVal = (web.value || '').trim();
-    var webOk  = (webVal === '') ? true : validateWebsite();
+    var webOk  = (webVal === '') ? false : (/\./.test(webVal) ? validateWebsite() : true);
     descField.classList.toggle('invalid', !descOk); websiteField.classList.toggle('invalid', !webOk);
     if (!descOk) { desc.focus(); return; }
     if (!webOk)  { web.focus();  return; }
@@ -1094,6 +1094,12 @@ window.__TRY_INIT__ = {
     var leadField = emailEl ? emailEl.closest('.field') : null;
     if (leadField) leadField.classList.toggle('invalid', !emailOk);
     if (!emailOk) { if (emailEl) emailEl.focus(); return; }
+
+    var nameEl = document.getElementById('lead_name');
+    var nameVal = ((nameEl && nameEl.value) || '').trim();
+    var errName = document.getElementById('errName');
+    if (!nameVal) { if (nameEl) nameEl.focus(); if (errName) errName.style.display = 'block'; return; }
+    if (errName) errName.style.display = 'none';
 
     track('form_submit', { has_website: !!web.value.trim(), description_length: desc.value.trim().length });
     track('gen_started');
