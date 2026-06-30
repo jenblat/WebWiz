@@ -299,8 +299,8 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
   .trust{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px;}
   .chip{display:inline-flex;align-items:center;gap:6px;background:var(--cream);border:2px solid var(--navy);border-radius:999px;padding:8px 16px;font-family:var(--body);font-weight:600;font-size:14px;color:var(--navy);}
   .chip .tick{color:var(--teal);font-weight:900;}
-  .hero-mascot{position:relative;display:flex;justify-content:center;align-items:center;min-height:520px;}
-  .wiz-circle{width:480px;height:480px;border-radius:50%;background:var(--wizbg);border:3px solid var(--navy);display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative;box-shadow:8px 8px 0 var(--yellow);}
+  .hero-mascot{position:relative;display:flex;flex-direction:column;justify-content:center;align-items:center;min-height:520px;min-width:0;}
+  .wiz-circle{width:min(420px,100%);aspect-ratio:1;height:auto;flex-shrink:0;border-radius:50%;background:var(--wizbg);border:3px solid var(--navy);display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative;box-shadow:8px 8px 0 var(--yellow);}
   .wiz-circle img{width:78%;height:78%;object-fit:contain;}
   .wizzy-vid{width:100%;height:100%;object-fit:contain;background:transparent;}
   .wiz-circle .wizzy-vid,.wiz-circle.success .wizzy-vid{width:78%;height:78%;}
