@@ -7,11 +7,7 @@
 declare(strict_types=1);
 require '/var/www/sites/trywebwiz/private/webwiz_lib.php';
 
-session_start([
-    'cookie_secure'   => true,
-    'cookie_httponly' => true,
-    'cookie_samesite' => 'Lax',
-]);
+require_once '/var/www/sites/trywebwiz/public/api/_session.php'; ww_session_start();
 
 header('Content-Type: application/json');
 

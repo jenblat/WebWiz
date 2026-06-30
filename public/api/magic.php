@@ -307,11 +307,7 @@ register_shutdown_function(function () use (&$ip_lock_fp, $ip_lock_path) {
 $is_admin_bypass = false;
 try {
     if (session_status() === PHP_SESSION_NONE) {
-        @session_start([
-            'cookie_secure'   => true,
-            'cookie_httponly' => true,
-            'cookie_samesite' => 'Lax',
-        ]);
+        require_once '/var/www/sites/trywebwiz/public/api/_session.php'; ww_session_start();
     }
     if (!empty($_SESSION['uid']) && function_exists('ww_user_by_id')) {
         $admin_u = ww_user_by_id((int)$_SESSION['uid']);

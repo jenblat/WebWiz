@@ -5,11 +5,7 @@ declare(strict_types=1);
 require '/var/www/sites/trywebwiz/private/webwiz_lib.php';
 require '/var/www/sites/trywebwiz/public/api/_nurture.php';
 
-session_start([
-    'cookie_secure'   => true,
-    'cookie_httponly' => true,
-    'cookie_samesite' => 'Lax',
-]);
+require_once '/var/www/sites/trywebwiz/public/api/_session.php'; ww_session_start();
 
 $me = !empty($_SESSION['uid']) ? ww_user_by_id((int)$_SESSION['uid']) : null;
 $logged_in = (bool)$me;
@@ -179,7 +175,7 @@ $counts['all'] = array_sum($counts);
   .funnel .step .count{font-family:var(--display);font-weight:900;font-size:22px;}
   .actions-cell{white-space:nowrap;}
   .actions-cell form{margin:0 4px 4px 0;display:inline-block;vertical-align:top;}
-  .actions-cell input[type=date]{padding:4px 6px;border:2px solid var(--navy);border-radius:8px;font-size:12px;font-family:var(--body);}
+  .actions-cell input[type=date],.actions-cell select{padding:4px 6px;border:2px solid var(--navy);border-radius:8px;font-size:12px;font-family:var(--body);background:#fff;color:var(--navy);}
   .help-row{background:var(--paper);border:2px solid var(--navy);border-radius:12px;padding:14px 18px;margin-bottom:18px;font-size:13px;line-height:1.55;}
   .help-row strong{font-family:var(--display);}
   .help-row .key{display:inline-block;background:#fff;border:2px solid var(--navy);border-radius:6px;padding:1px 8px;font-family:ui-monospace,monospace;font-size:11px;margin:0 4px;font-weight:700;}
@@ -379,13 +375,6 @@ elseif ($view === 'contacts') {
         $rows = $st->fetchAll(PDO::FETCH_ASSOC);
     }
 ?>
-  <div class="help-row">
-    <strong>What the action buttons do.</strong>
-    &nbsp;<span class="pill warn">Pause</span> stop sends until the date you pick, then resume automatically.
-    &nbsp;<span class="pill muted">Not interested</span> stop sends forever, soft exit (no email confirmation).
-    &nbsp;<span class="pill err">Unsubscribe</span> stop sends forever, treats them as unsubscribed (final state, same as if they clicked unsubscribe in an email).
-    &nbsp;<span class="pill admin">Mark purchased</span> they bought through another channel, stop sends and credit nurture.
-  </div>
   <div class="filter-pills">
     <a href="?view=contacts&filter=all" class="<?= $filter==='all'?'on':'' ?>">All <span class="n"><?= $counts['all'] ?></span></a>
     <?php foreach (['active','paused','unsubscribed','purchased','not_interested','bounced'] as $s): ?>
@@ -429,11 +418,18 @@ elseif ($view === 'contacts') {
           <?php else: ?>
             <form method="post" class="action" onsubmit="return this.pause_until.value!='';">
               <input type="hidden" name="action" value="pause"><input type="hidden" name="cid" value="<?= (int)$r['id'] ?>">
-              <input type="date" name="pause_until" min="<?= date('Y-m-d') ?>" required title="Pause until this date">
-              <button class="btn warn" title="Stop sends until the date you pick">Pause</button>
+              <select name="pause_until" title="Sends pause now and resume on this date">
+                <option value="">Pause for&hellip;</option>
+                <option value="<?= date('Y-m-d', strtotime('+1 week')) ?>">1 week</option>
+                <option value="<?= date('Y-m-d', strtotime('+2 weeks')) ?>">2 weeks</option>
+                <option value="<?= date('Y-m-d', strtotime('+1 month')) ?>">1 month</option>
+                <option value="<?= date('Y-m-d', strtotime('+3 months')) ?>">3 months</option>
+              </select>
+              <button class="btn warn">Pause</button>
             </form>
-            <form method="post" class="action"><input type="hidden" name="action" value="not_interested"><input type="hidden" name="cid" value="<?= (int)$r['id'] ?>"><button class="btn ghost" title="Stop sends forever. Soft exit, no email confirmation.">Not interested</button></form>
-            <form method="post" class="action"><input type="hidden" name="action" value="unsubscribe"><input type="hidden" name="cid" value="<?= (int)$r['id'] ?>"><button class="btn danger" title="Stop sends forever. Marks them unsubscribed (final state).">Unsubscribe</button></form>
+            <form method="post" class="action"><input type="hidden" name="action" value="not_interested"><input type="hidden" name="cid" value="<?= (int)$r['id'] ?>"><button class="btn ghost">Not interested</button></form>
+            <form method="post" class="action"><input type="hidden" name="action" value="purchased"><input type="hidden" name="cid" value="<?= (int)$r['id'] ?>"><button class="btn">Mark purchased</button></form>
+            <form method="post" class="action"><input type="hidden" name="action" value="unsubscribe"><input type="hidden" name="cid" value="<?= (int)$r['id'] ?>"><button class="btn danger">Unsubscribe</button></form>
           <?php endif; ?>
         </td>
       </tr>
