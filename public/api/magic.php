@@ -78,6 +78,22 @@ try { $db->exec('PRAGMA busy_timeout = 30000'); } catch (Throwable $e) {}
             $st->execute([$p['ip'] ?? '', $p['token']]);
             $db->exec('COMMIT');
             @unlink($f);
+            // Enroll into nurture too (the live path does this; the drainer must
+            // mirror it or backfilled generations never enter the cadence).
+            try {
+                if (!empty($p['email']) && filter_var($p['email'], FILTER_VALIDATE_EMAIL)) {
+                    require_once __DIR__ . '/_nurture.php';
+                    ww_nurture_upsert_contact($db, [
+                        'name'        => $p['name'] ?? '',
+                        'email'       => $p['email'],
+                        'company'     => $p['biz'] ?? '',
+                        'website'     => $p['website'] ?? '',
+                        'token'       => $p['token'],
+                        'preview_url' => 'https://trywebwiz.com/try/?t=' . $p['token'],
+                        'source'      => 'try',
+                    ]);
+                }
+            } catch (Throwable $ne) { ml_debug('drain nurture enroll failed: ' . $ne->getMessage()); }
         } catch (Throwable $e) {
             try { $db->exec('ROLLBACK'); } catch (Throwable $ee) {}
             return; // DB busy — give up backfill, try next request
