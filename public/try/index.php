@@ -8,11 +8,15 @@ $website = trim((string)($_GET['website'] ?? $_GET['url'] ?? ''));
 $name    = trim((string)($_GET['name'] ?? ''));
 $tparam  = trim((string)($_GET['t'] ?? ''));
 $success = (string)($_GET['success'] ?? '') === '1';
-$is_magic = ($website !== '');
+$dl_description = trim((string)($_GET['description'] ?? ''));
+$dl_company     = trim((string)($_GET['company'] ?? ''));
+$is_describe_link = ($website === '' && $dl_description !== '');
+$is_magic = ($website !== '') || $is_describe_link;
 
 if ($is_magic) {
     $host    = $website ? (parse_url(preg_match('~^https?://~i', $website) ? $website : 'https://' . $website, PHP_URL_HOST) ?: $website) : '';
     $host    = preg_replace('~^www\.~', '', (string)$host);
+    $magic_label = $host !== '' ? $host : $dl_company;
     ?><!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -47,7 +51,7 @@ if ($is_magic) {
 <body>
   <div class="card">
     <div class="wiz"><img src="/preview/wizzy-wave.gif" alt="Wizzy"></div>
-    <h1 id="head">Getting <?= htmlspecialchars($host ?: 'your', ENT_QUOTES) ?><?= $host ? "&rsquo;s" : '' ?> website ready&hellip;</h1>
+    <h1 id="head">Getting <?= htmlspecialchars($magic_label ?: 'your', ENT_QUOTES) ?><?= $magic_label ? "&rsquo;s" : '' ?> website ready&hellip;</h1>
     <p class="sub">Hang tight<?= $name ? ', ' . htmlspecialchars(explode(' ', $name)[0], ENT_QUOTES) : '' ?> &mdash; this usually takes under a minute.</p>
     <div class="bar"><span id="prog"></span></div>
     <div id="status">Starting&hellip;</div>
@@ -57,7 +61,7 @@ if ($is_magic) {
 <script>
 (function(){
   var qs = new URLSearchParams(location.search);
-  if(!qs.get('website') && !qs.get('url')){ document.getElementById('status').textContent=''; document.getElementById('errbox').innerHTML='<div class="err">No website provided. The link needs a <strong>website</strong> parameter.</div>'; return; }
+  if(!qs.get('website') && !qs.get('url') && !qs.get('description')){ document.getElementById('status').textContent=''; document.getElementById('errbox').innerHTML='<div class="err">No website or description provided. The link needs a <strong>website</strong> or <strong>description</strong> parameter.</div>'; return; }
   var steps=['Looking up the website&hellip;','Reading the brand, colors &amp; content&hellip;','Picking your colors&hellip;','Placing images &amp; copy&hellip;','Polishing the final touches&hellip;'];
   var si=0, pct=6, statusEl=document.getElementById('status'), progEl=document.getElementById('prog');
   progEl.style.width=pct+'%';
@@ -622,9 +626,9 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
 
       <form class="form-card" id="tryForm" novalidate>
         <div class="field" data-field="website">
-          <label for="website">What&rsquo;s your website?</label>
-          <input type="text" id="website" name="website" inputmode="url" autocomplete="url" placeholder="yourbusiness.com" required>
-          <div class="field-helper">If you don&rsquo;t have one yet, just type the business name and we&rsquo;ll figure out the rest.</div>
+          <label for="website">What&rsquo;s your website? <span class="opt-tag">(optional)</span></label>
+          <input type="text" id="website" name="website" inputmode="url" autocomplete="url" placeholder="yourbusiness.com">
+          <div class="field-helper">Have a site? Paste the link and Wizzy will match it. No site yet? Leave this blank and tell Wizzy about your business below.</div>
           <div class="err-msg">Add your website, or just your business name.</div>
         </div>
         <div class="field" data-field="lead">
@@ -654,9 +658,10 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
             <div class="err-msg" id="errCompany">Tell Wizzy your business name.</div>
         </div>
         <div class="field" data-field="description">
-          <label for="description">Tell Wizzy about your business</label>
-          <textarea id="description" name="description" rows="4" placeholder="We&rsquo;re a family bakery in Pawtucket. Custom cakes, weekend pastries, been here 15 years." required></textarea>
-          <div class="err-msg">Give Wizzy a few sentences (at least 20 characters) so he can pick the right look.</div>
+          <label for="description">Tell Wizzy about your business <span class="opt-tag">(required if no website)</span></label>
+          <textarea id="description" name="description" rows="4" placeholder="We&rsquo;re a family bakery in Pawtucket. Custom cakes, weekend pastries, been here 15 years."></textarea>
+          <div class="field-helper">No website yet? Give Wizzy a few sentences about what you do and he&rsquo;ll design from scratch.</div>
+          <div class="err-msg">Add your website above, or a few sentences here (at least 20 characters) so Wizzy has something to design from.</div>
         </div>
         <button type="submit" class="cta" id="ctaBtn">Make my website &rarr;</button>
         <p class="cta-microcopy">Free to see. No credit card needed.</p>
@@ -1080,13 +1085,24 @@ window.__TRY_INIT__ = {
   form.addEventListener('submit', function(e){
     e.preventDefault();
     if (generating) return;
-    var descOk = validateDesc();
-    // Website is optional. If the user typed something, it must be a valid URL.
-    var webVal = (web.value || '').trim();
-    var webOk  = (webVal === '') ? false : (/\./.test(webVal) ? validateWebsite() : true);
-    descField.classList.toggle('invalid', !descOk); websiteField.classList.toggle('invalid', !webOk);
-    if (!descOk) { desc.focus(); return; }
-    if (!webOk)  { web.focus();  return; }
+    // Need a website OR a description (>= MIN_DESC). Website is optional (describe mode).
+    var webVal  = (web.value || '').trim();
+    var descVal = (desc.value || '').trim();
+    var hasWeb  = webVal !== '';
+    var hasDesc = descVal.length >= MIN_DESC;
+    if (!hasWeb && !hasDesc) {
+      websiteField.classList.remove('invalid');
+      descField.classList.add('invalid');
+      desc.focus(); return;
+    }
+    if (hasWeb) {
+      var webOk = (/\./.test(webVal) ? validateWebsite() : true);
+      websiteField.classList.toggle('invalid', !webOk);
+      if (!webOk) { web.focus(); return; }
+    } else {
+      websiteField.classList.remove('invalid');
+    }
+    descField.classList.remove('invalid');
     // Email is required for the nurture sequence.
     var emailEl = document.getElementById('lead_email');
     var emailVal = ((emailEl && emailEl.value) || '').trim();
@@ -1130,7 +1146,8 @@ window.__TRY_INIT__ = {
         description: desc.value.trim(),
         name: leadName.trim(),
         email: leadEmail.trim(),
-        company: leadCompany.trim()
+        company: leadCompany.trim(),
+        describe: (web.value.trim() === '' ? 1 : 0)
       })
     })
     .then(function(r){ return r.json().then(function(j){ return { ok: r.ok, body: j }; }); })

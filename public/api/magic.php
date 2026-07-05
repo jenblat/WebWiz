@@ -66,11 +66,11 @@ try { $db->exec('PRAGMA busy_timeout = 30000'); } catch (Throwable $e) {}
         if (!is_array($p) || empty($p['token'])) { @unlink($f); continue; }
         try {
             $db->exec('BEGIN IMMEDIATE');
-            $st = $db->prepare("INSERT INTO prospects (email, name, business_name, current_url, source) VALUES (?, ?, ?, ?, 'magic')");
-            $st->execute([$p['email'] ?? '', $p['name'] ?? '', $p['biz'] ?? '', $p['website'] ?? '']);
+            $st = $db->prepare("INSERT INTO prospects (email, name, business_name, current_url, source, description) VALUES (?, ?, ?, ?, 'magic', ?)");
+            $st->execute([$p['email'] ?? '', $p['name'] ?? '', $p['biz'] ?? '', (!empty($p['describe']) ? null : ($p['website'] ?? '')), (!empty($p['describe']) ? ($p['description'] ?? '') : null)]);
             $pid = (int)$db->lastInsertId();
-            $st = $db->prepare("INSERT INTO jobs (type, prospect_id, customer_email, business_name, status, scheduled_for, token, generation_mode, item_status, total_cost_cents, completed_at, qa_status) VALUES ('outbound', ?, ?, ?, 'ready', datetime('now'), ?, 'magic', 'done', ?, datetime('now'), 'magic')");
-            $st->execute([$pid, $p['email'] ?? '', $p['biz'] ?? '', $p['token'], (int)round(((float)($p['cost'] ?? 0)) * 100)]);
+            $st = $db->prepare("INSERT INTO jobs (type, prospect_id, customer_email, business_name, status, scheduled_for, token, generation_mode, item_status, total_cost_cents, completed_at, qa_status) VALUES ('outbound', ?, ?, ?, 'ready', datetime('now'), ?, ?, 'done', ?, datetime('now'), 'magic')");
+            $st->execute([$pid, $p['email'] ?? '', $p['biz'] ?? '', $p['token'], ($p['generation_mode'] ?? 'magic'), (int)round(((float)($p['cost'] ?? 0)) * 100)]);
             $jid = (int)$db->lastInsertId();
             $st = $db->prepare("INSERT INTO previews (job_id, variant_n, html_path, qa_score, qa_pass, qa_issues) VALUES (?, ?, ?, NULL, NULL, NULL)");
             foreach (($p['variants'] ?? [1]) as $vn) { $st->execute([$jid, (int)$vn, '/preview/' . $p['token'] . '/v' . (int)$vn . '/index.html']); }
@@ -289,11 +289,20 @@ $description = trim((string)($_GET['description'] ?? ''));
 $v           = (int)($_GET['v'] ?? $_GET['variants'] ?? ml_sget($db, 'magic_default_variants', '1'));
 $v = max(1, min(3, $v ?: 1));
 
-if ($website === '') ml_fail('Add your website so Wizzy has something to start from.');
-if (!preg_match('~^https?://~i', $website)) $website = 'https://' . $website;
-if (!filter_var($website, FILTER_VALIDATE_URL)) ml_fail('That website URL looks invalid.');
+$describe = ((string)($_GET['describe'] ?? '') === '1') || ($website === '' && $description !== '');
+if ($describe) {
+    $website = '';
+    if ($company === '') ml_fail('Tell Wizzy your business name.');
+    if (mb_strlen($description) < 20) ml_fail('Tell Wizzy a couple of sentences about the business so Wizzy has something to design from.');
+} else {
+    if ($website === '') ml_fail('Add your website so Wizzy has something to start from.');
+    if (!preg_match('~^https?://~i', $website)) $website = 'https://' . $website;
+    if (!filter_var($website, FILTER_VALIDATE_URL)) ml_fail('That website URL looks invalid.');
+}
+$gen_mode = $describe ? 'describe' : 'magic';
 
 $db->exec("CREATE TABLE IF NOT EXISTS magic_hits (id INTEGER PRIMARY KEY AUTOINCREMENT, ip TEXT, token TEXT, created_at TEXT DEFAULT (datetime('now')))");
+try { $pc = $db->query("PRAGMA table_info(prospects)")->fetchAll(PDO::FETCH_COLUMN, 1); if (!in_array('description', (array)$pc, true)) $db->exec("ALTER TABLE prospects ADD COLUMN description TEXT"); } catch (Throwable $e) {}
 
 $ip = (string)($_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '');
 $ip = trim(explode(',', $ip)[0]);
@@ -345,7 +354,12 @@ $T0 = microtime(true);
 try {
     ml_debug('scrape begin');
     $tS = microtime(true);
-    $scrape = scrape_multi($website);
+    if ($describe) {
+        $scrape = ['images'=>[], 'title'=>$company, 'description'=>$description, 'h1'=>[], 'h2'=>[], 'h3'=>[], 'paragraphs'=>[], 'links'=>[], 'colors'=>[], 'videos'=>[]];
+        ml_debug('describe mode: scrape skipped');
+    } else {
+        $scrape = scrape_multi($website);
+    }
     $scrape_dt = microtime(true)-$tS;
     ml_debug(sprintf('scrape done %.2fs imgs=%d', $scrape_dt, count($scrape['images'] ?? [])));
     ml_time('PHASE_1_scrape', $scrape_dt, ['images' => count($scrape['images'] ?? []), 'website' => $website]);
@@ -355,6 +369,7 @@ try {
     if ($biz === '') { $t = trim((string)($scrape['title'] ?? '')); if ($t !== '') $biz = trim((string)preg_split('~[|\-\x{2013}\x{2014}:]~u', $t)[0]); }
     if ($biz === '') { $biz = preg_replace('~^www\.~', '', (string)(parse_url($website, PHP_URL_HOST) ?: 'Your Business')); }
     $industry = '';
+    if ($describe && $company !== '') $biz = $company;
     // Soft-source detection: parallel HEAD over scraped images to capture
     // Content-Length, then flag is_soft for any image whose bytes/MP-at-requested-
     // dimensions ratio is under 0.30. Wix/Squarespace/etc happily upscale tiny
@@ -624,6 +639,19 @@ try {
         }
     } catch (Throwable $e) { ml_debug('ecom detect failed: ' . $e->getMessage()); }
 
+    if ($describe) {
+        $contact_rule = ($email !== '')
+            ? "CONTACT CTA: use the provided email (" . $email . ") for the primary contact / quote button (mailto). Do not invent a phone number or address."
+            : "CONTACT CTA: use a generic \"Contact us\" / \"Request a quote\" button. Do NOT invent a phone number, address, or email.";
+        $system .= "\n\n------\nDESCRIBE MODE — NO EXISTING WEBSITE WAS SCRAPED.\n"
+                . "You are building this site from the business NAME (\"" . $biz . "\") and the owner's DESCRIPTION only. There is NO scraped content and NO existing images beyond an all-generated pool.\n"
+                . "- SYNTHESIZE the site from the description: infer sensible services/offerings, value props, sections, and goal-appropriate CTAs that a business like this would have. In this mode you MUST invent reasonable structure and copy grounded in the description. THIS OVERRIDES any rule about \"only use scraped content / do not invent\" — here, creating the content is required.\n"
+                . "- DO NOT fabricate SPECIFIC PROOF the owner did not state: NO named testimonials or quotes, NO star ratings or review counts, NO client logos, NO award badges, NO \"since 19XX\" / \"X years in business\" / \"N happy customers\" stat numbers, NO invented phone numbers, addresses, or URLs. If the description does not state a fact, do not assert it as fact. Prefer non-fabricated phrasing (\"Trusted local service\" not \"Trusted by 500+ customers\").\n"
+                . "- LOGO: there is no logo image. Use a clean TEXT wordmark of the business name in the brand font.\n"
+                . "- " . $contact_rule . "\n"
+                . "- IMAGES: use /api/genimg.php for every photo, with specific prompts describing the ACTUAL offering from the description. Never leave an empty image slot; never reference a scraped image (there are none).\n";
+        ml_debug('describe mode: system block injected');
+    }
     $desc_block = '';
     if ($description !== '') {
         $clean = preg_replace('/[\x00-\x1F]+/', ' ', $description);
@@ -853,6 +881,7 @@ try {
         'token' => $token, 'email' => $email, 'name' => $name, 'biz' => $biz,
         'website' => $website, 'cost' => $cost, 'htmls_count' => count($htmls),
         'variants' => array_keys($htmls), 'ip' => $ip, 'created_at' => date('Y-m-d H:i:s'),
+        'generation_mode' => $gen_mode, 'description' => $description, 'describe' => $describe ? 1 : 0,
     ];
     $persist_ok = false;
     $maxAttempts = 12; // up to ~20s of retries
@@ -861,11 +890,11 @@ try {
         try {
             $db->exec('PRAGMA busy_timeout = 30000');
             $db->exec('BEGIN IMMEDIATE');
-            $st = $db->prepare("INSERT INTO prospects (email, name, business_name, current_url, source) VALUES (?, ?, ?, ?, 'magic')");
-            $st->execute([$email, $name, $biz, $website]);
+            $st = $db->prepare("INSERT INTO prospects (email, name, business_name, current_url, source, description) VALUES (?, ?, ?, ?, 'magic', ?)");
+            $st->execute([$email, $name, $biz, ($describe ? null : $website), ($describe ? $description : null)]);
             $pid = (int)$db->lastInsertId();
-            $st = $db->prepare("INSERT INTO jobs (type, prospect_id, customer_email, business_name, status, scheduled_for, token, generation_mode, item_status, total_cost_cents, completed_at, qa_status) VALUES ('outbound', ?, ?, ?, 'ready', datetime('now'), ?, 'magic', 'done', ?, datetime('now'), 'magic')");
-            $st->execute([$pid, $email, $biz, $token, (int)round($cost * 100)]);
+            $st = $db->prepare("INSERT INTO jobs (type, prospect_id, customer_email, business_name, status, scheduled_for, token, generation_mode, item_status, total_cost_cents, completed_at, qa_status) VALUES ('outbound', ?, ?, ?, 'ready', datetime('now'), ?, ?, 'done', ?, datetime('now'), 'magic')");
+            $st->execute([$pid, $email, $biz, $token, $gen_mode, (int)round($cost * 100)]);
             $jid = (int)$db->lastInsertId();
             $st = $db->prepare("INSERT INTO previews (job_id, variant_n, html_path, qa_score, qa_pass, qa_issues) VALUES (?, ?, ?, NULL, NULL, NULL)");
             foreach ($htmls as $i => $_) {

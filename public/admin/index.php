@@ -913,27 +913,27 @@ if ($tab === 'prospects') {
         $bexp = (int)($_GET['batch'] ?? 0);
         if ($ids) {
             $ph = implode(',', array_fill(0, count($ids), '?'));
-            $st = ww_db()->prepare("SELECT p.business_name, p.name, p.first_name, p.last_name, p.email, p.current_url, j.status AS job_status, j.token AS job_token FROM prospects p LEFT JOIN jobs j ON j.id = (SELECT MAX(id) FROM jobs WHERE prospect_id = p.id) WHERE p.id IN ($ph) ORDER BY p.id DESC");
+            $st = ww_db()->prepare("SELECT p.business_name, p.name, p.first_name, p.last_name, p.email, p.current_url, j.status AS job_status, j.token AS job_token, p.description AS description, j.generation_mode AS generation_mode FROM prospects p LEFT JOIN jobs j ON j.id = (SELECT MAX(id) FROM jobs WHERE prospect_id = p.id) WHERE p.id IN ($ph) ORDER BY p.id DESC");
             $st->execute($ids);
             $erows = $st->fetchAll(PDO::FETCH_ASSOC);
         } elseif ($bexp) {
             // Default: only sites that actually generated successfully. Pass &include=all to get everything.
             $includeAll = (($_GET['include'] ?? '') === 'all');
             if ($includeAll) {
-                $st = ww_db()->prepare("SELECT p.business_name, p.name, p.first_name, p.last_name, p.email, p.current_url, j.status AS job_status, j.token AS job_token FROM jobs j JOIN prospects p ON p.id = j.prospect_id WHERE j.upload_batch_id = ? ORDER BY j.id");
+                $st = ww_db()->prepare("SELECT p.business_name, p.name, p.first_name, p.last_name, p.email, p.current_url, j.status AS job_status, j.token AS job_token, p.description AS description, j.generation_mode AS generation_mode FROM jobs j JOIN prospects p ON p.id = j.prospect_id WHERE j.upload_batch_id = ? ORDER BY j.id");
                 $st->execute([$bexp]);
             } else {
-                $st = ww_db()->prepare("SELECT p.business_name, p.name, p.first_name, p.last_name, p.email, p.current_url, j.status AS job_status, j.token AS job_token FROM jobs j JOIN prospects p ON p.id = j.prospect_id WHERE j.upload_batch_id = ? AND j.status IN ('ready','sent','picked') AND j.item_status = 'done' ORDER BY j.id");
+                $st = ww_db()->prepare("SELECT p.business_name, p.name, p.first_name, p.last_name, p.email, p.current_url, j.status AS job_status, j.token AS job_token, p.description AS description, j.generation_mode AS generation_mode FROM jobs j JOIN prospects p ON p.id = j.prospect_id WHERE j.upload_batch_id = ? AND j.status IN ('ready','sent','picked') AND j.item_status = 'done' ORDER BY j.id");
                 $st->execute([$bexp]);
             }
             $erows = $st->fetchAll(PDO::FETCH_ASSOC);
         } else {
-            $erows = ww_db()->query("SELECT p.business_name, p.name, p.first_name, p.last_name, p.email, p.current_url, j.status AS job_status, j.token AS job_token FROM prospects p LEFT JOIN jobs j ON j.id = (SELECT MAX(id) FROM jobs WHERE prospect_id = p.id) ORDER BY p.id DESC")->fetchAll(PDO::FETCH_ASSOC);
+            $erows = ww_db()->query("SELECT p.business_name, p.name, p.first_name, p.last_name, p.email, p.current_url, j.status AS job_status, j.token AS job_token, p.description AS description, j.generation_mode AS generation_mode FROM prospects p LEFT JOIN jobs j ON j.id = (SELECT MAX(id) FROM jobs WHERE prospect_id = p.id) ORDER BY p.id DESC")->fetchAll(PDO::FETCH_ASSOC);
         }
         header('Content-Type: text/csv; charset=utf-8');
         header('Content-Disposition: attachment; filename="webwiz-prospects-' . date('Y-m-d') . '.csv"');
         $out = fopen('php://output', 'w');
-        fputcsv($out, ['business_name','first_name','last_name','email','current_url','status','seed_site_website','showcase_image']);
+        fputcsv($out, ['business_name','first_name','last_name','email','current_url','status','mode','description','seed_site_website','showcase_image']);
         foreach ($erows as $r) {
             $st = $r['job_status'] ?? '';
             $preview = ''; $shot = '';
@@ -948,7 +948,7 @@ if ($tab === 'prospects') {
                 $full = trim((string)($r['name'] ?? ''));
                 if ($full !== '') { $parts = preg_split('/\s+/', $full, 2); $first = $parts[0]; $last = $parts[1] ?? ''; }
             }
-            fputcsv($out, [$r['business_name'], $first, $last, $r['email'], $r['current_url'], $st, $preview, $shot]);
+            fputcsv($out, [$r['business_name'], $first, $last, $r['email'], $r['current_url'], $st, ($r['generation_mode'] ?? ''), ($r['description'] ?? ''), $preview, $shot]);
         }
         fclose($out);
         exit;
@@ -1519,7 +1519,7 @@ if ($tab === 'prospects') {
     $pages = max(1, (int)ceil($total / $per));
     if ($page > $pages) $page = $pages;
     $offset = ($page - 1) * $per;
-    $psql = "SELECT p.*, j.status AS job_status, j.token AS job_token, j.id AS job_id FROM prospects p LEFT JOIN jobs j ON j.id = (SELECT MAX(id) FROM jobs WHERE prospect_id = p.id) $pwhere ORDER BY p.created_at $order, p.id $order LIMIT $per OFFSET $offset";
+    $psql = "SELECT p.*, j.status AS job_status, j.token AS job_token, j.id AS job_id, j.generation_mode AS generation_mode FROM prospects p LEFT JOIN jobs j ON j.id = (SELECT MAX(id) FROM jobs WHERE prospect_id = p.id) $pwhere ORDER BY p.created_at $order, p.id $order LIMIT $per OFFSET $offset";
     $pst = ww_db()->prepare($psql); $pst->execute($pparams); $rows = $pst->fetchAll(PDO::FETCH_ASSOC);
 
     // Toolbar: search + create-date sort + export-selected
@@ -1570,7 +1570,11 @@ if ($tab === 'prospects') {
             $st = $r['job_status'] ?? 'queued';
             $cls = ['queued'=>'muted','running'=>'warn','ready'=>'ok','sent'=>'ok','picked'=>'ok','failed'=>'err'][$st] ?? 'muted';
             echo '<tr><td><input type="checkbox" class="psel" value="' . (int)$r['id'] . '"></td>';
-            echo '<td><strong>' . ww_h($r['business_name']) . '</strong></td>';
+            echo '<td><strong>' . ww_h($r['business_name']) . '</strong>';
+            $gm = $r['generation_mode'] ?? '';
+            if ($gm === 'describe') echo ' <span class="pill ok" style="font-size:9px;padding:2px 7px;vertical-align:middle;" title="Generated from a description (no website)">Described</span>';
+            elseif ($gm === 'magic') echo ' <span class="pill muted" style="font-size:9px;padding:2px 7px;vertical-align:middle;" title="Generated by scraping a website">Scraped</span>';
+            echo '</td>';
             echo '<td>' . ww_h($r['name']) . '</td>';
             echo '<td>' . ww_h($r['email']) . '</td>';
             echo '<td><a href="' . ww_h($r['current_url']) . '" target="_blank" style="font-size:13px;">' . ww_h(parse_url($r['current_url'], PHP_URL_HOST) ?: $r['current_url']) . '</a></td>';
