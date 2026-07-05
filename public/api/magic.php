@@ -236,30 +236,11 @@ function magic_pregenerate_images(array $prompts): array {
         $q = http_build_query(['prompt' => $p['prompt'], 'ar' => $p['ar'], 'l' => $p['label']]);
         $urls[] = ['url' => '/api/genimg.php?' . $q, 'label' => $p['label']];
     }
-    // Fire in parallel via curl_multi to pre-warm the cache. Origin is the same host.
-    $mh = curl_multi_init();
-    $handles = [];
-    foreach ($urls as $u) {
-        $ch = curl_init('https://trywebwiz.com' . $u['url']);
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT        => 12,
-            CURLOPT_CONNECTTIMEOUT => 4,
-            CURLOPT_HTTPHEADER     => ['user-agent: WebWiz-PreGen/1.0'],
-        ]);
-        curl_multi_add_handle($mh, $ch);
-        $handles[] = $ch;
-    }
-    $deadline = microtime(true) + 14.0;
-    do {
-        curl_multi_exec($mh, $running);
-        if ($running > 0) curl_multi_select($mh, 0.3);
-    } while ($running > 0 && microtime(true) < $deadline);
-    foreach ($handles as $ch) {
-        curl_multi_remove_handle($mh, $ch);
-        curl_close($ch);
-    }
-    curl_multi_close($mh);
+    // NOTE: intentionally NON-blocking. The genimg URLs are deterministic, so
+    // Sonnet has everything it needs immediately. Only the images Sonnet actually
+    // places land in the final HTML; those get warmed in parallel post-response
+    // (pre-warm block) or rendered on demand by genimg.php. Skipping the blocking
+    // warm here shaves ~7s off every generation.
     return $urls;
 }
 
@@ -713,10 +694,27 @@ try {
     if (!is_file($dir . '/index.php')) file_put_contents($dir . '/index.php', "<?php\n\$_GET['t'] = basename(__DIR__);\nrequire __DIR__ . '/../index.php';\n");
     ml_debug("files written token=$token");
 
-    // ---- Pre-warm Imagen image generation ----
-    // Walk the finalized HTML for /api/genimg.php URLs and fetch them in
-    // parallel so Imagen calls complete and JPEGs get cached BEFORE the
-    // user opens the preview. 7s budget keeps total gen under LSPHP timeout.
+    // 2) Send response IMMEDIATELY. The user gets their preview. Don't make
+    //    them wait on DB metadata writes — and never fail them on DB busy.
+    $response = ['ok' => true, 'token' => $token, 'url' => '/preview/' . $token . '/', 'preview_url' => '/preview/' . $token . '/v1/index.html', 'variants' => count($htmls), 'business' => $biz, 'business_name' => $biz];
+    echo json_encode($response);
+    // Flush so the user gets their response before we attempt DB writes.
+    if (function_exists('fastcgi_finish_request')) { @fastcgi_finish_request(); }
+    elseif (function_exists('litespeed_finish_request')) { @litespeed_finish_request(); }
+    else { @ob_flush(); @flush(); }
+    ml_debug("RESPONSE SENT token=$token");
+    ml_time('PHASE_3_user_seen', microtime(true)-$T0, ['token' => $token]);
+
+    // ====== POST-RESPONSE BACKGROUND PHASE ======
+    // User already sees their preview. From here we silently improve it.
+    // Reset the wall-clock so the QA + upscale phase has fresh budget.
+    @set_time_limit(240);
+    ignore_user_abort(true);
+
+    // ---- Pre-warm Imagen image generation (moved post-response) ----
+    // Warm the genimg URLs that ended up in the final HTML, in parallel, so the
+    // JPEGs are cached before QA screenshots and before the user reloads. Runs
+    // AFTER the response flush so the user is never kept waiting on it.
     $tPW = microtime(true);
     try {
         $genimg_urls = [];
@@ -759,23 +757,6 @@ try {
         ml_time('PHASE_2_5_pre_warm', microtime(true) - $tPW, ['found' => count($genimg_urls), 'warmed' => $pw_count]);
         ml_debug("pre-warm: found=" . count($genimg_urls) . " warmed=$pw_count");
     } catch (Throwable $e) { ml_debug('pre-warm failed: ' . $e->getMessage()); }
-
-    // 2) Send response IMMEDIATELY. The user gets their preview. Don't make
-    //    them wait on DB metadata writes — and never fail them on DB busy.
-    $response = ['ok' => true, 'token' => $token, 'url' => '/preview/' . $token . '/', 'preview_url' => '/preview/' . $token . '/v1/index.html', 'variants' => count($htmls), 'business' => $biz, 'business_name' => $biz];
-    echo json_encode($response);
-    // Flush so the user gets their response before we attempt DB writes.
-    if (function_exists('fastcgi_finish_request')) { @fastcgi_finish_request(); }
-    elseif (function_exists('litespeed_finish_request')) { @litespeed_finish_request(); }
-    else { @ob_flush(); @flush(); }
-    ml_debug("RESPONSE SENT token=$token");
-    ml_time('PHASE_3_user_seen', microtime(true)-$T0, ['token' => $token]);
-
-    // ====== POST-RESPONSE BACKGROUND PHASE ======
-    // User already sees their preview. From here we silently improve it.
-    // Reset the wall-clock so the QA + upscale phase has fresh budget.
-    @set_time_limit(240);
-    ignore_user_abort(true);
 
     // ---- Phase 4: Visual QA loop (Sonnet vision check + auto-regen if fail) ----
     $tQA = microtime(true);
