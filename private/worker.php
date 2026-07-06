@@ -123,7 +123,7 @@ function process_job(PDO $db, array $row): void {
             if (!is_dir($dir)) @mkdir($dir, 0755, true);
             file_put_contents($dir . '/index.html', $html);
         };
-        foreach ($htmls as $v => $html) { $html = ww_apply_upscale($html, $job_id); $htmls[$v] = $html; $write_variant($v, $html); }
+        foreach ($htmls as $v => $html) { $html = ww_apply_upscale($html, $job_id); $html = ww_polish_html($html, $url); $htmls[$v] = $html; $write_variant($v, $html); }
         $stub = $public_dir . '/index.php';
         if (!is_file($stub)) {
             file_put_contents($stub, "<?php\n\$_GET['t'] = basename(__DIR__);\nrequire __DIR__ . '/../index.php';\n");
@@ -165,7 +165,7 @@ function process_job(PDO $db, array $row): void {
                 foreach ($rreqs as $v => $_) {
                     $total_cost += (float)($rres[$v]['cost_usd'] ?? 0);
                     $cand = finalize_html($rres[$v]['text'] ?? '');
-                    if ($cand && quality_gate($cand)['ok']) { $htmls[$v] = $cand; $write_variant($v, $cand); }
+                    if ($cand && quality_gate($cand)['ok']) { $cand = ww_polish_html($cand, $url); $htmls[$v] = $cand; $write_variant($v, $cand); }
                 }
             }
             // block-on-fail: drop still-failing variants, but never drop to zero
@@ -254,6 +254,23 @@ function extract_html(string $text): ?string {
     return $text;
 }
 
+/**
+ * Post-generation polish applied to every shipped variant:
+ *  - force the footer copyright year to the CURRENT year (never a stale/hardcoded one)
+ *  - add UTM tracking to the "Designed by WebWiz" backlink so WebWiz can attribute traffic.
+ */
+function ww_polish_html(string $html, string $clientUrl = ''): string {
+    $year = date('Y');
+    $html = preg_replace('/(©|&copy;|Copyright)\s*20\d{2}/iu', '${1} ' . $year, $html);
+    $u = (strpos($clientUrl, '://') === false && $clientUrl !== '') ? 'https://' . $clientUrl : $clientUrl;
+    $host = strtolower((string)parse_url($u, PHP_URL_HOST));
+    $host = preg_replace('/^www\./', '', $host);
+    $src  = ($host !== '' && strpos($host, '{') === false) ? rawurlencode($host) : 'client_site';
+    $utm  = 'https://trywebwiz.com/?utm_source=' . $src . '&utm_medium=referral&utm_campaign=designed_by_webwiz';
+    $html = preg_replace('~href=(["\x27])https?://(?:www\.)?trywebwiz\.com/?\1~i', 'href="' . $utm . '"', $html);
+    return $html;
+}
+
 function build_system_prompt(string $industry, int $usable_img_count): string {
     $img_note = $usable_img_count >= 4
         ? "Source has {$usable_img_count} usable content images - use at least 4 distinct ones."
@@ -301,6 +318,7 @@ TYPOGRAPHY (only from this list)
 
 DESIGN STANDARDS
 - Contemporary, confident, magazine-quality. 3-5 brand colors. High contrast. Generous whitespace, sections 80-120px vertical padding.
+- COLOR CONTRAST (critical): any accent used as TEXT, numbers, small labels, wordmarks or thin UI on a DARK (navy/black/deep) background MUST be light and high-contrast - white, cream, or a bright gold. NEVER put a dark accent (dark red, maroon, burgundy, brown, navy) as TEXT on a dark background; that is unreadable. Reserve dark/saturated accents for solid-fill buttons/badges with white text, or as text on LIGHT backgrounds. Stat numbers and section labels sitting on a dark band must read clearly.
 - Sections (adapt to industry): hero, trust strip/stats, services/work showcase (with images), about/story (people/place imagery framed correctly), social proof, CTA band, footer. Keep it tight enough to finish.
 - 2 primary CTAs above the fold. Fully responsive at 375px.
 
