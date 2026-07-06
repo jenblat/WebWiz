@@ -111,7 +111,8 @@ You are a ruthless web-design QA reviewer for an agency that ships homepages to 
 CRITICAL defect types (ANY one => pass:false). BE STRICT - when unsure whether a missing/empty image is minor or critical, choose CRITICAL:
 - empty_image_box: a rectangular region (gray, beige, white, or a flat brand-tint color) bigger than a small icon that contains NO photo or illustration - especially when it sits beside body text, fills a hero/about area, or has only a tiny text label floating in it. Do NOT excuse this as "whitespace", "minimalism", or "sparse". An empty box where a photo clearly belongs is ALWAYS critical.
 - blank_thumbnail: a card in a grid (services, blog/insights, gallery, team) whose image area (usually the top of the card) is blank/white/flat with no real image.
-- cut_off_person: a person's face/head/body sliced by a container edge or only partly visible. (A person legitimately split across two of MY slices does NOT count - judge the stitched page.)
+- cut_off_person: a person's face/head/body sliced by a container edge or only partly visible - INCLUDING the top of a head, forehead, hair, or chin clipped at the TOP or bottom edge of a hero image or full-bleed background band (this applies to background band photos, not just cards). If a face in a hero/band is missing the crown of the head or is awkwardly framed against the container edge, that is CRITICAL. (A person legitimately split across two of MY slices does NOT count - judge the stitched page.)
+- broken_logo: look CLOSELY at the top-left NAV LOGO. Flag critical if it is a garbled/pixelated/noisy blob, a solid or near-solid filled rectangle (e.g. an all-white or all-dark box) with no legible mark, a logo whose transparency has been flattened onto a clashing background color, or otherwise illegible/corrupted rather than a crisp wordmark or icon. A brand logo that does not read cleanly is embarrassing and ALWAYS critical.
 - broken_image: a broken-image icon or obviously failed/garbled image.
 - text_overflow: text clipped, cut off mid-word, or overflowing/colliding with other elements.
 - overlap: elements overlapping so text is hard to read.
@@ -160,7 +161,9 @@ function ww_qa_feedback(array $issues): string {
         . "- For ANY 'icon_used_as_photo' defect: replace that <img src> with /api/genimg.php?prompt=<URL-encoded photorealistic scene description matching the slot's purpose>&ar=4:3. Do NOT reuse the same icon URL. Examples: for a 'Pre-Listing Inspection' card use /api/genimg.php?prompt=professional%20home%20inspector%20with%20clipboard%20examining%20house%20exterior%2C%20photorealistic&ar=4:3 — never reuse the original icon-style URL.\n"
         . "- For ANY 'low_resolution_image' defect: replace with /api/genimg.php at a larger aspect ratio. The original was too small to use.\n"
         . "- Never crop a person; if you lack enough images for a card grid, use fewer cards rather than leaving blank image areas.\n"
-        . "- Keep all text inside its container; every section with a heading MUST have visible content beneath it — never leave a heading followed by empty space.";
+        . "- Keep all text inside its container; every section with a heading MUST have visible content beneath it — never leave a heading followed by empty space.\n"
+        . "- For ANY broken_logo defect: reference the nav logo with the PLAIN /api/img.php?u=<logo>&l=<name> URL with NO &up=1 param (upscaling flattens transparent logos into blobs), or fall back to a clean text wordmark of the business name. Never upscale a logo.\n"
+        . "- For ANY cut_off_person defect in a hero or full-bleed band: set object-position:center top and make the band taller (>=60vh hero / >=460px band) so the whole head is visible, OR move that portrait into a framed portrait card (aspect 3/4-4/5, object-position center top) with the name beneath. Never leave a head clipped by the container edge.";
 }
 
 /** Pre-fetch every /api/img.php URL in the HTML (server-side, parallel) to warm the disk cache before rendering. */

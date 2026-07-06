@@ -274,7 +274,7 @@ ABSOLUTE RULES
 6. EVERY image URL you use MUST come from the provided source data (images.photo / images.cutout / images.thumbnail / images.logo). All provided URLs are verified to load. Do NOT invent URLs. Do NOT reuse a URL twice.
 
 IMAGE FRAMING - clients reject cropped people:
-- LANDSCAPE PHOTOS (images.photo): scenes, offices, products. Container with aspect-ratio + overflow:hidden + object-fit:cover; object-position:center. Fine as hero/feature/full-bleed.
+- LANDSCAPE PHOTOS (images.photo): scenes, offices, products. Container with aspect-ratio + overflow:hidden + object-fit:cover. Fine as hero/feature/full-bleed. CRITICAL - HEADS: if the photo contains PEOPLE, use object-position:center top (NEVER center or bottom) and keep the band tall (>=60vh for a hero, >=460px for a mid-page band) so heads are NEVER cut off at the top edge. A wide-short full-bleed band (height under ~420px) may ONLY use a photo with no faces near the top. Do NOT force a single tight head-and-shoulders portrait into a wide full-bleed band - put single portraits in a framed portrait card (aspect-ratio 3/4 or 4/5, object-fit:cover, object-position:center top) with the name/title beneath.
 - CUTOUT / PORTRAIT / PERSON images (images.cutout, or anyone on a transparent/plain background): NEVER crop. Render with object-fit:contain inside a fixed-height box (e.g. height:420px) with a soft brand-tint/neutral background and padding, so the whole person is visible. NEVER use a cutout person as a full-bleed hero. NEVER put a face in a tight 1:1 or 16/9 cover crop.
 - Hero: prefer a LANDSCAPE photo. If none exists, use a CSS gradient/SVG hero and put people photos lower in framed cards.
 
@@ -353,7 +353,7 @@ SOURCE DATA:
 {$scrape_json}
 
 IMAGE PICKING GUIDE
-- images.photo = PRIMARY landscape photos. Safe as hero / full-bleed / cover-cropped feature images.
+- images.photo = PRIMARY landscape photos. Safe as hero / full-bleed / cover feature images. If the photo shows PEOPLE: always object-position:center top with a tall band so heads are never cropped; put a tight single portrait in a framed portrait card (aspect 3/4-4/5, object-position center top) with name/title beneath - never stretched across a wide-short band.
 - images.cutout = people on transparent/plain backgrounds OR portrait photos. object-fit:CONTAIN in a fixed-height framed card with brand-tint background. NEVER crop, NEVER full-bleed hero.
 - images.thumbnail = small filler images for small cards.
 - images.team_card = ONLY for testimonial cards (name/title baked in).

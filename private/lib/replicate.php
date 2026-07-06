@@ -108,6 +108,26 @@ function ww_img_cache_dims(string $srcUrl): ?array {
     return null;
 }
 
+/** True if the cached source image carries meaningful transparency (logos, cutouts). */
+function ww_img_cache_has_alpha(string $srcUrl): bool {
+    $key = sha1($srcUrl);
+    foreach (["png","webp","gif"] as $ext) { // jpg never has alpha
+        $f = "/var/www/sites/trywebwiz/data/imgcache/" . $key . "." . $ext;
+        if (!is_file($f)) continue;
+        $im = @imagecreatefromstring((string)@file_get_contents($f));
+        if (!$im) return false;
+        $w = imagesx($im); $h = imagesy($im); $found = false;
+        for ($sx = 0; $sx < $w && !$found; $sx += max(1, (int)($w / 24))) {
+            for ($sy = 0; $sy < $h; $sy += max(1, (int)($h / 24))) {
+                if (((imagecolorat($im, $sx, $sy) >> 24) & 0x7F) > 8) { $found = true; break; }
+            }
+        }
+        imagedestroy($im);
+        return $found;
+    }
+    return false;
+}
+
 /**
  * Post-finalize pass: upscale any low-res images present in the generated HTML.
  * Rewrites matching /api/img.php?u=... URLs to include &up=1 (img.php serves the upscaled cache).
@@ -123,6 +143,10 @@ function ww_upscale_html_images(string $html, float $budget_usd_remaining, ?int 
         if ($budget_usd_remaining < WW_REPLICATE_EST_PRICE_PER_RUN) break;
         // skip if this exact URL already has &up=1
         if (strpos($fullPath, 'up=1') !== false) continue;
+        // Never upscale logos: Real-ESRGAN re-encodes to opaque raster and destroys the alpha
+        // channel, turning a transparent logo into a broken white/black blob. Flat brand graphics
+        // also gain nothing from photo super-resolution.
+        if (stripos($fullPath, 'logo') !== false) continue;
         // extract the u= value (urlencoded original URL)
         $enc = $m[1][$idx];
         // some u values include leading & from earlier params; trim to just the u value
@@ -133,6 +157,7 @@ function ww_upscale_html_images(string $html, float $budget_usd_remaining, ?int 
         $dims = ww_img_cache_dims($orig);
         if (!$dims) continue; // unknown size: skip
         if ($dims[0] >= WW_UPSCALE_WIDTH_THRESHOLD) continue;
+        if (ww_img_cache_has_alpha($orig)) continue; // transparent image: upscaling flattens the alpha channel
         // Dynamic scale: tiny sources (<400px) get 4x; medium (400-1200px) get 2x. Real-ESRGAN supports both.
         $scale = ($dims[0] < 400) ? 4 : 2;
         $up = ww_replicate_upscale($orig, $scale, $job_id);
