@@ -35,6 +35,16 @@ try {
   } elseif ($cmd === 'git') {
     $out['status']=sh('cd /var/www/sites/trywebwiz && git status --short');
     $out['head']=sh('cd /var/www/sites/trywebwiz && git log -1 --pretty=format:"%h %s"');
+  } elseif ($cmd === 'sed') {
+    $rel = preg_replace('~[^a-zA-Z0-9_./-]~','', (string)($_GET['file'] ?? ''));
+    if (strpos($rel,'..')!==false) throw new Exception('bad path');
+    $a = max(1, (int)($_GET['a'] ?? 1)); $b = max($a, (int)($_GET['b'] ?? ($a + 40)));
+    $out['lines'] = explode("\n", sh('sed -n ' . escapeshellarg($a.','.$b.'p') . ' ' . escapeshellarg('/var/www/sites/trywebwiz/public/'.$rel)));
+  } elseif ($cmd === 'grep') {
+    $rel = preg_replace('~[^a-zA-Z0-9_./-]~','', (string)($_GET['file'] ?? ''));
+    if (strpos($rel,'..')!==false) throw new Exception('bad path');
+    $pat = (string)($_GET['pat'] ?? '');
+    $out['lines'] = explode("\n", sh('grep -n -F ' . escapeshellarg($pat) . ' ' . escapeshellarg('/var/www/sites/trywebwiz/public/'.$rel) . ' | head -40'));
   } elseif ($cmd === 'schema') {
     $t = preg_replace('~[^a-z_]~i','', (string)($_GET['t'] ?? ''));
     $out['columns']=$db->query("PRAGMA table_info($t)")->fetchAll(PDO::FETCH_ASSOC);

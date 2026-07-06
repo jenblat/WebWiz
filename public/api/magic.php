@@ -69,8 +69,8 @@ try { $db->exec('PRAGMA busy_timeout = 30000'); } catch (Throwable $e) {}
             $st = $db->prepare("INSERT INTO prospects (email, name, business_name, current_url, source, description) VALUES (?, ?, ?, ?, 'magic', ?)");
             $st->execute([$p['email'] ?? '', $p['name'] ?? '', $p['biz'] ?? '', (!empty($p['describe']) ? null : ($p['website'] ?? '')), (!empty($p['describe']) ? ($p['description'] ?? '') : null)]);
             $pid = (int)$db->lastInsertId();
-            $st = $db->prepare("INSERT INTO jobs (type, prospect_id, customer_email, business_name, status, scheduled_for, token, generation_mode, item_status, total_cost_cents, completed_at, qa_status) VALUES ('outbound', ?, ?, ?, 'ready', datetime('now'), ?, ?, 'done', ?, datetime('now'), 'magic')");
-            $st->execute([$pid, $p['email'] ?? '', $p['biz'] ?? '', $p['token'], ($p['generation_mode'] ?? 'magic'), (int)round(((float)($p['cost'] ?? 0)) * 100)]);
+            $st = $db->prepare("INSERT INTO jobs (type, prospect_id, customer_email, business_name, scrape_data, status, scheduled_for, token, generation_mode, item_status, total_cost_cents, completed_at, qa_status) VALUES ('outbound', ?, ?, ?, ?, 'ready', datetime('now'), ?, ?, 'done', ?, datetime('now'), 'magic')");
+            $st->execute([$pid, $p['email'] ?? '', $p['biz'] ?? '', ($p['scrape_data'] ?? null), $p['token'], ($p['generation_mode'] ?? 'magic'), (int)round(((float)($p['cost'] ?? 0)) * 100)]);
             $jid = (int)$db->lastInsertId();
             $st = $db->prepare("INSERT INTO previews (job_id, variant_n, html_path, qa_score, qa_pass, qa_issues) VALUES (?, ?, ?, NULL, NULL, NULL)");
             foreach (($p['variants'] ?? [1]) as $vn) { $st->execute([$jid, (int)$vn, '/preview/' . $p['token'] . '/v' . (int)$vn . '/index.html']); }
@@ -408,6 +408,18 @@ try {
     } catch (Throwable $e) { ml_debug('soft detect failed: ' . $e->getMessage()); }
 
     $usable = array_values(array_filter($scrape['images'] ?? [], fn($i) => empty($i['is_logo']) && empty($i['is_thumb']) && empty($i['is_team_card']) && empty($i['is_icon']) && empty($i['is_soft'])));
+
+    // Save the REAL scraped images so the editor can offer "use my real photos" later.
+    $scrape_data_json = null;
+    if (!$describe) {
+        $sd_imgs = [];
+        foreach ((array)($scrape['images'] ?? []) as $im) {
+            $u = (string)($im['url'] ?? ''); if ($u === '') continue;
+            $sd_imgs[] = ['url' => $u, 'alt' => mb_substr((string)($im['alt'] ?? ''), 0, 120), 'logo' => !empty($im['is_logo']), 'portrait' => (!empty($im['is_portrait']) || !empty($im['is_cutout']) || !empty($im['is_team_card']))];
+            if (count($sd_imgs) >= 40) break;
+        }
+        $scrape_data_json = json_encode(['url' => $website, 'title' => mb_substr((string)($scrape['title'] ?? ''), 0, 200), 'logo' => $scrape['logo'] ?? null, 'images' => $sd_imgs], JSON_UNESCAPED_SLASHES);
+    }
 
     // ---- Proactive Imagen pre-generation ----
     // If the scrape gave us thin pickings (clipart-heavy sites, brand-new sites,
@@ -876,6 +888,7 @@ try {
         'website' => $website, 'cost' => $cost, 'htmls_count' => count($htmls),
         'variants' => array_keys($htmls), 'ip' => $ip, 'created_at' => date('Y-m-d H:i:s'),
         'generation_mode' => $gen_mode, 'description' => $description, 'describe' => $describe ? 1 : 0,
+        'scrape_data' => $scrape_data_json ?? null,
     ];
     $persist_ok = false;
     $maxAttempts = 12; // up to ~20s of retries
@@ -887,8 +900,8 @@ try {
             $st = $db->prepare("INSERT INTO prospects (email, name, business_name, current_url, source, description) VALUES (?, ?, ?, ?, 'magic', ?)");
             $st->execute([$email, $name, $biz, ($describe ? null : $website), ($describe ? $description : null)]);
             $pid = (int)$db->lastInsertId();
-            $st = $db->prepare("INSERT INTO jobs (type, prospect_id, customer_email, business_name, status, scheduled_for, token, generation_mode, item_status, total_cost_cents, completed_at, qa_status) VALUES ('outbound', ?, ?, ?, 'ready', datetime('now'), ?, ?, 'done', ?, datetime('now'), 'magic')");
-            $st->execute([$pid, $email, $biz, $token, $gen_mode, (int)round($cost * 100)]);
+            $st = $db->prepare("INSERT INTO jobs (type, prospect_id, customer_email, business_name, scrape_data, status, scheduled_for, token, generation_mode, item_status, total_cost_cents, completed_at, qa_status) VALUES ('outbound', ?, ?, ?, ?, 'ready', datetime('now'), ?, ?, 'done', ?, datetime('now'), 'magic')");
+            $st->execute([$pid, $email, $biz, ($scrape_data_json ?? null), $token, $gen_mode, (int)round($cost * 100)]);
             $jid = (int)$db->lastInsertId();
             $st = $db->prepare("INSERT INTO previews (job_id, variant_n, html_path, qa_score, qa_pass, qa_issues) VALUES (?, ?, ?, NULL, NULL, NULL)");
             foreach ($htmls as $i => $_) {

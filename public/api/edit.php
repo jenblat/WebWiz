@@ -78,7 +78,7 @@ try { $db->exec('PRAGMA busy_timeout = 8000'); } catch (Throwable $e) {}
 ee_log_ensure($db);
 
 function ee_fetch_job(PDO $db, string $token) {
-    $st = $db->prepare("SELECT id, edit_count, generation_mode, token, business_name FROM jobs WHERE token = ? LIMIT 1");
+    $st = $db->prepare("SELECT id, edit_count, generation_mode, token, business_name, scrape_data FROM jobs WHERE token = ? LIMIT 1");
     $st->execute([$token]);
     return $st->fetch(PDO::FETCH_ASSOC);
 }
@@ -131,7 +131,7 @@ if (!$job) {
 }
 
 if (!$job) { ee_log_finish($db, ee_log_start($db, $token, 0, $message, 0), 'not_found', 'no job row', 0); ee_fail('Preview not found.', 404); }
-if (($job['generation_mode'] ?? '') !== 'magic') ee_fail('Edits are only available on instant previews.', 403);
+if (!in_array($job['generation_mode'] ?? '', ['magic', 'describe'], true)) ee_fail('Edits are only available on instant previews.', 403);
 
 $used = (int)$job['edit_count'];
 if ($used >= EDIT_CAP) {
@@ -178,6 +178,28 @@ $user_content = "Here is the current single-page HTML for the customer's site:\n
               . "\n</current_html>\n\nThe customer's edit request:\n\n<request>\n"
               . $message
               . "\n</request>\n\nReturn the COMPLETE updated HTML document now.";
+
+// If the customer asks for their REAL site images, inject the saved scrape URLs
+// so Wizzy can swap AI images for the actual photos from their website.
+$want_real = (bool)preg_match('~\b(real|actual|original|my|our)\b[^.]{0,30}\b(photo|photos|image|images|picture|pictures|face|faces|headshot|headshots|logo|team|staff|attorney|attorneys|people)\b|\bfrom (the|my|our) (site|website)~i', $message);
+if ($want_real && !empty($job['scrape_data'])) {
+    $sd = json_decode((string)$job['scrape_data'], true);
+    if (is_array($sd) && !empty($sd['images'])) {
+        $lines = [];
+        if (!empty($sd['logo'])) $lines[] = 'LOGO: ' . $sd['logo'];
+        foreach ($sd['images'] as $im) {
+            if (empty($im['url'])) continue;
+            $tag = !empty($im['portrait']) ? '[person/portrait] ' : (!empty($im['logo']) ? '[logo] ' : '');
+            $lines[] = $tag . $im['url'] . (!empty($im['alt']) ? (' — ' . $im['alt']) : '');
+            if (count($lines) >= 30) break;
+        }
+        if ($lines) {
+            $user_content .= "\n\nThe customer wants their REAL images from their actual website (" . ($sd['url'] ?? '') . "). "
+                . "Use these real scraped image URLs (as the <img src>) in place of AI-generated ones where the request calls for it, matching each image to where it belongs by what it shows:\n"
+                . implode("\n", $lines) . "\n";
+        }
+    }
+}
 
 if ($ref_images) {
     // Save the attached reference images so the model can embed them by URL if
