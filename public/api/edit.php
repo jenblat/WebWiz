@@ -16,6 +16,37 @@ const EDIT_CAP = 5;
 
 function ee_fail(string $m, int $code = 400) { http_response_code($code); echo json_encode(['error' => $m]); exit; }
 
+// ---- Edit logging (so we can see every attempt + why it failed) ----
+function ee_log_ensure(PDO $db): void {
+    try { $db->exec("CREATE TABLE IF NOT EXISTS edit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, token TEXT, job_id INTEGER, message TEXT, image_count INTEGER DEFAULT 0, status TEXT, error TEXT, ms INTEGER, created_at TEXT DEFAULT (datetime('now')))"); } catch (Throwable $e) {}
+}
+function ee_log_start(PDO $db, string $token, int $job_id, string $message, int $imgc): int {
+    try { $st = $db->prepare("INSERT INTO edit_log (token, job_id, message, image_count, status) VALUES (?, ?, ?, ?, 'received')"); $st->execute([$token, $job_id, mb_substr($message, 0, 600), $imgc]); return (int)$db->lastInsertId(); } catch (Throwable $e) { return 0; }
+}
+function ee_log_finish(PDO $db, int $id, string $status, ?string $error, int $ms): void {
+    if ($id <= 0) return;
+    try { $db->prepare("UPDATE edit_log SET status = ?, error = ?, ms = ? WHERE id = ?")->execute([$status, $error !== null ? mb_substr($error, 0, 500) : null, $ms, $id]); } catch (Throwable $e) {}
+}
+// Alert the operator on a genuine edit failure (throttled: 1 email / 10 min).
+function ee_alert(string $token, string $message, string $error): void {
+    try {
+        if (!function_exists('ww_send_email')) return;
+        $al = '/tmp/wwedit_alert.ts';
+        $last = is_file($al) ? (int)@file_get_contents($al) : 0;
+        if (time() - $last <= 600) return;
+        @file_put_contents($al, (string)time());
+        $sx = @include '/var/www/sites/trywebwiz/secrets.php';
+        $to = (is_array($sx) && !empty($sx['NOTIFY_EMAIL'])) ? $sx['NOTIFY_EMAIL'] : 'ultimax97@gmail.com';
+        $html = '<h2 style="color:#b00">WebWiz edit failed</h2>'
+              . '<p><b>Token:</b> ' . htmlspecialchars($token) . ' &middot; <a href="https://trywebwiz.com/try/?t=' . htmlspecialchars($token) . '">open</a></p>'
+              . '<p><b>Request:</b> ' . htmlspecialchars($message) . '</p>'
+              . '<p><b>Error:</b> ' . htmlspecialchars($error) . '</p>'
+              . '<p><b>When:</b> ' . gmdate('Y-m-d H:i:s') . ' UTC</p>'
+              . '<p style="color:#666;font-size:12px">Throttled to 1 per 10 min. Recent edits: /api/ops.php?cmd=tail&file=edit</p>';
+        ww_send_email(['email' => $to, 'name' => 'WebWiz Ops'], 'WebWiz ALERT - edit failed', $html);
+    } catch (Throwable $e) {}
+}
+
 // ---- Parse body (JSON only — small payload) ----
 $raw = file_get_contents('php://input') ?: '';
 $body = json_decode($raw, true);
@@ -29,6 +60,7 @@ if (mb_strlen($message) > 600) ee_fail('Keep the request under 600 characters so
 
 $db = ww_db();
 try { $db->exec('PRAGMA busy_timeout = 8000'); } catch (Throwable $e) {}
+ee_log_ensure($db);
 
 function ee_fetch_job(PDO $db, string $token) {
     $st = $db->prepare("SELECT id, edit_count, generation_mode, token, business_name FROM jobs WHERE token = ? LIMIT 1");
@@ -83,11 +115,12 @@ if (!$job) {
     }
 }
 
-if (!$job) ee_fail('Preview not found.', 404);
+if (!$job) { ee_log_finish($db, ee_log_start($db, $token, 0, $message, 0), 'not_found', 'no job row', 0); ee_fail('Preview not found.', 404); }
 if (($job['generation_mode'] ?? '') !== 'magic') ee_fail('Edits are only available on instant previews.', 403);
 
 $used = (int)$job['edit_count'];
 if ($used >= EDIT_CAP) {
+    ee_log_finish($db, ee_log_start($db, $token, (int)$job['id'], $message, 0), 'cap', null, 0);
     echo json_encode([
         'ok' => false,
         'edits_remaining' => 0,
@@ -97,11 +130,14 @@ if ($used >= EDIT_CAP) {
     exit;
 }
 
+$t0 = microtime(true);
+$log_id = ee_log_start($db, $token, (int)$job['id'], $message, 0);
+
 $dir = '/var/www/sites/trywebwiz/public/preview/' . $token . '/v1';
 $index = $dir . '/index.html';
-if (!is_file($index)) ee_fail('Preview file missing.', 410);
+if (!is_file($index)) { ee_log_finish($db, $log_id, 'fail', 'preview file missing', 0); ee_fail('Preview file missing.', 410); }
 $current_html = (string)file_get_contents($index);
-if ($current_html === '') ee_fail('Preview file is empty.', 500);
+if ($current_html === '') { ee_log_finish($db, $log_id, 'fail', 'preview file empty', 0); ee_fail('Preview file is empty.', 500); }
 
 // ---- Build the edit prompt ----
 $system = <<<SYS
@@ -146,7 +182,8 @@ try {
     // Write the updated HTML back. Snapshot the old one so we can roll back if needed.
     $snap_dir = $dir . '/edits';
     @mkdir($snap_dir, 0755, true);
-    @copy($index, $snap_dir . '/v' . ($used + 1) . '-prior.html');
+    $prior_snap = $snap_dir . '/v' . ($used + 1) . '-prior.html';
+    @copy($index, $prior_snap);
     if (file_put_contents($index, $text) === false) throw new Exception('could not save updated preview');
 
     // ---- Post-edit image quality pass ----
@@ -232,9 +269,18 @@ try {
         }
     } catch (Throwable $e) { error_log('[edit] genimg pre-warm failed: ' . $e->getMessage()); }
 
-    // Decrement counter
-    $db->prepare("UPDATE jobs SET edit_count = edit_count + 1 WHERE id = ?")->execute([(int)$job['id']]);
+    // Commit the edit ATOMICALLY: bump the counter, and if that write fails
+    // (DB busy), roll the file back so we never leave a changed-but-uncounted
+    // page (the "looks worse but still says 5 edits left" bug).
+    try {
+        $db->prepare("UPDATE jobs SET edit_count = edit_count + 1 WHERE id = ?")->execute([(int)$job['id']]);
+    } catch (Throwable $ce) {
+        if (is_file($prior_snap)) @copy($prior_snap, $index);
+        throw new Exception('could not save the edit (database was busy) — rolled back, no changes applied');
+    }
     $remaining = max(0, EDIT_CAP - ($used + 1));
+
+    ee_log_finish($db, $log_id, 'ok', null, (int)round((microtime(true) - $t0) * 1000));
 
     echo json_encode([
         'ok' => true,
@@ -246,5 +292,16 @@ try {
             : "Done. How's that look?",
     ]);
 } catch (Throwable $e) {
-    ee_fail('Edit failed: ' . preg_replace('/[\x00-\x1F]+/', ' ', $e->getMessage()), 500);
+    $emsg = preg_replace('/[\x00-\x1F]+/', ' ', $e->getMessage());
+    ee_log_finish($db, $log_id, 'fail', $emsg, (int)round((microtime(true) - $t0) * 1000));
+    ee_alert($token, $message, $emsg);
+    // Honest system-error message — this is on us, not the user's wording.
+    http_response_code(500);
+    echo json_encode([
+        'ok' => false,
+        'system_error' => true,
+        'error' => "Something broke on our end while saving that edit — we've been alerted and are on it. Give it a moment and try again.",
+        'detail' => $emsg,
+    ]);
+    exit;
 }
