@@ -339,7 +339,20 @@ try {
         $scrape = ['images'=>[], 'title'=>$company, 'description'=>$description, 'h1'=>[], 'h2'=>[], 'h3'=>[], 'paragraphs'=>[], 'links'=>[], 'colors'=>[], 'videos'=>[]];
         ml_debug('describe mode: scrape skipped');
     } else {
-        $scrape = scrape_multi($website);
+        try {
+            $scrape = scrape_multi($website);
+        } catch (Throwable $scrapeErr) {
+            // Never dead-end a visitor on a scrape failure (weak/failed SSL,
+            // unreachable, blocked, timeout). Fall back to DESCRIBE mode and build
+            // from the business name + whatever description the user gave us.
+            ml_debug('scrape FAILED (' . $scrapeErr->getMessage() . ') -> describe fallback for ' . $website);
+            $describe = true;
+            $gen_mode = 'describe';
+            if (mb_strlen(trim($description)) < 20) {
+                $description = trim($company . ' — a professional business. Design a clean, credible, conversion-focused site; specific details were not available from the website.');
+            }
+            $scrape = ['images'=>[], 'title'=>$company, 'description'=>$description, 'h1'=>[], 'h2'=>[], 'h3'=>[], 'paragraphs'=>[], 'links'=>[], 'colors'=>[], 'videos'=>[]];
+        }
     }
     $scrape_dt = microtime(true)-$tS;
     ml_debug(sprintf('scrape done %.2fs imgs=%d', $scrape_dt, count($scrape['images'] ?? [])));
