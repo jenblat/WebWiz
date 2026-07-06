@@ -319,8 +319,9 @@ function scrape_parse(string $html, string $final_url): array {
     }
     if (!$logo) {
         foreach ($xp->query('//header//img | //img[contains(@alt,"logo") or contains(@alt,"Logo") or contains(@class,"logo")]') as $img) {
-            $src = $img->getAttribute('src') ?: $img->getAttribute('data-src');
-            if ($src) { $logo = $abs($src); break; }
+            $src = trim((string)$img->getAttribute('src'));
+            if ($src === '' || stripos($src, 'data:') === 0) $src = $img->getAttribute('nitro-lazy-src') ?: $img->getAttribute('data-lazy-src') ?: $img->getAttribute('data-src') ?: '';
+            if ($src !== '' && stripos($src, 'data:') !== 0) { if (preg_match('~/nitropack_static/[^/]+/assets/images/optimized/[^/]+/([^/]+)/(wp-content/.+)$~i', $src, $npm)) $src = 'https://' . $npm[1] . '/' . $npm[2]; $logo = $abs($src); break; }
         }
     }
 
@@ -347,8 +348,15 @@ function scrape_parse(string $html, string $final_url): array {
 
     $seen = []; $images = [];
     foreach ($xp->query('//img') as $img) {
-        $src = $img->getAttribute('src') ?: $img->getAttribute('data-src') ?: $img->getAttribute('data-lazy-src');
-        if (!$src) continue;
+        $src = trim((string)$img->getAttribute('src'));
+        if ($src === '' || stripos($src, 'data:') === 0) {
+            // Lazy-loaded (NitroPack/WP Rocket/etc.): real URL lives in a data-*/nitro attr, not src.
+            $src = $img->getAttribute('nitro-lazy-src') ?: $img->getAttribute('data-lazy-src') ?: $img->getAttribute('data-src')
+                ?: $img->getAttribute('data-original') ?: $img->getAttribute('data-orig-file') ?: $img->getAttribute('data-lazy') ?: '';
+            if ($src === '') { $ss = $img->getAttribute('srcset') ?: $img->getAttribute('data-srcset'); if ($ss) { $first = trim(explode(',', $ss)[0]); $src = trim(explode(' ', $first)[0]); } }
+        }
+        if ($src === '' || stripos($src, 'data:') === 0) continue;
+        if (preg_match('~/nitropack_static/[^/]+/assets/images/optimized/[^/]+/([^/]+)/(wp-content/.+)$~i', $src, $npm)) $src = 'https://' . $npm[1] . '/' . $npm[2];
         $u = $abs($src);
         if (!$u || preg_match('/\.svg($|\?)/i', $u)) continue;
         $alt = trim($img->getAttribute('alt'));
