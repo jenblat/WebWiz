@@ -728,7 +728,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
       <div class="edit-overlay" id="editOverlay" aria-hidden="true">
         <div class="edit-overlay-avatar"><video autoplay muted playsinline loop preload="auto" poster="/preview/wizzy-processing-poster.jpg"><source src="/preview/wizzy-processing.webm" type="video/webm"><source src="/preview/wizzy-processing.mp4" type="video/mp4"></video></div>
         <div class="edit-overlay-text" id="editOverlayText">Wizzy is updating your site</div>
-        <div class="edit-overlay-sub">A few seconds...</div>
+        <div class="edit-overlay-sub">Wizzy is redesigning your page — this can take a minute or two…</div>
         <div class="edit-overlay-dots"><span></span><span></span><span></span></div>
       </div>
       <div class="reveal-frame">
@@ -1330,10 +1330,15 @@ window.__TRY_INIT__ = {
     showEditOverlay();
     track('edit_used', { edit_number: (EDIT_CAP - state.editsRemaining) + 1, edit_type: 'text', message: message.slice(0, 140) });
 
+    var editCtl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var editTimedOut = false;
+    var editTimer = setTimeout(function(){ editTimedOut = true; if (editCtl) try { editCtl.abort(); } catch(_){} }, 210000);
+
     fetch('/api/edit.php', {
       method: 'POST',
       headers: { 'Content-Type':'application/json', 'Accept':'application/json' },
-      body: JSON.stringify({ token: state.token, message: message, images: imgs })
+      body: JSON.stringify({ token: state.token, message: message, images: imgs }),
+      signal: editCtl ? editCtl.signal : undefined
     })
     .then(function(r){ return r.json().then(function(j){ return { ok:r.ok, body:j }; }); })
     .then(function(res){
@@ -1354,8 +1359,17 @@ window.__TRY_INIT__ = {
         appendMsg('wiz', 'Hmm, that one didn\'t take. ' + (b.error || 'Try wording it a different way?'));
       }
     })
-    .catch(function(e){ typing.remove(); hideEditOverlay(); appendMsg('wiz', 'Network hiccup — try again? (' + (e && e.message || 'unknown') + ')'); })
+    .catch(function(e){
+      typing.remove(); hideEditOverlay();
+      if (editTimedOut || (e && e.name === 'AbortError')) {
+        appendMsg('wiz', "That edit is taking longer than it should — it may not have gone through. We've been alerted. Give it a minute, refresh the preview, and if the change didn't apply just send it again.");
+        try { track('edit_timeout', { message: (message||'').slice(0,140) }); } catch(_){}
+      } else {
+        appendMsg('wiz', 'Network hiccup — try again? (' + (e && e.message || 'unknown') + ')');
+      }
+    })
     .finally(function(){
+      clearTimeout(editTimer);
       state.sending = false;
       if (state.editsRemaining > 0) chatSend.disabled = false;
     });

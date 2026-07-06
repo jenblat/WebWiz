@@ -5,7 +5,7 @@
 // returns { ok, edits_remaining, preview_url, reply }.
 // Enforces a 5-edit hard cap per token, server-side.
 declare(strict_types=1);
-@set_time_limit(0);
+@set_time_limit(230); // hard backstop so a stalled edit can never hang forever
 ignore_user_abort(true);
 header('Content-Type: application/json');
 
@@ -147,6 +147,9 @@ if ($used >= EDIT_CAP) {
 
 $t0 = microtime(true);
 $log_id = ee_log_start($db, $token, (int)$job['id'], $message, count($ref_images));
+$ee_inflight = '/tmp/wwedit_inflight_' . substr(sha1($token), 0, 12) . '_' . getmypid() . '.marker';
+@file_put_contents($ee_inflight, $token . '|' . date('c') . '|' . mb_substr($message, 0, 140));
+register_shutdown_function(function () use ($ee_inflight) { @unlink($ee_inflight); });
 
 $dir = '/var/www/sites/trywebwiz/public/preview/' . $token . '/v1';
 $index = $dir . '/index.html';
@@ -329,8 +332,12 @@ try {
     try {
         $db->prepare("UPDATE jobs SET edit_count = edit_count + 1 WHERE id = ?")->execute([(int)$job['id']]);
     } catch (Throwable $ce) {
-        if (is_file($prior_snap)) @copy($prior_snap, $index);
-        throw new Exception('could not save the edit (database was busy) — rolled back, no changes applied');
+        // The edit is already saved to disk (that's what the user sees). The counter is only
+        // bookkeeping for the 5-edit cap - if SQLite is momentarily busy, DO NOT discard the
+        // user's good edit. Defer the increment to a pending file for later reconciliation.
+        @mkdir('/var/www/sites/trywebwiz/data/pending_editcount', 0775, true);
+        @file_put_contents('/var/www/sites/trywebwiz/data/pending_editcount/' . $token . '.' . getmypid() . '.txt', (string)$job['id']);
+        error_log('[edit] edit_count deferred (db busy) job=' . $job['id']);
     }
     $remaining = max(0, EDIT_CAP - ($used + 1));
 
