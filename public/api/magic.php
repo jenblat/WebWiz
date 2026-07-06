@@ -941,6 +941,24 @@ try {
     }
     exit;
 } catch (Throwable $e) {
-    ml_debug('FAIL (caught): ' . $e->getMessage());
-    ml_fail('Generation failed: ' . preg_replace('/[\x00-\x1F]+/', ' ', $e->getMessage()), 500);
+    $emsg = preg_replace('/[\x00-\x1F]+/', ' ', $e->getMessage());
+    ml_debug('FAIL (caught): ' . $emsg);
+    // Operator alert on a genuine generation failure (throttled: 1 email / 10 min).
+    try {
+        $__al = '/tmp/wwmagic_alert.ts';
+        $__last = is_file($__al) ? (int)@file_get_contents($__al) : 0;
+        if (time() - $__last > 600 && function_exists('ww_send_email')) {
+            @file_put_contents($__al, (string)time());
+            $__sx = @include '/var/www/sites/trywebwiz/secrets.php';
+            $__to = (is_array($__sx) && !empty($__sx['NOTIFY_EMAIL'])) ? $__sx['NOTIFY_EMAIL'] : 'ultimax97@gmail.com';
+            $__in = (string)($_GET['website'] ?? $_GET['url'] ?? ($_GET['company'] ?? ''));
+            $__html = '<h2 style="color:#b00">WebWiz generation failed</h2>'
+                . '<p><b>Error:</b> ' . htmlspecialchars($emsg) . '</p>'
+                . '<p><b>Input:</b> ' . htmlspecialchars($__in) . '</p>'
+                . '<p><b>When:</b> ' . gmdate('Y-m-d H:i:s') . ' UTC &middot; IP ' . htmlspecialchars((string)($ip ?? '')) . '</p>'
+                . '<p style="color:#666;font-size:13px">Immediate alert (throttled to 1 per 10 min). Full status: https://trywebwiz.com/api/health_check.php</p>';
+            @ww_send_email(['email' => $__to, 'name' => 'WebWiz Ops'], 'WebWiz ALERT - generation failed', $__html);
+        }
+    } catch (Throwable $__ae) { ml_debug('alert email failed: ' . $__ae->getMessage()); }
+    ml_fail('Generation failed: ' . $emsg, 500);
 }
