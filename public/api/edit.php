@@ -233,8 +233,10 @@ try {
     // Strip any accidental markdown fences.
     $text = preg_replace('~^\s*```(?:html)?\s*~i', '', $text);
     $text = preg_replace('~\s*```\s*$~', '', $text);
-    // Sanity check: must contain a doctype or <html
-    if (!preg_match('~<!doctype html|<html~i', $text)) throw new Exception('model did not return HTML');
+    // Sanity check + STRIP any reasoning/preamble the model emitted BEFORE the document.
+    // Sonnet sometimes "thinks out loud" first; that text must NEVER land in the saved file.
+    if (!preg_match('~<!doctype html|<html~i', $text, $mm, PREG_OFFSET_CAPTURE)) throw new Exception('model did not return HTML');
+    if ((int)$mm[0][1] > 0) $text = substr($text, (int)$mm[0][1]);
 
     // Write the updated HTML back. Snapshot the old one so we can roll back if needed.
     $snap_dir = $dir . '/edits';
