@@ -289,27 +289,9 @@ $ip = (string)($_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? ''
 $ip = trim(explode(',', $ip)[0]);
 ml_debug("START ip=$ip website=$website");
 
-// Per-IP in-flight lock (prevents same-user double-submits)
-$ip_lock_path = '/tmp/wwmagic_' . substr(sha1($ip), 0, 16) . '.lock';
-$ip_lock_fp = @fopen($ip_lock_path, 'c');
-if (!$ip_lock_fp || !flock($ip_lock_fp, LOCK_EX | LOCK_NB)) {
-    $age = is_file($ip_lock_path) ? (time() - filemtime($ip_lock_path)) : 999;
-    if ($age >= 0 && $age < 180) {
-        ml_fail('Wizzy is still working on your last request. Hang tight — refreshing the page will not help.', 429);
-    }
-    if ($ip_lock_fp) { @fclose($ip_lock_fp); }
-    @unlink($ip_lock_path);
-    $ip_lock_fp = @fopen($ip_lock_path, 'c');
-    if ($ip_lock_fp) { flock($ip_lock_fp, LOCK_EX | LOCK_NB); }
-}
-register_shutdown_function(function () use (&$ip_lock_fp, $ip_lock_path) {
-    if ($ip_lock_fp) { @flock($ip_lock_fp, LOCK_UN); @fclose($ip_lock_fp); }
-    @unlink($ip_lock_path);
-});
-
-// Admin bypass: a logged-in admin (matching /admin/'s session cookie) skips
-// rate limits entirely. Lets Omar generate multiple previews per day for
-// prospects without hitting the 3/hour cap.
+// ---- Privileged bypass (owner/team): skip the in-flight lock AND all rate limits. ----
+// True when: a logged-in admin session, OR the request IP is in the magic_bypass_ips
+// allowlist, OR a valid magic_bypass_key is supplied (?ww_key= / ww_key cookie / X-WW-Key header).
 $is_admin_bypass = false;
 try {
     if (session_status() === PHP_SESSION_NONE) {
@@ -319,10 +301,44 @@ try {
         $admin_u = ww_user_by_id((int)$_SESSION['uid']);
         if ($admin_u && ($admin_u['role'] ?? '') === 'admin') {
             $is_admin_bypass = true;
-            ml_debug("admin bypass uid={$admin_u['id']} email={$admin_u['email']}");
+            ml_debug("bypass: admin session uid={$admin_u['id']} email={$admin_u['email']}");
         }
     }
 } catch (Throwable $e) { /* fall through to normal limits */ }
+if (!$is_admin_bypass) {
+    $allow_ips = array_filter(array_map('trim', explode(',', (string)ml_sget($db, 'magic_bypass_ips', ''))));
+    if ($allow_ips && in_array($ip, $allow_ips, true)) { $is_admin_bypass = true; ml_debug("bypass: allowlist ip=$ip"); }
+}
+if (!$is_admin_bypass) {
+    $bypass_key = (string)ml_sget($db, 'magic_bypass_key', '');
+    $req_key = (string)($_GET['ww_key'] ?? $_COOKIE['ww_key'] ?? $_SERVER['HTTP_X_WW_KEY'] ?? '');
+    if ($bypass_key !== '' && hash_equals($bypass_key, $req_key)) {
+        $is_admin_bypass = true; ml_debug("bypass: key");
+        @setcookie('ww_key', $req_key, time() + 31536000, '/'); // remember a year so the team keeps access
+    }
+}
+
+// Per-IP in-flight lock (prevents same-user double-submits). Skipped for privileged
+// users so the owner/team can run as many concurrent generations as they want.
+$ip_lock_fp = null;
+$ip_lock_path = '/tmp/wwmagic_' . substr(sha1($ip), 0, 16) . '.lock';
+if (!$is_admin_bypass) {
+    $ip_lock_fp = @fopen($ip_lock_path, 'c');
+    if (!$ip_lock_fp || !flock($ip_lock_fp, LOCK_EX | LOCK_NB)) {
+        $age = is_file($ip_lock_path) ? (time() - filemtime($ip_lock_path)) : 999;
+        if ($age >= 0 && $age < 180) {
+            ml_fail('Wizzy is still working on your last request. Hang tight — refreshing the page will not help.', 429);
+        }
+        if ($ip_lock_fp) { @fclose($ip_lock_fp); }
+        @unlink($ip_lock_path);
+        $ip_lock_fp = @fopen($ip_lock_path, 'c');
+        if ($ip_lock_fp) { flock($ip_lock_fp, LOCK_EX | LOCK_NB); }
+    }
+    register_shutdown_function(function () use (&$ip_lock_fp, $ip_lock_path) {
+        if ($ip_lock_fp) { @flock($ip_lock_fp, LOCK_UN); @fclose($ip_lock_fp); }
+        @unlink($ip_lock_path);
+    });
+}
 
 if (!$is_admin_bypass) {
     $perIp = (int)ml_sget($db, 'magic_rl_per_ip_hour', '3');
