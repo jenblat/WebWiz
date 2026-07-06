@@ -733,7 +733,7 @@ try {
     // 1) Write preview files (filesystem — this is what the USER sees)
     $token = bin2hex(random_bytes(12));
     $dir = '/var/www/sites/trywebwiz/public/preview/' . $token;
-    foreach ($htmls as $i => $html) { $d = $dir . '/v' . $i; if (!is_dir($d)) @mkdir($d, 0755, true); file_put_contents($d . '/index.html', $html); }
+    foreach ($htmls as $i => $html) { $d = $dir . '/v' . $i; if (!is_dir($d)) @mkdir($d, 0755, true); file_put_contents($d . '/index.html', ww_polish_html($html, $website)); }
     if (!is_file($dir . '/index.php')) file_put_contents($dir . '/index.php', "<?php\n\$_GET['t'] = basename(__DIR__);\nrequire __DIR__ . '/../index.php';\n");
     ml_debug("files written token=$token");
 
@@ -825,7 +825,7 @@ try {
                 $rres = anthropic_multi('claude-sonnet-4-6', $rreqs, 14000, 0.5, null, ['</html>']);
                 $rcand = finalize_html($rres[1]['text'] ?? '');
                 if ($rcand && quality_gate($rcand)['ok']) {
-                    file_put_contents($dir . '/v1/index.html', $rcand);
+                    file_put_contents($dir . '/v1/index.html', ww_polish_html($rcand, $website));
                     $htmls[1] = $rcand;
                     ml_time('PHASE_4c_qa_regen', microtime(true)-$tRegen, ['written' => true]);
                     ml_debug('QA regen written to disk');
@@ -847,7 +847,7 @@ try {
             foreach ($htmls as $i => $html) {
                 $upscaled = ww_apply_upscale($html, null);
                 if ($upscaled && $upscaled !== $html) {
-                    file_put_contents($dir . '/v' . $i . '/index.html', $upscaled);
+                    file_put_contents($dir . '/v' . $i . '/index.html', ww_polish_html($upscaled, $website));
                     $htmls[$i] = $upscaled;
                 }
             }
