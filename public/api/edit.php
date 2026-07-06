@@ -54,9 +54,24 @@ if (!is_array($body)) $body = [];
 $token   = trim((string)($body['token']   ?? ''));
 $message = trim((string)($body['message'] ?? ''));
 
+// ---- Reference images pasted/attached in the editor (base64 data URLs) ----
+$ref_images = [];
+$ref_ext = ['image/png'=>'png','image/jpeg'=>'jpg','image/webp'=>'webp','image/gif'=>'gif'];
+foreach ((array)($body['images'] ?? []) as $raw_img) {
+    if (count($ref_images) >= 3) break;
+    if (!is_string($raw_img) || !preg_match('~^data:(image/[a-z+]+);base64,(.+)$~i', $raw_img, $mm)) continue;
+    $mt = strtolower($mm[1]);
+    if (!isset($ref_ext[$mt])) continue;
+    $bin = base64_decode($mm[2], true);
+    if ($bin === false || strlen($bin) < 32 || strlen($bin) > 5 * 1024 * 1024) continue;
+    $ref_images[] = ['mt'=>$mt, 'data'=>base64_encode($bin), 'bin'=>$bin, 'ext'=>$ref_ext[$mt]];
+}
+
 if (!preg_match('~^[a-f0-9]{24}$~', $token)) ee_fail('Invalid token.');
-if ($message === '' || mb_strlen($message) < 3) ee_fail('Tell Wizzy what to tweak.');
+if ($message === '' && !$ref_images) ee_fail('Tell Wizzy what to tweak, or attach a reference image.');
+if ($message !== '' && mb_strlen($message) < 3 && !$ref_images) ee_fail('Tell Wizzy what to tweak.');
 if (mb_strlen($message) > 600) ee_fail('Keep the request under 600 characters so Wizzy can focus.');
+if ($message === '') $message = 'Use the attached reference image(s) to guide this edit.';
 
 $db = ww_db();
 try { $db->exec('PRAGMA busy_timeout = 8000'); } catch (Throwable $e) {}
@@ -131,7 +146,7 @@ if ($used >= EDIT_CAP) {
 }
 
 $t0 = microtime(true);
-$log_id = ee_log_start($db, $token, (int)$job['id'], $message, 0);
+$log_id = ee_log_start($db, $token, (int)$job['id'], $message, count($ref_images));
 
 $dir = '/var/www/sites/trywebwiz/public/preview/' . $token . '/v1';
 $index = $dir . '/index.html';
@@ -164,7 +179,24 @@ $user_content = "Here is the current single-page HTML for the customer's site:\n
               . $message
               . "\n</request>\n\nReturn the COMPLETE updated HTML document now.";
 
-$messages = [['role' => 'user', 'content' => $user_content]];
+if ($ref_images) {
+    // Save the attached reference images so the model can embed them by URL if
+    // the edit means to place one on the site (a real logo, a real headshot).
+    $assets_dir = '/var/www/sites/trywebwiz/public/preview/' . $token . '/assets';
+    @mkdir($assets_dir, 0755, true);
+    $ref_urls = [];
+    foreach ($ref_images as $ri => $img) {
+        $fn = 'ref-' . ($used + 1) . '-' . ($ri + 1) . '-' . substr(bin2hex(random_bytes(3)), 0, 6) . '.' . $img['ext'];
+        if (@file_put_contents($assets_dir . '/' . $fn, $img['bin']) !== false) $ref_urls[] = 'https://trywebwiz.com/preview/' . $token . '/assets/' . $fn;
+    }
+    $ref_note = 'The customer attached ' . count($ref_images) . ' reference image(s), shown below. Use them as VISUAL REFERENCE for this edit (style, layout, colors, mood). If the request means an image should actually appear on the site (e.g. a real logo or a real photo of a person/product), you MAY embed it directly using its hosted URL' . ($ref_urls ? (': ' . implode(' , ', $ref_urls)) : '') . '. Do NOT invent other changes.' . "\n";
+    $content = [['type' => 'text', 'text' => $ref_note]];
+    foreach ($ref_images as $img) $content[] = ['type' => 'image', 'source' => ['type' => 'base64', 'media_type' => $img['mt'], 'data' => $img['data']]];
+    $content[] = ['type' => 'text', 'text' => $user_content];
+    $messages = [['role' => 'user', 'content' => $content]];
+} else {
+    $messages = [['role' => 'user', 'content' => $user_content]];
+}
 
 try {
     $res = anthropic_chat('claude-sonnet-4-6', $messages, $system, 16000, 0.4, (int)$job['id'], ['</html>']);

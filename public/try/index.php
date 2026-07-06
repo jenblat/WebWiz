@@ -756,10 +756,25 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
 
       <div class="chat-input-row">
         <textarea id="chatInput" placeholder="Tell Wizzy what to tweak..."<?= $initial_edits === 0 ? ' readonly' : '' ?>></textarea>
+        <div class="attach-strip" id="attachStrip"></div>
+        <input type="file" id="refImgInput" accept="image/png,image/jpeg,image/webp,image/gif" multiple style="display:none">
         <div class="row">
-          <button type="button" class="iloveit" id="iLoveIt">I love it &rarr;</button>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button type="button" class="attach-btn" id="attachBtn" title="Attach or paste a reference image"<?= $initial_edits === 0 ? ' disabled' : '' ?>>&#128206;</button>
+            <button type="button" class="iloveit" id="iLoveIt">I love it &rarr;</button>
+          </div>
           <button type="button" class="send-btn" id="chatSend"<?= $initial_edits === 0 ? ' disabled' : '' ?>>Send &rarr;</button>
         </div>
+        <style>
+          .attach-strip{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px;}
+          .attach-strip:empty{display:none;}
+          .attach-thumb{position:relative;width:46px;height:46px;border:2px solid var(--navy);border-radius:8px;overflow:hidden;background:#fff;}
+          .attach-thumb img{width:100%;height:100%;object-fit:cover;display:block;}
+          .attach-thumb .x{position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;background:var(--navy);color:#fff;border:0;font-size:12px;line-height:16px;cursor:pointer;padding:0;}
+          .attach-btn{height:40px;padding:0 12px;background:var(--cream);color:var(--navy);border:2px solid var(--navy);border-radius:8px;font-size:16px;cursor:pointer;line-height:1;}
+          .attach-btn:hover{background:var(--navy);color:var(--cream);}
+          .attach-btn[disabled]{opacity:0.55;cursor:not-allowed;}
+        </style>
       </div>
 
       <!-- ============ Phase 4 conversion card (lives in same panel) ============ -->
@@ -1293,18 +1308,23 @@ window.__TRY_INIT__ = {
 
   function sendEdit(message){
     if (!state.token || state.sending || state.editsRemaining <= 0) return;
+    var imgs = (typeof refImages !== 'undefined' ? refImages.slice() : []);
 
-    // Conversational shortcut: short replies / compliments don't trigger a re-gen.
-    var kind = classifyMessage(message);
-    if (kind === 'praise' || kind === 'maybe' || kind === 'hello' || kind === 'question' || kind === 'chat') {
-      appendMsg('user', message); chatInput.value = '';
-      setTimeout(function(){ appendMsg('wiz', conversationalReply(kind)); }, 350);
-      try { track('chat_only', { kind: kind, len: message.length }); } catch(e){}
-      return;
+    // Conversational shortcut only when there are NO attached images.
+    if (imgs.length === 0) {
+      var kind = classifyMessage(message);
+      if (kind === 'praise' || kind === 'maybe' || kind === 'hello' || kind === 'question' || kind === 'chat') {
+        appendMsg('user', message); chatInput.value = '';
+        setTimeout(function(){ appendMsg('wiz', conversationalReply(kind)); }, 350);
+        try { track('chat_only', { kind: kind, len: message.length }); } catch(e){}
+        return;
+      }
     }
+    if (!message && imgs.length) message = 'Use the attached reference image(s) to guide this edit.';
 
     state.sending = true; chatSend.disabled = true;
-    appendMsg('user', message); chatInput.value = '';
+    appendMsg('user', message + (imgs.length ? ('  📎 ' + imgs.length + ' image' + (imgs.length > 1 ? 's' : '')) : '')); chatInput.value = '';
+    if (typeof refImages !== 'undefined') { refImages.length = 0; renderRefThumbs(); }
     // Text-message style: drop a short "On it..." reply + show overlay over iframe
     var typing = appendTyping('On it…');
     showEditOverlay();
@@ -1313,7 +1333,7 @@ window.__TRY_INIT__ = {
     fetch('/api/edit.php', {
       method: 'POST',
       headers: { 'Content-Type':'application/json', 'Accept':'application/json' },
-      body: JSON.stringify({ token: state.token, message: message })
+      body: JSON.stringify({ token: state.token, message: message, images: imgs })
     })
     .then(function(r){ return r.json().then(function(j){ return { ok:r.ok, body:j }; }); })
     .then(function(res){
@@ -1328,6 +1348,8 @@ window.__TRY_INIT__ = {
         if (b.cap_hit) onCapHit();
       } else if (b.cap_hit) {
         updateEditsChip(0); onCapHit(b.reply);
+      } else if (b.system_error) {
+        appendMsg('wiz', b.error || 'Something broke on our end — we\'ve been alerted. Give it a sec and try again.');
       } else {
         appendMsg('wiz', 'Hmm, that one didn\'t take. ' + (b.error || 'Try wording it a different way?'));
       }
@@ -1381,9 +1403,52 @@ window.__TRY_INIT__ = {
     });
   });
 
+  // ---------- reference image attach (paste + upload) ----------
+  var refImages = [];
+  var attachBtn = document.getElementById('attachBtn');
+  var refImgInput = document.getElementById('refImgInput');
+  var attachStrip = document.getElementById('attachStrip');
+  var MAX_REF = 3;
+  function renderRefThumbs(){
+    if (!attachStrip) return;
+    attachStrip.innerHTML = '';
+    refImages.forEach(function(src, i){
+      var d = document.createElement('div'); d.className = 'attach-thumb';
+      var im = document.createElement('img'); im.src = src; d.appendChild(im);
+      var x = document.createElement('button'); x.type = 'button'; x.className = 'x'; x.textContent = '×';
+      x.addEventListener('click', function(){ refImages.splice(i, 1); renderRefThumbs(); });
+      d.appendChild(x); attachStrip.appendChild(d);
+    });
+  }
+  function addRefImageFile(file){
+    if (!file || refImages.length >= MAX_REF || !/^image\//.test(file.type || '')) return;
+    var reader = new FileReader();
+    reader.onload = function(ev){
+      var img = new Image();
+      img.onload = function(){
+        var max = 1280, w = img.width, h = img.height;
+        if (w > max || h > max){ if (w >= h){ h = Math.round(h * max / w); w = max; } else { w = Math.round(w * max / h); h = max; } }
+        var c = document.createElement('canvas'); c.width = w; c.height = h;
+        c.getContext('2d').drawImage(img, 0, 0, w, h);
+        var url; try { url = c.toDataURL('image/jpeg', 0.82); } catch(e){ url = ev.target.result; }
+        if (refImages.length < MAX_REF){ refImages.push(url); renderRefThumbs(); }
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+  if (attachBtn) attachBtn.addEventListener('click', function(){ if (state.editsRemaining > 0 && refImgInput) refImgInput.click(); });
+  if (refImgInput) refImgInput.addEventListener('change', function(e){ var fs = e.target.files || []; for (var i = 0; i < fs.length; i++) addRefImageFile(fs[i]); refImgInput.value = ''; });
+  if (chatInput) chatInput.addEventListener('paste', function(e){
+    var items = (e.clipboardData && e.clipboardData.items) || [];
+    for (var i = 0; i < items.length; i++){
+      if (items[i].type && items[i].type.indexOf('image') === 0){ var f = items[i].getAsFile(); if (f){ addRefImageFile(f); e.preventDefault(); } }
+    }
+  });
+
   chatSend.addEventListener('click', function(){
     var m = (chatInput.value || '').trim();
-    if (m.length < 3) { chatInput.focus(); return; }
+    if (m.length < 3 && refImages.length === 0) { chatInput.focus(); return; }
     sendEdit(m);
   });
   chatInput.addEventListener('keydown', function(e){
