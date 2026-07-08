@@ -224,19 +224,34 @@ if ($ref_images) {
 }
 
 try {
-    $res = anthropic_chat('claude-sonnet-4-6', $messages, $system, 16000, 0.4, (int)$job['id'], ['</html>']);
-    $text = (string)($res['text'] ?? '');
-    if ($text === '') throw new Exception('empty model response');
-
-    // Sonnet may stop right at the </html> stop sequence; restore it so the file is valid.
-    if (stripos($text, '</html>') === false) $text .= '</html>';
-    // Strip any accidental markdown fences.
-    $text = preg_replace('~^\s*```(?:html)?\s*~i', '', $text);
-    $text = preg_replace('~\s*```\s*$~', '', $text);
-    // Sanity check + STRIP any reasoning/preamble the model emitted BEFORE the document.
-    // Sonnet sometimes "thinks out loud" first; that text must NEVER land in the saved file.
-    if (!preg_match('~<!doctype html|<html~i', $text, $mm, PREG_OFFSET_CAPTURE)) throw new Exception('model did not return HTML');
-    if ((int)$mm[0][1] > 0) $text = substr($text, (int)$mm[0][1]);
+    // Call the model with up to 3 attempts. Transient Anthropic hiccups (overload / rate-limit)
+    // and the occasional "reasoned instead of returning HTML" both resolve on a quick retry, so a
+    // single blip never fails the customer's edit.
+    $text = ''; $lastErr = 'model did not return HTML';
+    for ($attempt = 1; $attempt <= 3; $attempt++) {
+        try {
+            $res = anthropic_chat('claude-sonnet-4-6', $messages, $system, 16000, 0.4, (int)$job['id'], ['</html>']);
+            $t = (string)($res['text'] ?? '');
+            $http = (int)($res['http'] ?? 0);
+            if ($t !== '') {
+                if (stripos($t, '</html>') === false) $t .= '</html>';                 // stop-seq trimmed it
+                $t = preg_replace('~^\s*```(?:html)?\s*~i', '', $t);                    // stray md fences
+                $t = preg_replace('~\s*```\s*$~', '', $t);
+                // STRIP any reasoning/preamble the model emitted BEFORE the document.
+                if (preg_match('~<!doctype html|<html~i', $t, $mm, PREG_OFFSET_CAPTURE)) {
+                    if ((int)$mm[0][1] > 0) $t = substr($t, (int)$mm[0][1]);
+                    $text = $t;
+                    break; // got a valid document
+                }
+            }
+            $lastErr = 'model did not return HTML (attempt ' . $attempt . ', http=' . $http . ', len=' . strlen($t) . ')';
+        } catch (Throwable $ae) {
+            $lastErr = 'model call error (attempt ' . $attempt . '): ' . $ae->getMessage();
+        }
+        error_log('[edit] ' . $lastErr);
+        if ($attempt < 3) sleep(2); // brief backoff for transient overload
+    }
+    if ($text === '') throw new Exception($lastErr);
 
     // Write the updated HTML back. Snapshot the old one so we can roll back if needed.
     $snap_dir = $dir . '/edits';
