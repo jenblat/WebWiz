@@ -5,7 +5,7 @@
 // returns { ok, edits_remaining, preview_url, reply }.
 // Enforces a 5-edit hard cap per token, server-side.
 declare(strict_types=1);
-@set_time_limit(230); // hard backstop so a stalled edit can never hang forever
+@set_time_limit(360); // hard backstop; covers one long (~300s) model call + overhead
 ignore_user_abort(true);
 header('Content-Type: application/json');
 
@@ -228,7 +228,8 @@ try {
     // and the occasional "reasoned instead of returning HTML" both resolve on a quick retry, so a
     // single blip never fails the customer's edit.
     $text = ''; $lastErr = 'model did not return HTML';
-    for ($attempt = 1; $attempt <= 3; $attempt++) {
+    for ($attempt = 1; $attempt <= 2; $attempt++) {
+        $att_start = microtime(true);
         try {
             $res = anthropic_chat('claude-sonnet-4-6', $messages, $system, 16000, 0.4, (int)$job['id'], ['</html>']);
             $t = (string)($res['text'] ?? '');
@@ -249,7 +250,10 @@ try {
             $lastErr = 'model call error (attempt ' . $attempt . '): ' . $ae->getMessage();
         }
         error_log('[edit] ' . $lastErr);
-        if ($attempt < 3) sleep(2); // brief backoff for transient overload
+        // Only retry a FAST failure (a transient blip). A slow failure (>120s) means the model
+        // genuinely ran out of time on a big edit - retrying just burns another long timeout.
+        if ((microtime(true) - $att_start) > 120) break;
+        if ($attempt < 2) sleep(2);
     }
     if ($text === '') throw new Exception($lastErr);
 
@@ -373,12 +377,15 @@ try {
     $emsg = preg_replace('/[\x00-\x1F]+/', ' ', $e->getMessage());
     ee_log_finish($db, $log_id, 'fail', $emsg, (int)round((microtime(true) - $t0) * 1000));
     ee_alert($token, $message, $emsg);
-    // Honest system-error message — this is on us, not the user's wording.
+    // A timeout on a big edit gets a helpful "smaller steps" hint; everything else stays generic-on-us.
+    $friendly = (stripos($emsg, 'timed out') !== false || stripos($emsg, 'did not return HTML') !== false || stripos($emsg, 'model call error') !== false)
+        ? "That was a big edit and it didn't finish in time. Try it in smaller steps - for example change the look and feel first, then add one feature at a time."
+        : "Something broke on our end while saving that edit - we've been alerted and are on it. Give it a moment and try again.";
     http_response_code(500);
     echo json_encode([
         'ok' => false,
         'system_error' => true,
-        'error' => "Something broke on our end while saving that edit — we've been alerted and are on it. Give it a moment and try again.",
+        'error' => $friendly,
         'detail' => $emsg,
     ]);
     exit;

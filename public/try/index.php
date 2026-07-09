@@ -1332,7 +1332,7 @@ window.__TRY_INIT__ = {
 
     var editCtl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
     var editTimedOut = false;
-    var editTimer = setTimeout(function(){ editTimedOut = true; if (editCtl) try { editCtl.abort(); } catch(_){} }, 210000);
+    var editTimer = setTimeout(function(){ editTimedOut = true; if (editCtl) try { editCtl.abort(); } catch(_){} }, 345000);
 
     fetch('/api/edit.php', {
       method: 'POST',
@@ -1362,7 +1362,7 @@ window.__TRY_INIT__ = {
     .catch(function(e){
       typing.remove(); hideEditOverlay();
       if (editTimedOut || (e && e.name === 'AbortError')) {
-        appendMsg('wiz', "That edit is taking longer than it should — it may not have gone through. We've been alerted. Give it a minute, refresh the preview, and if the change didn't apply just send it again.");
+        appendMsg('wiz', "That was a big edit and it's taking too long to finish. Try it in smaller steps — e.g. change the style first, then add one feature at a time. (We've been alerted.)");
         try { track('edit_timeout', { message: (message||'').slice(0,140) }); } catch(_){}
       } else {
         appendMsg('wiz', 'Network hiccup — try again? (' + (e && e.message || 'unknown') + ')');

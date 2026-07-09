@@ -59,7 +59,7 @@ function anthropic_chat(string $model, array $messages, ?string $system = null, 
         CURLOPT_POST => true,
         CURLOPT_POSTFIELDS => json_encode($body),
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => 180,
+        CURLOPT_TIMEOUT => 300, // long full-page edits can take ~4-5 min
         CURLOPT_HTTPHEADER => [
             'x-api-key: ' . $api_key,
             'anthropic-version: 2023-06-01',
