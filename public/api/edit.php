@@ -27,6 +27,33 @@ function ee_log_finish(PDO $db, int $id, string $status, ?string $error, int $ms
     if ($id <= 0) return;
     try { $db->prepare("UPDATE edit_log SET status = ?, error = ?, ms = ? WHERE id = ?")->execute([$status, $error !== null ? mb_substr($error, 0, 500) : null, $ms, $id]); } catch (Throwable $e) {}
 }
+// Apply a partial (diff-style) edit: the model returns {"edits":[{find,replace}]} of VERBATIM
+// substrings. We apply them surgically to the current HTML. Returns ['ok','html','applied','missed',
+// 'full_rewrite']. ok only when every edit applied cleanly and the doc is still a valid, full page.
+function ee_apply_partial(string $html, string $raw): array {
+    $t = trim($raw);
+    $t = preg_replace('~^\s*```(?:json)?\s*~i', '', $t);
+    $t = preg_replace('~\s*```\s*$~', '', $t);
+    $s = strpos($t, '{'); $e = strrpos($t, '}');
+    if ($s === false || $e === false || $e <= $s) return ['ok'=>false,'applied'=>0,'missed'=>0];
+    $data = json_decode(substr($t, $s, $e - $s + 1), true);
+    if (!is_array($data)) return ['ok'=>false,'applied'=>0,'missed'=>0];
+    if (!empty($data['full_rewrite'])) return ['ok'=>false,'full_rewrite'=>true,'applied'=>0,'missed'=>0];
+    $edits = $data['edits'] ?? null;
+    if (!is_array($edits) || !$edits) return ['ok'=>false,'applied'=>0,'missed'=>0];
+    $applied = 0; $missed = 0; $out = $html;
+    foreach ($edits as $ed) {
+        if (!is_array($ed) || !isset($ed['find'])) { $missed++; continue; }
+        $find = (string)$ed['find']; $repl = (string)($ed['replace'] ?? '');
+        if ($find === '' || strpos($out, $find) === false) { $missed++; continue; }
+        $out = str_replace($find, $repl, $out);
+        $applied++;
+    }
+    $valid = $applied > 0 && $missed === 0
+        && stripos($out, '</html>') !== false
+        && strlen($out) > (int)(strlen($html) * 0.6);
+    return ['ok'=>$valid,'html'=>$out,'applied'=>$applied,'missed'=>$missed];
+}
 // Alert the operator on a genuine edit failure (throttled: 1 email / 10 min).
 function ee_alert(string $token, string $message, string $error): void {
     try {
@@ -180,7 +207,7 @@ $user_content = "Here is the current single-page HTML for the customer's site:\n
               . $current_html
               . "\n</current_html>\n\nThe customer's edit request:\n\n<request>\n"
               . $message
-              . "\n</request>\n\nReturn the COMPLETE updated HTML document now.";
+              . "\n</request>";
 
 // If the customer asks for their REAL site images, inject the saved scrape URLs
 // so Wizzy can swap AI images for the actual photos from their website.
@@ -223,39 +250,69 @@ if ($ref_images) {
     $messages = [['role' => 'user', 'content' => $user_content]];
 }
 
+$partial_system = <<<SYS
+You are Wizzy, a senior web designer making a TARGETED edit to a single-page website. You are
+given the current full HTML and the customer's change request. Make the SMALLEST set of surgical
+changes that fully satisfy the request. Do NOT rewrite the whole page.
+
+Return ONLY strict JSON (no prose, no markdown, no code fences), exactly this shape:
+{"edits":[{"find":"<verbatim substring of the current HTML>","replace":"<new version>"}],"summary":"<one short sentence>"}
+
+RULES:
+- Each "find" MUST be copied VERBATIM from the current HTML: exact characters, whitespace, quotes
+  and tags. Include enough surrounding context that the snippet is UNIQUE in the document, UNLESS
+  you intend to change every occurrence (e.g. a CSS variable definition like --accent:#xxxxxx).
+- Change ONLY what the request asks for. Never touch unrelated sections, copy, images, or styles.
+- For site-wide visual changes (colors, fonts) prefer editing the CSS variables / shared rules.
+- To ADD something, "find" an existing nearby element and "replace" it with itself PLUS the new markup.
+- Keep every image src URL exactly as-is unless the request is specifically about changing an image.
+- Output JSON only. Start with { and end with }. No commentary, no thinking out loud.
+- ONLY if the request genuinely requires rebuilding most of the page (a full redesign), return
+  exactly: {"full_rewrite": true}
+SYS;
+
 try {
-    // Call the model with up to 3 attempts. Transient Anthropic hiccups (overload / rate-limit)
-    // and the occasional "reasoned instead of returning HTML" both resolve on a quick retry, so a
-    // single blip never fails the customer's edit.
-    $text = ''; $lastErr = 'model did not return HTML';
-    for ($attempt = 1; $attempt <= 2; $attempt++) {
-        $att_start = microtime(true);
-        try {
-            $res = anthropic_chat('claude-sonnet-4-6', $messages, $system, 16000, 0.4, (int)$job['id'], ['</html>']);
-            $t = (string)($res['text'] ?? '');
-            $http = (int)($res['http'] ?? 0);
-            if ($t !== '') {
-                if (stripos($t, '</html>') === false) $t .= '</html>';                 // stop-seq trimmed it
-                $t = preg_replace('~^\s*```(?:html)?\s*~i', '', $t);                    // stray md fences
-                $t = preg_replace('~\s*```\s*$~', '', $t);
-                // STRIP any reasoning/preamble the model emitted BEFORE the document.
-                if (preg_match('~<!doctype html|<html~i', $t, $mm, PREG_OFFSET_CAPTURE)) {
-                    if ((int)$mm[0][1] > 0) $t = substr($t, (int)$mm[0][1]);
-                    $text = $t;
-                    break; // got a valid document
-                }
-            }
-            $lastErr = 'model did not return HTML (attempt ' . $attempt . ', http=' . $http . ', len=' . strlen($t) . ')';
-        } catch (Throwable $ae) {
-            $lastErr = 'model call error (attempt ' . $attempt . '): ' . $ae->getMessage();
+    // ---- Attempt 1: PARTIAL (diff) edit - fast, surgical, leaves the rest of the page untouched ----
+    $text = '';
+    try {
+        $pres = anthropic_chat('claude-sonnet-4-6', $messages, $partial_system, 8000, 0.2, (int)$job['id'], null);
+        $praw = (string)($pres['text'] ?? '');
+        if ($praw !== '') {
+            $pr = ee_apply_partial($current_html, $praw);
+            if (!empty($pr['ok'])) { $text = $pr['html']; error_log('[edit] partial edit applied ' . $pr['applied'] . ' change(s)'); }
+            else error_log('[edit] partial not usable (applied=' . ($pr['applied'] ?? 0) . ' missed=' . ($pr['missed'] ?? 0) . ' full_rewrite=' . (!empty($pr['full_rewrite']) ? '1' : '0') . ') -> full rewrite');
         }
-        error_log('[edit] ' . $lastErr);
-        // Only retry a FAST failure (a transient blip). A slow failure (>120s) means the model
-        // genuinely ran out of time on a big edit - retrying just burns another long timeout.
-        if ((microtime(true) - $att_start) > 120) break;
-        if ($attempt < 2) sleep(2);
+    } catch (Throwable $pe) { error_log('[edit] partial call error: ' . $pe->getMessage()); }
+
+    // ---- Fallback: FULL page rewrite, only when the partial diff could not do it ----
+    if ($text === '') {
+        $lastErr = 'model did not return HTML';
+        for ($attempt = 1; $attempt <= 2; $attempt++) {
+            $att_start = microtime(true);
+            try {
+                $res = anthropic_chat('claude-sonnet-4-6', $messages, $system, 16000, 0.4, (int)$job['id'], ['</html>']);
+                $t = (string)($res['text'] ?? '');
+                $http = (int)($res['http'] ?? 0);
+                if ($t !== '') {
+                    if (stripos($t, '</html>') === false) $t .= '</html>';
+                    $t = preg_replace('~^\s*```(?:html)?\s*~i', '', $t);
+                    $t = preg_replace('~\s*```\s*$~', '', $t);
+                    if (preg_match('~<!doctype html|<html~i', $t, $mm, PREG_OFFSET_CAPTURE)) {
+                        if ((int)$mm[0][1] > 0) $t = substr($t, (int)$mm[0][1]);
+                        $text = $t;
+                        break;
+                    }
+                }
+                $lastErr = 'model did not return HTML (attempt ' . $attempt . ', http=' . $http . ', len=' . strlen($t) . ')';
+            } catch (Throwable $ae) {
+                $lastErr = 'model call error (attempt ' . $attempt . '): ' . $ae->getMessage();
+            }
+            error_log('[edit] ' . $lastErr);
+            if ((microtime(true) - $att_start) > 120) break;
+            if ($attempt < 2) sleep(2);
+        }
+        if ($text === '') throw new Exception($lastErr);
     }
-    if ($text === '') throw new Exception($lastErr);
 
     // Write the updated HTML back. Snapshot the old one so we can roll back if needed.
     $snap_dir = $dir . '/edits';
