@@ -35,24 +35,32 @@ function ee_apply_partial(string $html, string $raw): array {
     $t = preg_replace('~^\s*```(?:json)?\s*~i', '', $t);
     $t = preg_replace('~\s*```\s*$~', '', $t);
     $s = strpos($t, '{'); $e = strrpos($t, '}');
-    if ($s === false || $e === false || $e <= $s) return ['ok'=>false,'applied'=>0,'missed'=>0];
-    $data = json_decode(substr($t, $s, $e - $s + 1), true);
-    if (!is_array($data)) return ['ok'=>false,'applied'=>0,'missed'=>0];
-    if (!empty($data['full_rewrite'])) return ['ok'=>false,'full_rewrite'=>true,'applied'=>0,'missed'=>0];
-    $edits = $data['edits'] ?? null;
-    if (!is_array($edits) || !$edits) return ['ok'=>false,'applied'=>0,'missed'=>0];
-    $applied = 0; $missed = 0; $out = $html;
-    foreach ($edits as $ed) {
-        if (!is_array($ed) || !isset($ed['find'])) { $missed++; continue; }
-        $find = (string)$ed['find']; $repl = (string)($ed['replace'] ?? '');
-        if ($find === '' || strpos($out, $find) === false) { $missed++; continue; }
-        $out = str_replace($find, $repl, $out);
-        $applied++;
+    $data = ($s !== false && $e !== false && $e > $s) ? json_decode(substr($t, $s, $e - $s + 1), true) : null;
+    if (is_array($data) && !empty($data['full_rewrite'])) return ['ok'=>false,'full_rewrite'=>true,'applied'=>0,'missed'=>0];
+    if (is_array($data) && !empty($data['reply']) && is_string($data['reply'])) return ['ok'=>false,'chat'=>true,'reply'=>mb_substr(trim($data['reply']), 0, 600)];
+    $edits = is_array($data) ? ($data['edits'] ?? null) : null;
+    if (is_array($edits) && $edits) {
+        $applied = 0; $missed = 0; $out = $html;
+        foreach ($edits as $ed) {
+            if (!is_array($ed) || !isset($ed['find'])) { $missed++; continue; }
+            $find = (string)$ed['find']; $repl = (string)($ed['replace'] ?? '');
+            if ($find === '' || strpos($out, $find) === false) { $missed++; continue; }
+            $out = str_replace($find, $repl, $out);
+            $applied++;
+        }
+        $valid = $applied > 0 && $missed === 0
+            && stripos($out, '</html>') !== false
+            && strlen($out) > (int)(strlen($html) * 0.6);
+        if ($valid) return ['ok'=>true,'html'=>$out,'applied'=>$applied,'missed'=>$missed];
+        return ['ok'=>false,'applied'=>$applied,'missed'=>$missed];
     }
-    $valid = $applied > 0 && $missed === 0
-        && stripos($out, '</html>') !== false
-        && strlen($out) > (int)(strlen($html) * 0.6);
-    return ['ok'=>$valid,'html'=>$out,'applied'=>$applied,'missed'=>$missed];
+    // No usable edit JSON. If the model answered conversationally (short prose, not a document),
+    // surface it as a chat reply instead of failing - e.g. "Can you use my logo?" with no logo present.
+    if (stripos($raw, '<html') === false && stripos($raw, '<!doctype') === false
+        && strlen(trim($raw)) > 0 && strlen($raw) < 1600) {
+        return ['ok'=>false,'chat'=>true,'reply'=>mb_substr(trim($raw), 0, 600)];
+    }
+    return ['ok'=>false,'applied'=>0,'missed'=>0];
 }
 // Alert the operator on a genuine edit failure (throttled: 1 email / 10 min).
 function ee_alert(string $token, string $message, string $error): void {
@@ -267,6 +275,9 @@ RULES:
 - To ADD something, "find" an existing nearby element and "replace" it with itself PLUS the new markup.
 - Keep every image src URL exactly as-is unless the request is specifically about changing an image.
 - Output JSON only. Start with { and end with }. No commentary, no thinking out loud.
+- If the request is a QUESTION, or asks for something you cannot do because a needed asset was not
+  provided (e.g. "use my logo" but no logo appears in the HTML or the attached images), do NOT guess -
+  return {"reply":"<one short friendly sentence answering them, or telling them to upload the file with the paperclip button>"} and no edits.
 - ONLY if the request genuinely requires rebuilding most of the page (a full redesign), return
   exactly: {"full_rewrite": true}
 SYS;
@@ -280,6 +291,12 @@ try {
         if ($praw !== '') {
             $pr = ee_apply_partial($current_html, $praw);
             if (!empty($pr['ok'])) { $text = $pr['html']; error_log('[edit] partial edit applied ' . $pr['applied'] . ' change(s)'); }
+            elseif (!empty($pr['chat'])) {
+                // Model answered a question / needs an asset rather than editing. Surface it - not a failure.
+                ee_log_finish($db, $log_id, 'chat', null, (int)round((microtime(true) - $t0) * 1000));
+                echo json_encode(['ok' => false, 'needs_input' => true, 'reply' => $pr['reply']]);
+                exit;
+            }
             else error_log('[edit] partial not usable (applied=' . ($pr['applied'] ?? 0) . ' missed=' . ($pr['missed'] ?? 0) . ' full_rewrite=' . (!empty($pr['full_rewrite']) ? '1' : '0') . ') -> full rewrite');
         }
     } catch (Throwable $pe) { error_log('[edit] partial call error: ' . $pe->getMessage()); }

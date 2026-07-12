@@ -1353,6 +1353,8 @@ window.__TRY_INIT__ = {
         if (b.cap_hit) onCapHit();
       } else if (b.cap_hit) {
         updateEditsChip(0); onCapHit(b.reply);
+      } else if (b.needs_input) {
+        appendMsg('wiz', b.reply || "I need a little more to do that — could you clarify, or upload the file with the 📎 button?");
       } else if (b.system_error) {
         appendMsg('wiz', b.error || 'Something broke on our end — we\'ve been alerted. Give it a sec and try again.');
       } else {
