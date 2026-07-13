@@ -110,9 +110,9 @@ function brevo_send(string $key, array $from, array $to, ?array $reply_to, strin
 
 function plan_label(?string $plan): string {
     return [
-        'build_only'    => 'Build only ($499)',
-        'build_plus_49' => 'Build + Hosting and Care ($499 plus $49/mo)',
-        'build_plus_99' => 'Build + Hosting, Care and Edits ($499 plus $99/mo)',
+        'build_only'    => 'Build only ($500)',
+        'build_plus_49' => 'Build + Hosting and Care ($500 plus $50/mo)',
+        'build_plus_99' => 'Build + Hosting, Care and Edits ($500 plus $99/mo)',
     ][$plan ?? ''] ?? 'Custom order';
 }
 

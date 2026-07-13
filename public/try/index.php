@@ -52,7 +52,7 @@ if ($is_magic) {
   <div class="card">
     <div class="wiz"><img src="/preview/wizzy-wave.gif" alt="Wizzy"></div>
     <h1 id="head">Getting <?= htmlspecialchars($magic_label ?: 'your', ENT_QUOTES) ?><?= $magic_label ? "&rsquo;s" : '' ?> website ready&hellip;</h1>
-    <p class="sub">Hang tight<?= $name ? ', ' . htmlspecialchars(explode(' ', $name)[0], ENT_QUOTES) : '' ?> &mdash; this usually takes under a minute.</p>
+    <p class="sub">Hang tight<?= $name ? ', ' . htmlspecialchars(explode(' ', $name)[0], ENT_QUOTES) : '' ?>. Wizzy is designing your site now. This takes about two minutes.</p>
     <div class="bar"><span id="prog"></span></div>
     <div id="status">Starting&hellip;</div>
     <div id="errbox"></div>
@@ -173,8 +173,8 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>Your new website. Free. · WebWiz</title>
-<meta name="description" content="Tell Wizzy about your business and he’ll design your website in under a minute. Free to design. No credit card.">
+<title>See your new website free. Launch it for $500 · WebWiz</title>
+<meta name="description" content="See your new website free in minutes. Launch it live for a flat $500, versus $1,000+ from a designer, then $50/month for hosting. Free to preview, no card to try.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="preload" as="image" href="/preview/wizzy-wave.gif">
@@ -620,8 +620,8 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
 <main class="view view-form">
   <section class="hero">
     <div class="hero-copy">
-      <span class="eyebrow">&#9733; The site&rsquo;s free</span>
-      <h1>Your new website. Free.<span class="parens">(Going live is the only thing we charge for.)</span></h1>
+      <span class="eyebrow">&#9733; Free to preview &middot; no card to try</span>
+      <h1>See your new website, free.<span class="parens">($500 to launch it live. A designer charges $1,000+.)</span></h1>
       <p class="lead">Tell Wizzy about your business and he&rsquo;ll design it in about two minutes.</p>
 
       <form class="form-card" id="tryForm" novalidate>
@@ -664,7 +664,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
           <div class="err-msg">Add your website above, or a few sentences here (at least 20 characters) so Wizzy has something to design from.</div>
         </div>
         <button type="submit" class="cta" id="ctaBtn">Make my website &rarr;</button>
-        <p class="cta-microcopy">Free to see. No credit card needed.</p>
+        <p class="cta-microcopy">Free to preview &middot; $500 to launch &middot; no card to try.</p>
       </form>
     </div>
 
@@ -688,9 +688,9 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
         </div>
       </div>
       <div class="trust">
-        <span class="chip"><span class="tick">&#10003;</span> Free to design</span>
-        <span class="chip"><span class="tick">&#10003;</span> Live in 60 seconds</span>
-        <span class="chip"><span class="tick">&#10003;</span> No credit card</span>
+        <span class="chip"><span class="tick">&#10003;</span> Free to preview</span>
+        <span class="chip"><span class="tick">&#10003;</span> $500 to launch</span>
+        <span class="chip"><span class="tick">&#10003;</span> vs $1,000+ from a designer</span>
       </div>
     </div>
   </section>
@@ -783,7 +783,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
           <h2>Want to make it real?</h2>
           <div class="wiz-mini"><img src="/preview/wizzy-face.png" alt="Wizzy"></div>
         </div>
-        <p class="conv-lead">Wizzy&rsquo;s design is yours, free. To go live we&rsquo;ll:</p>
+        <p class="conv-lead">Previewing is free. A designer charges $1,000 to $5,000 to build a site like this: yours is a flat $500 to finalize and launch. Here&rsquo;s what that covers:</p>
         <ul class="conv-checklist">
           <li><span class="ck">&#10003;</span> Polish the design by hand (real human designer review)</li>
           <li><span class="ck">&#10003;</span> Set up your domain and point it to your new site</li>
@@ -792,11 +792,12 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
           <li><span class="ck">&#10003;</span> Be on call for small tweaks the first 30 days</li>
         </ul>
         <div class="conv-price">
-          <div class="big">$500 once</div>
-          <div class="sub">+ $50/month to host</div>
+          <div class="anchor" style="font-size:14px;color:#6a7a8a;margin-bottom:2px;">Designer price <s>$1,000 to $5,000</s></div>
+          <div class="big">$500 to launch</div>
+          <div class="sub">+ $50/month for hosting &amp; care</div>
           <div class="note">Cancel hosting anytime. The site stays yours either way.</div>
         </div>
-        <button type="button" class="conv-cta" id="convCta">Make it real &rarr;</button>
+        <button type="button" class="conv-cta" id="convCta">Launch my site for $500 &rarr;</button>
         <p class="conv-foot">We handle everything. You don&rsquo;t touch a thing.</p>
         <div class="conv-err" id="convErr"></div>
         <button type="button" class="conv-back" id="convBack">&larr; Not yet, more tweaks</button>
@@ -1397,6 +1398,7 @@ window.__TRY_INIT__ = {
   convCta.addEventListener('click', function(){
     if (!state.token) { convErr.textContent = 'Lost track of your preview — refresh and try again.'; convErr.classList.add('on'); return; }
     track('make_it_real_clicked');
+    if(window.wwMetaTrack){try{window.wwMetaTrack('AddToCart',{content_name:'make_it_real',content_category:'website_build',value:500,currency:'USD'});}catch(e){}}
     convCta.disabled = true; convCta.textContent = 'Spinning up checkout…';
     convErr.classList.remove('on');
     fetch('/api/try_checkout.php', {
@@ -1611,7 +1613,7 @@ window.__TRY_INIT__ = {
         var website = (document.getElementById('website')||{}).value || '';
         var desc    = (document.getElementById('description')||{}).value || '';
         window.wwMetaTrack('Lead',
-          {content_name:'try_form_submit', content_category:'lead_gen', value:0, currency:'USD'},
+          {content_name:'try_form_submit', content_category:'lead_gen', value:500, currency:'USD'},
           {}
         );
       }, {capture:true, once:true});
