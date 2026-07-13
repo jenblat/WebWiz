@@ -748,6 +748,22 @@ try {
     ml_debug("RESPONSE SENT token=$token");
     ml_time('PHASE_3_user_seen', microtime(true)-$T0, ['token' => $token]);
 
+    // ---- Conversion tracking: SERVER-SIDE "site generated" (reliable - the client JS can be missed) ----
+    try {
+        $db->prepare("INSERT INTO try_events (event, token, session_id, payload) VALUES ('gen_completed', ?, NULL, ?)")
+           ->execute([$token, json_encode(['business'=>($biz ?: $company), 'mode'=>($describe ? 'describe' : 'magic'), 'website'=>$website])]);
+    } catch (Throwable $e) { ml_debug('try_events gen_completed failed: ' . $e->getMessage()); }
+    try {
+        @require_once '/var/www/sites/trywebwiz/public/api/_meta.php';
+        if (function_exists('ww_meta_send_event')) {
+            ww_meta_send_event('SiteGenerated', ww_meta_event_id($token),
+                ['email' => ($email !== '' ? $email : null), 'first_name' => ($name !== '' ? explode(' ', $name)[0] : null),
+                 'client_ip_address' => $ip, 'client_user_agent' => substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 240)],
+                ['content_name' => ($biz ?: $company), 'content_category' => 'site_generated'],
+                'https://trywebwiz.com/try/?t=' . $token, 'website');
+        }
+    } catch (Throwable $e) { ml_debug('meta SiteGenerated failed: ' . $e->getMessage()); }
+
     // ====== POST-RESPONSE BACKGROUND PHASE ======
     // User already sees their preview. From here we silently improve it.
     // Reset the wall-clock so the QA + upscale phase has fresh budget.
@@ -974,6 +990,7 @@ try {
 } catch (Throwable $e) {
     $emsg = preg_replace('/[\x00-\x1F]+/', ' ', $e->getMessage());
     ml_debug('FAIL (caught): ' . $emsg);
+    try { if (isset($db)) $db->prepare("INSERT INTO try_events (event, token, session_id, payload) VALUES ('gen_failed', ?, NULL, ?)")->execute([(($token ?? '') ?: null), json_encode(['error'=>mb_substr($emsg,0,300), 'website'=>($website ?? ''), 'business'=>($company ?? '')])]); } catch (Throwable $te) {}
     // Operator alert on a genuine generation failure (throttled: 1 email / 10 min).
     try {
         $__al = '/tmp/wwmagic_alert.ts';

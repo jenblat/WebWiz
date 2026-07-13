@@ -437,6 +437,7 @@ try {
     $remaining = max(0, EDIT_CAP - ($used + 1));
 
     ee_log_finish($db, $log_id, 'ok', null, (int)round((microtime(true) - $t0) * 1000));
+    try { $db->prepare("INSERT INTO try_events (event, token, session_id, payload) VALUES ('edit_applied', ?, NULL, ?)")->execute([$token, json_encode(['edit_no'=>($used + 1)])]); } catch (Throwable $te) {}
 
     echo json_encode([
         'ok' => true,
@@ -450,6 +451,7 @@ try {
 } catch (Throwable $e) {
     $emsg = preg_replace('/[\x00-\x1F]+/', ' ', $e->getMessage());
     ee_log_finish($db, $log_id, 'fail', $emsg, (int)round((microtime(true) - $t0) * 1000));
+    try { $db->prepare("INSERT INTO try_events (event, token, session_id, payload) VALUES ('edit_failed', ?, NULL, ?)")->execute([$token, json_encode(['error'=>mb_substr($emsg,0,300)])]); } catch (Throwable $te) {}
     ee_alert($token, $message, $emsg);
     // A timeout on a big edit gets a helpful "smaller steps" hint; everything else stays generic-on-us.
     $friendly = (stripos($emsg, 'timed out') !== false || stripos($emsg, 'did not return HTML') !== false || stripos($emsg, 'model call error') !== false)

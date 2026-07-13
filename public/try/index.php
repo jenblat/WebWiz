@@ -1407,7 +1407,7 @@ window.__TRY_INIT__ = {
     .then(function(r){ return r.json().then(function(j){ return { ok:r.ok, body:j }; }); })
     .then(function(res){
       var b = res.body || {};
-      if (b.ok && b.checkout_url) { track('checkout_started', { session_id: b.session_id || null }); window.location.href = b.checkout_url; return; }
+      if (b.ok && b.checkout_url) { track('checkout_started', { session_id: b.session_id || null }); if(window.wwMetaTrack){try{window.wwMetaTrack('InitiateCheckout',{content_name:'try_checkout',content_category:'website_build',value:499,currency:'USD'});}catch(e){}} window.location.href = b.checkout_url; return; }
       convErr.textContent = b.error || 'Could not start checkout. Try again?';
       convErr.classList.add('on');
       convCta.disabled = false; convCta.textContent = 'Make it real →';
