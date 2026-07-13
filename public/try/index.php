@@ -174,7 +174,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <title>See your new website free. Launch it for $500 · WebWiz</title>
-<meta name="description" content="See your new website free in minutes. Launch it live for a flat $500, versus $1,000+ from a designer, then $50/month for hosting. Free to preview, no card to try.">
+<meta name="description" content="See your new website free in minutes. A custom design runs $5,000; yours launches for a flat $500, so you save about $4,500. Then $50/month hosting. Free to preview, no card to try.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="preload" as="image" href="/preview/wizzy-wave.gif">
@@ -621,7 +621,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
   <section class="hero">
     <div class="hero-copy">
       <span class="eyebrow">&#9733; Free to preview &middot; no card to try</span>
-      <h1>See your new website, free.<span class="parens">($500 to launch it live. A designer charges $1,000+.)</span></h1>
+      <h1>See your new website, free.<span class="parens">(<s>$5,000</s> designer price. Yours is just $500. You save $4,500.)</span></h1>
       <p class="lead">Tell Wizzy about your business and he&rsquo;ll design it in about two minutes.</p>
 
       <form class="form-card" id="tryForm" novalidate>
@@ -658,10 +658,10 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
             <div class="err-msg" id="errCompany">Tell Wizzy your business name.</div>
         </div>
         <div class="field" data-field="description">
-          <label for="description">Tell Wizzy about your business <span class="opt-tag">(required if no website)</span></label>
+          <label for="description">Tell Wizzy about your business <span class="opt-tag">(required)</span></label>
           <textarea id="description" name="description" rows="4" placeholder="We&rsquo;re a family bakery in Pawtucket. Custom cakes, weekend pastries, been here 15 years."></textarea>
           <div class="field-helper">No website yet? Give Wizzy a few sentences about what you do and he&rsquo;ll design from scratch.</div>
-          <div class="err-msg">Add your website above, or a few sentences here (at least 20 characters) so Wizzy has something to design from.</div>
+          <div class="err-msg">Give Wizzy a few sentences about your business (at least 20 characters) so he can design the right site.</div>
         </div>
         <button type="submit" class="cta" id="ctaBtn">Make my website &rarr;</button>
         <p class="cta-microcopy">Free to preview &middot; $500 to launch &middot; no card to try.</p>
@@ -690,7 +690,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
       <div class="trust">
         <span class="chip"><span class="tick">&#10003;</span> Free to preview</span>
         <span class="chip"><span class="tick">&#10003;</span> $500 to launch</span>
-        <span class="chip"><span class="tick">&#10003;</span> vs $1,000+ from a designer</span>
+        <span class="chip"><span class="tick">&#10003;</span> Save $4,500 vs a designer</span>
       </div>
     </div>
   </section>
@@ -783,7 +783,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
           <h2>Want to make it real?</h2>
           <div class="wiz-mini"><img src="/preview/wizzy-face.png" alt="Wizzy"></div>
         </div>
-        <p class="conv-lead">Previewing is free. A designer charges $1,000 to $5,000 to build a site like this: yours is a flat $500 to finalize and launch. Here&rsquo;s what that covers:</p>
+        <p class="conv-lead">Previewing is free. A custom website design typically runs $5,000. Yours is a flat $500 to finalize and launch, so you save about $4,500. Here&rsquo;s what that covers:</p>
         <ul class="conv-checklist">
           <li><span class="ck">&#10003;</span> Polish the design by hand (real human designer review)</li>
           <li><span class="ck">&#10003;</span> Set up your domain and point it to your new site</li>
@@ -792,8 +792,9 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
           <li><span class="ck">&#10003;</span> Be on call for small tweaks the first 30 days</li>
         </ul>
         <div class="conv-price">
-          <div class="anchor" style="font-size:14px;color:#6a7a8a;margin-bottom:2px;">Designer price <s>$1,000 to $5,000</s></div>
+          <div class="anchor" style="font-size:14px;color:#6a7a8a;margin-bottom:2px;">Typical website design <s>$5,000</s></div>
           <div class="big">$500 to launch</div>
+          <div class="save" style="font-size:14px;font-weight:800;color:#1a7f4b;margin-top:2px;">You save $4,500</div>
           <div class="sub">+ $50/month for hosting &amp; care</div>
           <div class="note">Cancel hosting anytime. The site stays yours either way.</div>
         </div>
@@ -1101,13 +1102,13 @@ window.__TRY_INIT__ = {
   form.addEventListener('submit', function(e){
     e.preventDefault();
     if (generating) return;
-    // Need a website OR a description (>= MIN_DESC). Website is optional (describe mode).
+    // Description is REQUIRED (>= MIN_DESC) so Wizzy always has real content to design from,
+    // even when the website scrape fails. Website stays optional.
     var webVal  = (web.value || '').trim();
     var descVal = (desc.value || '').trim();
     var hasWeb  = webVal !== '';
     var hasDesc = descVal.length >= MIN_DESC;
-    if (!hasWeb && !hasDesc) {
-      websiteField.classList.remove('invalid');
+    if (!hasDesc) {
       descField.classList.add('invalid');
       desc.focus(); return;
     }
