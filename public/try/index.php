@@ -619,9 +619,32 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
 <!-- ===================== FORM VIEW ===================== -->
 <main class="view view-form">
   <section class="hero">
-    <div class="hero-copy">
+    <div class="twz-center">
+    <style>
+    .view-form .hero{display:block!important;padding:26px 20px 60px}
+    .twz-center{max-width:600px;margin:0 auto;text-align:center;display:flex;flex-direction:column;align-items:center}
+    .twz-wiz{width:150px;height:150px;border-radius:50%;overflow:hidden;border:3px solid #0e1e3c;background:#fffdf8;box-shadow:6px 6px 0 #ffc531;position:relative;margin-bottom:22px}
+    .twz-wiz .wizzy-vid{width:100%;height:100%;object-fit:cover;display:block}
+    .twz-wiz .sticker{position:absolute;right:-16px;top:-8px;background:#ffc531;border:2px solid #0e1e3c;border-radius:9px;font-size:11px;font-weight:800;color:#0e1e3c;padding:5px 9px;transform:rotate(6deg);line-height:1.1;text-align:center;box-shadow:2px 2px 0 #0e1e3c}
+    .twz-wiz .sticker small{display:block;font-weight:600;font-size:9px;text-transform:uppercase;letter-spacing:.04em}
+    .view-form .hero .eyebrow{display:inline-block;background:#ffc531;color:#0e1e3c;font-weight:800;font-size:12.5px;letter-spacing:.05em;text-transform:uppercase;padding:8px 16px;border-radius:999px;border:2px solid #0e1e3c;box-shadow:3px 3px 0 #0e1e3c;margin-bottom:20px}
+    .twz-h1{font-size:clamp(38px,6.4vw,64px);line-height:1.03;color:#0e1e3c;letter-spacing:-.02em;margin:0;font-weight:900}
+    .twz-h1 .twz-free{background:linear-gradient(transparent 58%,#ffc531 58%);padding:0 2px}
+    .twz-anchor{display:inline-flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:center;margin:22px 0 0;font-weight:800}
+    .twz-anchor .old{color:#8a93a3;text-decoration:line-through;font-size:20px}
+    .twz-anchor .arrow{color:#1a9f6b;font-size:20px}
+    .twz-anchor .new{font-size:26px;color:#0e1e3c}
+    .twz-anchor .save{background:#37c9a6;color:#04241c;font-size:13px;padding:6px 12px;border-radius:999px}
+    .view-form .hero .lead{color:#6b7789;font-size:17px;max-width:510px;margin:18px auto 0;line-height:1.55}
+    .view-form .hero .form-card{max-width:560px;width:100%;margin:30px auto 0;text-align:left}
+    .view-form .hero .trust{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin:22px auto 0}
+    .view-form .hero .wiz-testi{max-width:560px;width:100%;margin:40px auto 0}
+    @media(max-width:640px){.twz-wiz{width:120px;height:120px}}
+    </style>
+    <div class="twz-wiz"><video class="wizzy-vid" autoplay muted playsinline loop preload="metadata" poster="/preview/wizzy-waving-poster.jpg" aria-label="Wizzy waving"><source src="/preview/wizzy-waving.webm" type="video/webm"><source src="/preview/wizzy-waving.mp4" type="video/mp4"><img src="/preview/wizzy-wave.gif" alt="Wizzy waving"></video><div class="sticker">Made with care<small>by Wizzy</small></div></div>
       <span class="eyebrow">&#9733; Free to preview &middot; no card to try</span>
-      <h1>See your new website, free.<span class="parens">(<s>$5,000</s> designer price. Yours is just $500. You save $4,500.)</span></h1>
+      <h1 class="twz-h1">See your new website, <span class="twz-free">free.</span></h1>
+      <div class="twz-anchor"><span class="old">$5,000</span><span class="arrow">&rarr;</span><span class="new">$500 to launch</span><span class="save">Save $4,500</span></div>
       <p class="lead">Tell Wizzy about your business and he&rsquo;ll design it in about two minutes.</p>
 
       <form class="form-card" id="tryForm" novalidate>
@@ -666,11 +689,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
         <button type="submit" class="cta" id="ctaBtn">Make my website &rarr;</button>
         <p class="cta-microcopy">Free to preview &middot; $500 to launch &middot; no card to try.</p>
       </form>
-    </div>
 
-    <div class="hero-mascot">
-      <div class="wiz-circle"><video class="wizzy-vid" autoplay muted playsinline preload="metadata" poster="/preview/wizzy-waving-poster.jpg" aria-label="Wizzy waving"><source src="/preview/wizzy-waving.webm" type="video/webm"><source src="/preview/wizzy-waving.mp4" type="video/mp4"><img src="/preview/wizzy-wave.gif" alt="Wizzy waving"></video></div>
-      <div class="sticker">Made with care<small>by Wizzy</small></div>
       <div class="wiz-testi" id="wizTesti" aria-live="polite">
         <div class="wt-stars" aria-hidden="true">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
         <p class="wt-quote">Sent Wizzy our shop info on a Tuesday. By the weekend we had a site that actually looked like our place.</p>
