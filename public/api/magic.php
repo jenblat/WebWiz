@@ -348,6 +348,22 @@ if (!$is_admin_bypass) {
 }
 
 $T0 = microtime(true);
+// ---- ASYNC MODE: create the token up front, return it in <1s, generate in the background. ----
+// Gated behind ?async=1 (or POST async:1) so the live sync flow is untouched until proven.
+$async = ((string)($_GET['async'] ?? '') === '1');
+$token = bin2hex(random_bytes(12));
+$dir = '/var/www/sites/trywebwiz/public/preview/' . $token;
+if ($async) {
+    @mkdir($dir, 0755, true);
+    @file_put_contents($dir . '/status.json', json_encode(['status' => 'building', 'ts' => time()]));
+    echo json_encode(['ok' => true, 'token' => $token, 'building' => true, 'status_url' => '/api/gen_status.php?t=' . $token]);
+    if (function_exists('fastcgi_finish_request')) { @fastcgi_finish_request(); }
+    elseif (function_exists('litespeed_finish_request')) { @litespeed_finish_request(); }
+    else { @ob_flush(); @flush(); }
+    @set_time_limit(240);
+    ignore_user_abort(true);
+    ml_debug("ASYNC token=$token returned; generating in background");
+}
 try {
     ml_debug('scrape begin');
     $tS = microtime(true);
@@ -731,20 +747,23 @@ try {
     ksort($htmls);
 
     // 1) Write preview files (filesystem — this is what the USER sees)
-    $token = bin2hex(random_bytes(12));
-    $dir = '/var/www/sites/trywebwiz/public/preview/' . $token;
+    // token + dir already created before generation (async returns the token early)
     foreach ($htmls as $i => $html) { $d = $dir . '/v' . $i; if (!is_dir($d)) @mkdir($d, 0755, true); file_put_contents($d . '/index.html', ww_polish_html($html, $website)); }
     if (!is_file($dir . '/index.php')) file_put_contents($dir . '/index.php', "<?php\n\$_GET['t'] = basename(__DIR__);\nrequire __DIR__ . '/../index.php';\n");
     ml_debug("files written token=$token");
 
     // 2) Send response IMMEDIATELY. The user gets their preview. Don't make
     //    them wait on DB metadata writes — and never fail them on DB busy.
-    $response = ['ok' => true, 'token' => $token, 'url' => '/preview/' . $token . '/', 'preview_url' => '/preview/' . $token . '/v1/index.html', 'variants' => count($htmls), 'business' => $biz, 'business_name' => $biz];
-    echo json_encode($response);
-    // Flush so the user gets their response before we attempt DB writes.
-    if (function_exists('fastcgi_finish_request')) { @fastcgi_finish_request(); }
-    elseif (function_exists('litespeed_finish_request')) { @litespeed_finish_request(); }
-    else { @ob_flush(); @flush(); }
+    if (!$async) {
+        $response = ['ok' => true, 'token' => $token, 'url' => '/preview/' . $token . '/', 'preview_url' => '/preview/' . $token . '/v1/index.html', 'variants' => count($htmls), 'business' => $biz, 'business_name' => $biz];
+        echo json_encode($response);
+        // Flush so the user gets their response before we attempt DB writes.
+        if (function_exists('fastcgi_finish_request')) { @fastcgi_finish_request(); }
+        elseif (function_exists('litespeed_finish_request')) { @litespeed_finish_request(); }
+        else { @ob_flush(); @flush(); }
+    } else {
+        @unlink($dir . '/status.json'); // index.html now exists = the ready signal for polling
+    }
     ml_debug("RESPONSE SENT token=$token");
     ml_time('PHASE_3_user_seen', microtime(true)-$T0, ['token' => $token]);
 
@@ -990,6 +1009,7 @@ try {
 } catch (Throwable $e) {
     $emsg = preg_replace('/[\x00-\x1F]+/', ' ', $e->getMessage());
     ml_debug('FAIL (caught): ' . $emsg);
+    if (!empty($async) && !empty($token)) { @mkdir('/var/www/sites/trywebwiz/public/preview/' . $token, 0755, true); @file_put_contents('/var/www/sites/trywebwiz/public/preview/' . $token . '/status.json', json_encode(['status' => 'failed', 'error' => mb_substr($emsg, 0, 200), 'ts' => time()])); }
     try { if (isset($db)) $db->prepare("INSERT INTO try_events (event, token, session_id, payload) VALUES ('gen_failed', ?, NULL, ?)")->execute([(($token ?? '') ?: null), json_encode(['error'=>mb_substr($emsg,0,300), 'website'=>($website ?? ''), 'business'=>($company ?? '')])]); } catch (Throwable $te) {}
     // Operator alert on a genuine generation failure (throttled: 1 email / 10 min).
     try {

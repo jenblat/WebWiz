@@ -608,7 +608,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
       </button>
     </div>
     <button type="button" class="topbar-customize" id="topbarCustomize">Customize</button>
-    <button type="button" class="topbar-buy" id="topbarBuy">Buy now $499</button>
+    <button type="button" class="topbar-buy" id="topbarBuy">Buy now $500</button>
   </div>
 </header>
 <!-- Floating chat FAB (only on reveal view, shown when panel is closed) -->
@@ -641,7 +641,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
     .view-form .hero .wiz-testi{max-width:560px;width:100%;margin:40px auto 0}
     @media(max-width:640px){.twz-wiz{width:120px;height:120px}}
     </style>
-    <div class="twz-wiz"><video class="wizzy-vid" autoplay muted playsinline loop preload="metadata" poster="/preview/wizzy-waving-poster.jpg" aria-label="Wizzy waving"><source src="/preview/wizzy-waving.webm" type="video/webm"><source src="/preview/wizzy-waving.mp4" type="video/mp4"><img src="/preview/wizzy-wave.gif" alt="Wizzy waving"></video><div class="sticker">Made with care<small>by Wizzy</small></div></div>
+    <div class="twz-wiz"><video class="wizzy-vid" autoplay muted playsinline loop preload="metadata" poster="/preview/wizzy-waving-poster.jpg" aria-label="Wizzy waving"><source src="/preview/wizzy-waving.webm" type="video/webm"><source src="/preview/wizzy-waving.mp4" type="video/mp4"><img src="/preview/wizzy-wave.gif" alt="Wizzy waving"></video></div>
       <span class="eyebrow">&#9733; Free to preview &middot; no card to try</span>
       <h1 class="twz-h1">See your new website, <span class="twz-free">free.</span></h1>
       <div class="twz-anchor"><span class="old">$5,000</span><span class="arrow">&rarr;</span><span class="new">$500 to launch</span><span class="save">Save $4,500</span></div>
@@ -724,9 +724,9 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
     <div class="progress-track"><span class="progress-fill" id="progFill"></span></div>
     <p class="loading-status" id="loadingStatus">Picking your colors&hellip;</p>
     <p class="loading-elapsed" id="loadingElapsed" aria-live="polite" style="font-family:var(--body);font-weight:500;font-size:13px;color:rgba(18,24,74,0.55);margin:6px 0 0;letter-spacing:0.04em;">0s elapsed</p>
-    <div class="powered-chip">Powered by WebWiz</div>
+    <div class="powered-chip">Powered by WebWiz <span style="opacity:.5;font-weight:600">v<?= defined('WW_VERSION') ? WW_VERSION : '1.0.0' ?></span></div>
     <div class="late-fallback" id="lateFallback">
-      <p><strong>Building your site takes 2&ndash;5 minutes.</strong><br>Drop your email and Wizzy will ping you the second it&rsquo;s ready &mdash; no need to wait on this page.</p>
+      <p><strong>Building your site takes 2&ndash;5 minutes.</strong><br>Drop your email and Wizzy will ping you the second it&rsquo;s ready. No need to wait on this page.</p>
       <form class="row" id="notifyForm">
         <input type="email" id="notifyEmail" placeholder="you@yourbusiness.com" required>
         <button type="submit">Notify me</button>
@@ -1174,44 +1174,55 @@ window.__TRY_INIT__ = {
       var errC = document.getElementById('errCompany'); if (errC) errC.style.display = 'block';
       return;
     }
-    fetch('/api/magic.php', {
+    // ASYNC generation: get a token in ~1s, then poll a lightweight status endpoint until the
+    // site is built. This eliminates the long held request that used to time out mid-build.
+    var __openReveal = function(previewUrl, token){
+      progFill.style.width = '100%'; loadingStatus.textContent = 'Ready! Opening your preview…';
+      stopLoadingTickers();
+      track('gen_completed', { duration_ms: Date.now() - __genT0 });
+      setTimeout(function(){ previewFrame.src = previewUrl; setView('reveal'); chatInput.focus(); track('reveal_viewed');
+        try { window.history.replaceState({t: token}, '', '/try/?t=' + encodeURIComponent(token)); window.__wwShareUrl = window.location.origin + '/try/?t=' + encodeURIComponent(token); } catch(e){}
+      }, 500);
+    };
+    fetch('/api/magic.php?async=1', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
       body: JSON.stringify({
-        website: web.value.trim(),
-        description: desc.value.trim(),
-        name: leadName.trim(),
-        email: leadEmail.trim(),
-        company: leadCompany.trim(),
+        website: web.value.trim(), description: desc.value.trim(),
+        name: leadName.trim(), email: leadEmail.trim(), company: leadCompany.trim(),
         describe: (web.value.trim() === '' ? 1 : 0)
       })
     })
     .then(function(r){ return r.json().then(function(j){ return { ok: r.ok, body: j }; }); })
     .then(function(res){
-      if (res.body && res.body.ok && (res.body.preview_url || res.body.url)) {
-        progFill.style.width = '100%'; loadingStatus.textContent = 'Ready! Opening your preview…';
-        state.token = res.body.token || null;
-        state.businessName = res.body.business_name || res.body.business || 'your site';
-        loadingHead.innerHTML = 'Wizzy is designing ' + escapeHtml(state.businessName) + '…';
-        stopLoadingTickers();
-        var previewUrl = res.body.preview_url || (res.body.url + 'v1/index.html');
-        track('gen_completed', { duration_ms: Date.now() - __genT0 });
-        setTimeout(function(){ previewFrame.src = previewUrl; setView('reveal'); chatInput.focus(); track('reveal_viewed');
-          // Update browser URL so the user can copy/bookmark and come back to keep editing.
-          try { if (res.body && res.body.token) { window.history.replaceState({t: res.body.token}, '', '/try/?t=' + encodeURIComponent(res.body.token)); window.__wwShareUrl = window.location.origin + '/try/?t=' + encodeURIComponent(res.body.token); } } catch(e){}
-        }, 600);
-      } else {
-        var msg = (res.body && res.body.error) ? res.body.error : 'Generation failed. Try again?';
+      var b = res.body || {};
+      if (!(b.ok && b.token)) {
+        var msg = b.error || 'Generation failed. Try again?';
         track('gen_failed', { reason: String(msg).slice(0,140), duration_ms: Date.now() - __genT0 });
-        showLoadingError(msg);
-        ctaBtn.disabled = false;
+        showLoadingError(msg); ctaBtn.disabled = false; return;
       }
+      state.token = b.token;
+      state.businessName = leadCompany.trim() || 'your site';
+      loadingHead.innerHTML = 'Wizzy is designing ' + escapeHtml(state.businessName) + '…';
+      var polls = 0, maxPolls = 100; // ~5 min ceiling at 3s
+      var poll = function(){
+        polls++;
+        if (polls > maxPolls) { track('gen_failed', { reason:'poll_timeout', duration_ms: Date.now()-__genT0 }); showLoadingError('This is taking longer than usual. Drop your email above and we&rsquo;ll send your site the moment it&rsquo;s ready.'); ctaBtn.disabled = false; return; }
+        fetch('/api/gen_status.php?t=' + encodeURIComponent(b.token), { headers:{'Accept':'application/json'} })
+          .then(function(r){ return r.json(); })
+          .then(function(s){
+            if (s.status === 'ready') { __openReveal(s.preview_url || ('/preview/' + b.token + '/v1/index.html'), b.token); }
+            else if (s.status === 'failed') { track('gen_failed', { reason: String(s.error||'failed').slice(0,140), duration_ms: Date.now()-__genT0 }); showLoadingError(s.error || 'Wizzy hit a snag building that one. Please try again.'); ctaBtn.disabled = false; }
+            else { setTimeout(poll, 3000); }
+          })
+          .catch(function(){ setTimeout(poll, 3500); });
+      };
+      setTimeout(poll, 4000);
     })
     .catch(function(e){
       var em = e && e.message ? e.message : 'unknown';
       track('gen_failed', { reason: 'network: ' + String(em).slice(0,120), duration_ms: Date.now() - __genT0 });
-      showLoadingError('Network error: ' + em);
-      ctaBtn.disabled = false;
+      showLoadingError('Network error: ' + em); ctaBtn.disabled = false;
     });
   });
 
