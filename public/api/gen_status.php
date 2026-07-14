@@ -1,7 +1,9 @@
 <?php
 // /api/gen_status.php — lightweight poll endpoint for the async /try generation.
 // GET ?t=<token> -> {status:'ready'|'building'|'failed', preview_url?, error?}
-// Ready is signalled by the preview file existing on disk; failed by a status.json marker.
+// Ready = preview file written AND images pre-warmed (a 'ready' marker file).
+// A time-based fallback still flips to ready if the marker never lands, so the
+// poller can never hang. Failed = a status.json marker with status:failed.
 declare(strict_types=1);
 header('Content-Type: application/json');
 header('Cache-Control: no-store');
@@ -12,8 +14,14 @@ if (!preg_match('~^[a-f0-9]{6,32}$~', $t)) { echo json_encode(['status' => 'erro
 $dir   = '/var/www/sites/trywebwiz/public/preview/' . $t;
 $index = $dir . '/v1/index.html';
 
-// Ready: the preview file is written (and non-trivial).
-if (is_file($index) && (int)@filesize($index) > 500) {
+$idx_ok = is_file($index) && (int)@filesize($index) > 500;
+// Pre-warm finished marker (async writes this once images are cached).
+$warmed = is_file($dir . '/ready');
+// Safety net: if the marker never lands (rare failure), still go ready once the
+// preview file has been on disk long enough that pre-warm has certainly run/died.
+$settled = $idx_ok && (time() - (int)@filemtime($index) > 25);
+
+if ($idx_ok && ($warmed || $settled)) {
     echo json_encode(['status' => 'ready', 'preview_url' => '/preview/' . $t . '/v1/index.html', 'url' => '/preview/' . $t . '/']);
     exit;
 }
@@ -28,5 +36,6 @@ if (is_file($sf)) {
     }
 }
 
-// Otherwise still building.
+// Otherwise still building (includes the brief window where the HTML exists but
+// images are still being pre-warmed).
 echo json_encode(['status' => 'building']);

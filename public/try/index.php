@@ -724,7 +724,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
     <div class="progress-track"><span class="progress-fill" id="progFill"></span></div>
     <p class="loading-status" id="loadingStatus">Picking your colors&hellip;</p>
     <p class="loading-elapsed" id="loadingElapsed" aria-live="polite" style="font-family:var(--body);font-weight:500;font-size:13px;color:rgba(18,24,74,0.55);margin:6px 0 0;letter-spacing:0.04em;">0s elapsed</p>
-    <div class="powered-chip">Powered by WebWiz <span style="opacity:.5;font-weight:600">v<?= defined('WW_VERSION') ? WW_VERSION : '1.0.0' ?></span></div>
+    <div class="powered-chip">Powered by WebWiz</div>
     <div class="late-fallback" id="lateFallback">
       <p><strong>Building your site takes 2&ndash;5 minutes.</strong><br>Drop your email and Wizzy will ping you the second it&rsquo;s ready. No need to wait on this page.</p>
       <form class="row" id="notifyForm">

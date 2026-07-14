@@ -797,7 +797,7 @@ try {
     try {
         $genimg_urls = [];
         foreach ($htmls as $html) {
-            if (preg_match_all('~/api/genimg\.php\?[^"\'\s<>]+~', $html, $m)) {
+            if (preg_match_all('~/api/(?:genimg|img)\.php\?[^"\'\s<>]+~', $html, $m)) {
                 foreach ($m[0] as $u) {
                     $genimg_urls[] = 'https://trywebwiz.com' . html_entity_decode($u);
                 }
@@ -835,6 +835,9 @@ try {
         ml_time('PHASE_2_5_pre_warm', microtime(true) - $tPW, ['found' => count($genimg_urls), 'warmed' => $pw_count]);
         ml_debug("pre-warm: found=" . count($genimg_urls) . " warmed=$pw_count");
     } catch (Throwable $e) { ml_debug('pre-warm failed: ' . $e->getMessage()); }
+    // Async only: now that images are warmed, drop the ready marker so the
+    // poller opens the reveal on a fully-loaded page (no blank images popping in).
+    if ($async) { @file_put_contents($dir . '/ready', '1'); ml_debug('async ready marker written (post pre-warm)'); }
 
     // ---- Phase 4: Visual QA loop (Sonnet vision check + auto-regen if fail) ----
     $tQA = microtime(true);
@@ -853,7 +856,7 @@ try {
                 $verdict['score'] ?? '?',
                 substr((string)($verdict['summary'] ?? ''), 0, 200)
             ));
-            if (empty($verdict['pass']) && function_exists('ww_qa_feedback') && isset($htmls[1])) {
+            if (!$async && empty($verdict['pass']) && function_exists('ww_qa_feedback') && isset($htmls[1])) {
                 $tRegen = microtime(true);
                 $fb = ww_qa_feedback($verdict['issues'] ?? []);
                 $rreqs = [1 => ['system' => $system, 'messages' => [['role' => 'user', 'content' => $first_user_content . "\n\n" . $fb]]]];
@@ -876,7 +879,7 @@ try {
     // Run after QA so we upscale the final HTML. Replicate calls are slow HTTP
     // but we already gave the user their preview — they'll see upscaled images
     // on next page reload.
-    if (function_exists('ww_apply_upscale')) {
+    if (!$async && function_exists('ww_apply_upscale')) {
         $tU = microtime(true);
         try {
             foreach ($htmls as $i => $html) {

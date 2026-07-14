@@ -1,12 +1,55 @@
 # WebWiz Studio
 
-> WebWiz Studio — official website. The links below cover the site's main pages and content.
+> WebWiz Studio is a web design studio specializing in hand-designed websites for small businesses, offering a flat $499 build fee with optional monthly hosting and care plans starting at $49/month. The service includes custom design (no templates), up to 6 pages, hosting, domain, daily backups, security monitoring, and unlimited traffic, with projects completed in approximately two weeks.
 
-This file follows the llms.txt convention (https://llmstxt.org) to help AI assistants understand and cite this site.
+This file follows the llms.txt convention (https://llmstxt.org) to help AI assistants understand and cite WebWiz Studio.
 
-## Pages
+## About WebWiz Studio
+
+- Flat $499 one-time build fee with no contracts or hidden costs
+- Care plans from $49/month (hosting) or $99/month (hosting + 10 edits/month)
+- Hand-designed custom websites (no templates or AI); up to 6 pages, mobile-responsive
+- Services include managed hosting, 24/7 security monitoring, automated daily backups, SSL renewals, unlimited traffic, and 99.9% uptime guarantee
+- Two-week turnaround from initial call to live site launch
+- 140+ small businesses served
+- Two revision rounds included; 30 days post-launch support
+
+## Frequently Asked Questions
+
+**What is included in the $499 website build?**
+
+The build includes a custom hand-designed site (no templates), up to 6 pages that are mobile-responsive, two revision rounds with real human feedback, an edit-yourself CMS for text and photos, analytics and SEO basics setup, 30 days of post-launch support, and delivery as production-ready files (HTML/CSS/JS). Hosting and domain are optional add-ons.
+
+**What are the care plan options and pricing?**
+
+Two monthly care plans are available: Hosting & Care ($49/month) includes managed hosting, 24/7 security monitoring, daily automated backups, SSL renewals, free domain renewal (one .com or .co), and unlimited traffic; Hosting & Care + Edits ($99/month) adds up to 10 small edits per month (text, photos, links). Both are month-to-month with no contracts and can be cancelled anytime.
+
+**How long does it take to get a website?**
+
+The process takes approximately two weeks from initial consultation to live launch, consisting of a 15-minute discovery call, custom design and build with two revision rounds, and then going live with analytics setup and a guide for making text edits.
+
+**Is a refund available after purchasing?**
+
+The $499 build is non-refundable once the kickoff call has occurred. Care plan billing is monthly and cancellable anytime.
+
+**What security and uptime features are included?**
+
+Care plan customers receive 24/7 security monitoring and malware scans, automated daily backups with multi-region redundancy, free SSL renewals, and a 99.9% uptime guarantee on lightning-fast managed hosting.
+
+**Can I edit my website myself after it launches?**
+
+Yes, all sites include an edit-yourself CMS for updating text and photos, plus a one-page guide explaining how to use it. For more extensive changes, the $99/month Hosting & Care + Edits plan includes up to 10 small edits per month with typically same-day turnaround.
+
+**How many pages can I have on my website?**
+
+The standard build includes up to 6 pages. Custom work outside this scope may require an additional fee or change order.
+
+## Key Pages
 
 - [WebWiz — Your business deserves a better website.](https://trywebwiz.com/): Hand-designed websites for small businesses. Flat $499 build. Care plans from $49/month — fully secured, backed up daily, multiple redundancies, unlimited traffic.
+
+## Other Pages
+
 - [Order cancelled · WebWiz](https://trywebwiz.com/cancel.html)
 - [Privacy Policy · WebWiz](https://trywebwiz.com/privacy.html): WebWiz Privacy Policy. What data we collect, why, how it
 - [Start a site · WebWiz](https://trywebwiz.com/start.html): Tell us about your business and we
@@ -14,4 +57,5 @@ This file follows the llms.txt convention (https://llmstxt.org) to help AI assis
 
 ## Sitemap
 
-- [XML sitemap](https://trywebwiz.com/sitemap.xml)
+- [Complete XML sitemap](https://trywebwiz.com/sitemap.xml)
+- [Full-text export](https://trywebwiz.com/llms-full.txt)
