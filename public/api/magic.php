@@ -956,6 +956,20 @@ try {
             $st = $db->prepare("INSERT INTO prospects (email, name, business_name, current_url, source, description) VALUES (?, ?, ?, ?, 'magic', ?)");
             $st->execute([$email, $name, $biz, ($describe ? null : $website), ($describe ? $description : null)]);
             $pid = (int)$db->lastInsertId();
+            // Fold in the loading-screen Q&A answers if the visitor answered them.
+            // qa.json existing implies /api/qa.php already created the qa_answers column,
+            // so this is a plain UPDATE (no ALTER inside the transaction).
+            try {
+                $qaf = '/var/www/sites/trywebwiz/public/preview/' . $token . '/qa.json';
+                if (is_file($qaf)) {
+                    $qraw = json_decode((string)@file_get_contents($qaf), true);
+                    $qans = (is_array($qraw) && !empty($qraw['answers']) && is_array($qraw['answers'])) ? $qraw['answers'] : null;
+                    if ($qans) {
+                        $qu = $db->prepare('UPDATE prospects SET qa_answers = ? WHERE id = ?');
+                        $qu->execute([json_encode($qans, JSON_UNESCAPED_SLASHES), $pid]);
+                    }
+                }
+            } catch (Throwable $e) { ml_debug('qa attach failed: ' . $e->getMessage()); }
             $st = $db->prepare("INSERT INTO jobs (type, prospect_id, customer_email, business_name, scrape_data, status, scheduled_for, token, generation_mode, item_status, total_cost_cents, completed_at, qa_status) VALUES ('outbound', ?, ?, ?, ?, 'ready', datetime('now'), ?, ?, 'done', ?, datetime('now'), 'magic')");
             $st->execute([$pid, $email, $biz, ($scrape_data_json ?? null), $token, $gen_mode, (int)round($cost * 100)]);
             $jid = (int)$db->lastInsertId();

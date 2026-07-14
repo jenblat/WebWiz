@@ -326,6 +326,19 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
   .progress-track{margin:24px auto 0;max-width:520px;height:12px;background:var(--cream);border:2px solid var(--navy);border-radius:999px;overflow:hidden;}
   .progress-fill{display:block;height:100%;width:5%;background:var(--teal);border-radius:999px;transition:width 600ms ease;}
   .loading-status{font-family:var(--body);font-weight:500;font-size:16px;color:var(--teal);margin:16px 0 0;min-height:22px;transition:opacity 250ms ease;}
+  .wq-card{max-width:440px;margin:26px auto 0;background:#fffdf8;border:2px solid var(--navy);border-radius:18px;box-shadow:0 10px 30px rgba(18,24,74,.12);padding:20px 20px 16px;text-align:left;}
+  .wq-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
+  .wq-kicker{font-family:var(--body);font-weight:700;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--teal);}
+  .wq-count{font-family:var(--body);font-weight:600;font-size:12px;color:rgba(18,24,74,.5);}
+  .wq-q{font-family:var(--body);font-weight:800;font-size:18px;line-height:1.32;color:var(--navy);margin:0 0 14px;}
+  .wq-opts{display:flex;flex-direction:column;gap:8px;}
+  .wq-opt{width:100%;text-align:left;font-family:var(--body);font-weight:600;font-size:14.5px;color:var(--navy);background:#fff;border:2px solid #e7dfce;border-radius:11px;padding:12px 14px;cursor:pointer;transition:border-color .15s ease,transform .05s ease,background .15s ease;}
+  .wq-opt:hover{border-color:var(--teal);background:#f4fbf9;}
+  .wq-opt:active{transform:translateY(1px);}
+  .wq-skip{margin:12px 0 0;text-align:center;}
+  .wq-skip button{background:none;border:none;color:rgba(18,24,74,.45);font-family:var(--body);font-size:12.5px;cursor:pointer;text-decoration:underline;}
+  .wq-done{text-align:center;padding:6px 0 2px;}
+  .wq-done p{font-family:var(--body);font-size:15px;color:var(--navy);margin:0;line-height:1.5;}
   .powered-chip{display:inline-block;margin-top:32px;background:var(--navy);color:var(--cream);font-family:var(--body);font-weight:600;font-size:12px;letter-spacing:0.14em;text-transform:uppercase;padding:6px 14px;border-radius:999px;}
   .late-fallback{display:none;max-width:520px;margin:32px auto 0;background:var(--cream);border:2px solid var(--navy);border-radius:14px;padding:20px 22px;text-align:left;box-shadow:4px 4px 0 var(--navy);}
   .late-fallback.on{display:block;}
@@ -725,6 +738,65 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
     <p class="loading-status" id="loadingStatus">Picking your colors&hellip;</p>
     <p class="loading-elapsed" id="loadingElapsed" aria-live="polite" style="font-family:var(--body);font-weight:500;font-size:13px;color:rgba(18,24,74,0.55);margin:6px 0 0;letter-spacing:0.04em;">0s elapsed</p>
     <div class="powered-chip">Powered by WebWiz</div>
+    <div class="wq-card" id="wqCard" style="display:none">
+      <div class="wq-head"><span class="wq-kicker">While Wizzy works&hellip;</span><span class="wq-count" id="wqCount">1 / 4</span></div>
+      <p class="wq-q" id="wqQ"></p>
+      <div class="wq-opts" id="wqOpts"></div>
+      <p class="wq-skip"><button type="button" id="wqSkip">Skip</button></p>
+      <div class="wq-done" id="wqDone" style="display:none"><p><strong>Perfect.</strong> Wizzy&rsquo;s using this to tailor your pitch. Almost done&hellip;</p></div>
+    </div>
+    <script>
+    (function(){
+      var QA = [
+        { k:'goal',     q:"First — what's the #1 job for your new site?", a:["Bring in more leads & calls","Sell products online","Take bookings or appointments","Just look more credible"] },
+        { k:'channel',  q:"How do you get most of your customers today?",     a:["Word of mouth & referrals","Social media","Paid ads","Honestly, not sure"] },
+        { k:'timeline', q:"When do you want to be live?",                      a:["ASAP — this week","Within a month","Just exploring for now"] },
+        { k:'budget',   q:"Roughly, what's your monthly marketing budget?",    a:["Under $500","$500 – $2,000","$2,000 – $5,000","$5,000+"] }
+      ];
+      var idx=0, token=null, answers={}, started=false;
+      var card,qEl,optsEl,countEl,doneEl,skipEl;
+      function save(done){
+        if(!token) return;
+        try{ fetch('/api/qa.php',{method:'POST',headers:{'Content-Type':'application/json'},keepalive:true,
+          body:JSON.stringify({token:token,answers:answers,complete:done?1:0})}).catch(function(){}); }catch(e){}
+      }
+      function render(){
+        if(idx>=QA.length){ finish(); return; }
+        var item=QA[idx];
+        countEl.textContent=(idx+1)+' / '+QA.length;
+        qEl.textContent=item.q;
+        optsEl.innerHTML='';
+        item.a.forEach(function(opt){
+          var b=document.createElement('button');
+          b.type='button'; b.className='wq-opt'; b.textContent=opt;
+          b.addEventListener('click',function(){
+            answers[item.k]=opt;
+            try{ if(typeof track==='function') track('qa_answer',{q:item.k,a:String(opt).slice(0,60),n:idx+1}); }catch(e){}
+            save(false); idx++; render();
+          });
+          optsEl.appendChild(b);
+        });
+      }
+      function finish(){
+        qEl.style.display='none'; optsEl.style.display='none';
+        if(skipEl&&skipEl.parentNode) skipEl.parentNode.style.display='none';
+        countEl.textContent=QA.length+' / '+QA.length;
+        doneEl.style.display='block';
+        try{ if(typeof track==='function') track('qa_completed',{answered:Object.keys(answers).length}); }catch(e){}
+        save(true);
+      }
+      window.__wwStartQA=function(t){
+        if(started) return; started=true; token=t;
+        card=document.getElementById('wqCard'); qEl=document.getElementById('wqQ');
+        optsEl=document.getElementById('wqOpts'); countEl=document.getElementById('wqCount');
+        doneEl=document.getElementById('wqDone'); skipEl=document.getElementById('wqSkip');
+        if(!card) return;
+        if(skipEl){ skipEl.addEventListener('click',function(){ answers[QA[idx].k]='(skipped)'; save(false); idx++; render(); }); }
+        card.style.display='block'; render();
+      };
+      window.__wwStopQA=function(){ if(card) card.style.display='none'; };
+    })();
+    </script>
     <div class="late-fallback" id="lateFallback">
       <p><strong>Building your site takes 2&ndash;5 minutes.</strong><br>Drop your email and Wizzy will ping you the second it&rsquo;s ready. No need to wait on this page.</p>
       <form class="row" id="notifyForm">
@@ -1179,6 +1251,7 @@ window.__TRY_INIT__ = {
     var __openReveal = function(previewUrl, token){
       progFill.style.width = '100%'; loadingStatus.textContent = 'Ready! Opening your preview…';
       stopLoadingTickers();
+      try { window.__wwStopQA && window.__wwStopQA(); } catch(e){}
       track('gen_completed', { duration_ms: Date.now() - __genT0 });
       setTimeout(function(){ previewFrame.src = previewUrl; setView('reveal'); chatInput.focus(); track('reveal_viewed');
         try { window.history.replaceState({t: token}, '', '/try/?t=' + encodeURIComponent(token)); window.__wwShareUrl = window.location.origin + '/try/?t=' + encodeURIComponent(token); } catch(e){}
@@ -1202,6 +1275,7 @@ window.__TRY_INIT__ = {
         showLoadingError(msg); ctaBtn.disabled = false; return;
       }
       state.token = b.token;
+      try { window.__wwStartQA && window.__wwStartQA(b.token); } catch(e){}
       state.businessName = leadCompany.trim() || 'your site';
       loadingHead.innerHTML = 'Wizzy is designing ' + escapeHtml(state.businessName) + '…';
       var polls = 0, maxPolls = 100; // ~5 min ceiling at 3s
