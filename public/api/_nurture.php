@@ -283,6 +283,32 @@ function ww_email_image_card(string $img_url, string $href, string $company): st
          . '</td></tr>';
 }
 
+/** Read the /try loading-screen Q&A answers for a contact's preview token. */
+function ww_nurture_qa_answers(string $token): array {
+    $token = preg_replace('~[^a-f0-9]~', '', strtolower($token));
+    if ($token === '') return [];
+    $f = '/var/www/sites/trywebwiz/public/preview/' . $token . '/qa.json';
+    if (!is_file($f)) return [];
+    $j = json_decode((string)@file_get_contents($f), true);
+    if (!is_array($j) || empty($j['answers']) || !is_array($j['answers'])) return [];
+    return $j['answers'];
+}
+
+/** Warm personalized paragraph from the visitor's Q&A answers. '' if none. */
+function ww_nurture_qa_para(array $contact): string {
+    $ans = ww_nurture_qa_answers((string)($contact['token'] ?? ''));
+    if (!$ans) return '';
+    $goal = '';
+    foreach ($ans as $a) {
+        // Handle both shapes: new array of {q,a}, and the legacy {key:answer} object.
+        $v = is_array($a) ? trim((string)($a['a'] ?? '')) : trim((string)$a);
+        if ($v !== '') { $goal = $v; break; }
+    }
+    if ($goal === '') return '';
+    $goal = htmlspecialchars($goal, ENT_QUOTES);
+    return "When you built this site, you told Wizzy the main job for it is to <strong>" . $goal . "</strong>. We kept that front and center, and it&rsquo;s all still here waiting for you.";
+}
+
 function ww_nurture_apply_merge(string $tpl, array $contact): string {
     $name = trim((string)($contact['name'] ?? ''));
     $company = trim((string)($contact['company'] ?? ''));
@@ -326,6 +352,11 @@ function ww_nurture_render_html(array $tpl, array $contact, string $unsub_url, s
     foreach (($tpl['paragraphs'] ?? []) as $i => $p) {
         $merged = ww_nurture_apply_merge($p, $contact);
         $body  .= ww_email_para($merged, $i === 0 ? 14 : 16);
+        // After the greeting, on the early touches, weave in what they told Wizzy.
+        if ($i === 0 && ((int)($contact['current_step'] ?? 0) + 1) <= 3) {
+            $qa_para = ww_nurture_qa_para($contact);
+            if ($qa_para !== '') $body .= ww_email_para($qa_para, 16);
+        }
     }
     if ($cta_label !== '' && $cta_url !== '') {
         $body .= ww_email_cta($cta_label, $cta_url);
@@ -357,6 +388,10 @@ function ww_nurture_render_text(array $tpl, array $contact, string $unsub_url, s
         $merged = ww_nurture_apply_merge($p, $contact);
         // Strip HTML tags for the text version
         $out .= trim(html_entity_decode(strip_tags($merged), ENT_QUOTES)) . "\n\n";
+    }
+    if (((int)($contact['current_step'] ?? 0) + 1) <= 3) {
+        $qa_para = ww_nurture_qa_para($contact);
+        if ($qa_para !== '') $out .= trim(html_entity_decode(strip_tags($qa_para), ENT_QUOTES)) . "\n\n";
     }
     $cta_url   = ww_nurture_apply_merge($tpl['cta_url']   ?? NURTURE_DOMAIN . '/try/', $contact);
     $cta_label = ww_nurture_apply_merge($tpl['cta_label'] ?? 'See your website', $contact);
