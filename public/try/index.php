@@ -738,6 +738,21 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
     <p class="loading-status" id="loadingStatus">Picking your colors&hellip;</p>
     <p class="loading-elapsed" id="loadingElapsed" aria-live="polite" style="font-family:var(--body);font-weight:500;font-size:13px;color:rgba(18,24,74,0.55);margin:6px 0 0;letter-spacing:0.04em;">0s elapsed</p>
     <div class="powered-chip">Powered by WebWiz</div>
+    <?php
+      $__wwqa_default = [
+        ['q'=>"First, what's the #1 job for your new site?", 'a'=>["Bring in more leads & calls","Sell products online","Take bookings or appointments","Just look more credible"]],
+        ['q'=>"How do you get most of your customers today?", 'a'=>["Word of mouth & referrals","Social media","Paid ads","Honestly, not sure"]],
+        ['q'=>"When do you want to be live?", 'a'=>["ASAP, this week","Within a month","Just exploring for now"]],
+        ['q'=>"A designer would charge \$3,000 to \$5,000 to build this. At \$500, how does that feel?", 'a'=>["Honestly, a steal","Sounds fair","Depends what I get","Still a lot for me"]],
+        ['q'=>"What's been holding back a new website?", 'a'=>["No time to deal with it","Too pricey until now","Didn't know where to start","The one I have is outdated"]],
+        ['q'=>"Who is this site mainly for?", 'a'=>["Brand-new customers","Repeat customers","Partners or investors","Hiring & recruiting"]],
+        ['q'=>"What would make you say yes today?", 'a'=>["Loving the design","Seeing it go live","A quick call to talk it through","Honestly, I'm ready now"]],
+        ['q'=>"Roughly how many new customers do you get each week?", 'a'=>["Just a few (0-5)","A handful (5-20)","Quite a lot (20-50)","50 or more"]],
+      ];
+      $__wwqa = $__wwqa_default;
+      try { if (function_exists('ww_db')) { $__wr = ww_db()->query("SELECT value FROM settings WHERE key='try_qa_json'")->fetchColumn(); if ($__wr) { $__wd = json_decode($__wr, true); if (is_array($__wd) && count($__wd)) $__wwqa = $__wd; } } } catch (Throwable $e) {}
+    ?>
+    <script>window.__WW_QA = <?= json_encode(array_values($__wwqa), JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE) ?>;</script>
     <div class="wq-card" id="wqCard" style="display:none">
       <div class="wq-head"><span class="wq-kicker">While Wizzy works&hellip;</span><span class="wq-count" id="wqCount">1 / 4</span></div>
       <p class="wq-q" id="wqQ"></p>
@@ -747,13 +762,13 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
     </div>
     <script>
     (function(){
-      var QA = [
+      var QA = (window.__WW_QA && window.__WW_QA.length) ? window.__WW_QA : [
         { k:'goal',     q:"First — what's the #1 job for your new site?", a:["Bring in more leads & calls","Sell products online","Take bookings or appointments","Just look more credible"] },
         { k:'channel',  q:"How do you get most of your customers today?",     a:["Word of mouth & referrals","Social media","Paid ads","Honestly, not sure"] },
         { k:'timeline', q:"When do you want to be live?",                      a:["ASAP — this week","Within a month","Just exploring for now"] },
         { k:'budget',   q:"Roughly, what's your monthly marketing budget?",    a:["Under $500","$500 – $2,000","$2,000 – $5,000","$5,000+"] }
       ];
-      var idx=0, token=null, answers={}, started=false;
+      var idx=0, token=null, answers=[], started=false;
       var card,qEl,optsEl,countEl,doneEl,skipEl;
       function save(done){
         if(!token) return;
@@ -770,8 +785,8 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
           var b=document.createElement('button');
           b.type='button'; b.className='wq-opt'; b.textContent=opt;
           b.addEventListener('click',function(){
-            answers[item.k]=opt;
-            try{ if(typeof track==='function') track('qa_answer',{q:item.k,a:String(opt).slice(0,60),n:idx+1}); }catch(e){}
+            answers.push({ q:item.q, a:opt });
+            try{ if(typeof track==='function') track('qa_answer',{q:String(item.q).slice(0,50),a:String(opt).slice(0,60),n:idx+1}); }catch(e){}
             save(false); idx++; render();
           });
           optsEl.appendChild(b);
@@ -782,7 +797,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
         if(skipEl&&skipEl.parentNode) skipEl.parentNode.style.display='none';
         countEl.textContent=QA.length+' / '+QA.length;
         doneEl.style.display='block';
-        try{ if(typeof track==='function') track('qa_completed',{answered:Object.keys(answers).length}); }catch(e){}
+        try{ if(typeof track==='function') track('qa_completed',{answered:answers.length}); }catch(e){}
         save(true);
       }
       window.__wwStartQA=function(t){
@@ -791,7 +806,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
         optsEl=document.getElementById('wqOpts'); countEl=document.getElementById('wqCount');
         doneEl=document.getElementById('wqDone'); skipEl=document.getElementById('wqSkip');
         if(!card) return;
-        if(skipEl){ skipEl.addEventListener('click',function(){ answers[QA[idx].k]='(skipped)'; save(false); idx++; render(); }); }
+        if(skipEl){ skipEl.addEventListener('click',function(){ idx++; render(); }); }
         card.style.display='block'; render();
       };
       window.__wwStopQA=function(){ if(card) card.style.display='none'; };

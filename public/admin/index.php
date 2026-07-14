@@ -442,6 +442,21 @@ if ($tab === 'settings') {
                 $up->execute([$en]);
                 if ($up->rowCount() === 0) ww_db()->prepare("INSERT INTO settings (key,value) VALUES ('notify_emails_enabled', ?)")->execute([$en]);
                 $_SESSION['flash_msg'] = 'Notification settings saved.';
+            } elseif ($act==='save_qa') {
+                $raw = (string)($_POST['try_qa_raw'] ?? '');
+                $list = [];
+                foreach (preg_split('/\r?\n/', $raw) as $line) {
+                    $line = trim($line);
+                    if ($line === '') continue;
+                    $parts = array_map('trim', explode('|', $line));
+                    $q = array_shift($parts);
+                    $opts = array_values(array_filter($parts, function($x){ return $x !== ''; }));
+                    if ($q !== '' && count($opts) >= 2) $list[] = ['q' => $q, 'a' => $opts];
+                }
+                $json = json_encode($list, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                $up = ww_db()->prepare("UPDATE settings SET value=? WHERE key='try_qa_json'"); $up->execute([$json]);
+                if ($up->rowCount() === 0) ww_db()->prepare("INSERT INTO settings (key,value) VALUES ('try_qa_json', ?)")->execute([$json]);
+                $_SESSION['flash_msg'] = count($list) . ' question(s) saved.';
             }
         } catch (Throwable $e) { $_SESSION['flash_err'] = $e->getMessage(); }
         header('Location: /admin/?tab=settings'); exit;
@@ -492,6 +507,26 @@ if ($tab === 'settings') {
 
     // ===== RIGHT COLUMN: Notifications + Magic link =====
     echo '<section>';
+
+    // ---- /try loading-screen Q&A editor ----
+    $qa_default_pipe = "First, what's the #1 job for your new site? | Bring in more leads & calls | Sell products online | Take bookings or appointments | Just look more credible\nHow do you get most of your customers today? | Word of mouth & referrals | Social media | Paid ads | Honestly, not sure\nWhen do you want to be live? | ASAP, this week | Within a month | Just exploring for now\nA designer would charge \$3,000 to \$5,000 to build this. At \$500, how does that feel? | Honestly, a steal | Sounds fair | Depends what I get | Still a lot for me\nWhat's been holding back a new website? | No time to deal with it | Too pricey until now | Didn't know where to start | The one I have is outdated\nWho is this site mainly for? | Brand-new customers | Repeat customers | Partners or investors | Hiring & recruiting\nWhat would make you say yes today? | Loving the design | Seeing it go live | A quick call to talk it through | Honestly, I'm ready now\nRoughly how many new customers do you get each week? | Just a few (0-5) | A handful (5-20) | Quite a lot (20-50) | 50 or more";
+    $qa_saved_json = $sget('try_qa_json','');
+    $qa_pipe = '';
+    if ($qa_saved_json) {
+        $qa_list = json_decode($qa_saved_json, true);
+        if (is_array($qa_list)) {
+            $qa_lines = [];
+            foreach ($qa_list as $qit) { if (!is_array($qit)) continue; $qq=(string)($qit['q']??''); $qo=(isset($qit['a'])&&is_array($qit['a']))?$qit['a']:[]; if($qq==='')continue; $qa_lines[]=trim($qq.' | '.implode(' | ', array_map('strval',$qo))); }
+            $qa_pipe = implode("\n", $qa_lines);
+        }
+    }
+    if ($qa_pipe==='') $qa_pipe = $qa_default_pipe;
+    echo '<h2 style="font-family:var(--display);font-weight:900;margin:28px 0 6px;">/try Loading Questions</h2>';
+    echo '<p style="font-size:13px;opacity:0.75;margin-bottom:12px;">Questions Wizzy asks visitors while their site builds (about 2 minutes). One per line, format: <code>Question? | Option A | Option B | Option C</code> (2+ options each). Visitors answer as many as they can before the site is ready; the rest is fine. Answers are saved to each prospect for follow-up.</p>';
+    echo '<div class="form-card" style="max-width:none;"><form method="post"><input type="hidden" name="settings_action" value="save_qa">';
+    echo '<textarea name="try_qa_raw" rows="12" spellcheck="false" style="width:100%;font-family:ui-monospace,monospace;font-size:13px;line-height:1.6;padding:12px;border:2px solid #e7dfce;border-radius:10px;box-sizing:border-box;">'.ww_h($qa_pipe).'</textarea>';
+    echo '<div style="margin-top:12px;"><button type="submit" style="background:#16305a;color:#fff;border:none;border-radius:10px;padding:10px 18px;font-weight:700;cursor:pointer;">Save questions</button></div>';
+    echo '</form></div>';
 
     echo '<h2 style="font-family:var(--display);font-weight:900;margin:0 0 6px;">Notifications</h2>';
     echo '<p style="font-size:13px;opacity:0.75;margin-bottom:12px;">Stripe webhook events (new orders, payment failures, cancellations) email every user with role <code>admin</code>. Customer-facing emails always send regardless of this setting.</p>';

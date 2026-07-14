@@ -17,16 +17,15 @@ if (!preg_match('~^[a-f0-9]{6,32}$~', $token)) { echo json_encode(['ok' => false
 $answers = (isset($in['answers']) && is_array($in['answers'])) ? $in['answers'] : [];
 $complete = !empty($in['complete']) ? 1 : 0;
 
-// Sanitize: keep at most 12 short string answers with simple keys.
+// Sanitize: accept an array of {q,a} pairs (skipped questions are simply absent).
 $clean = [];
-$n = 0;
-foreach ($answers as $k => $v) {
-    if ($n >= 12) break;
-    $k = preg_replace('~[^a-z0-9_]~', '', strtolower((string)$k));
-    if ($k === '') continue;
-    if (is_array($v)) $v = implode(', ', $v);
-    $clean[$k] = trim(mb_substr((string)$v, 0, 160));
-    $n++;
+foreach ($answers as $item) {
+    if (count($clean) >= 24) break;
+    if (!is_array($item)) continue;
+    $q = trim(mb_substr((string)($item['q'] ?? ''), 0, 200));
+    $a = trim(mb_substr((string)($item['a'] ?? ''), 0, 200));
+    if ($q === '') continue;
+    $clean[] = ['q' => $q, 'a' => $a];
 }
 
 $dir = '/var/www/sites/trywebwiz/public/preview/' . $token;
