@@ -22,3 +22,5 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+private/sessions/
+public/api/_*.php
