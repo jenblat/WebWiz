@@ -58,6 +58,14 @@ $hmac_secret = ww_nurture_hmac_secret($db);
 $max_per_run = (int)($_GET['limit'] ?? 50);
 if ($max_per_run < 1 || $max_per_run > 500) $max_per_run = 50;
 
+// Only one nurture run at a time. Overlapping runs (a slow run still going
+// when the next hour fires) could otherwise send the same step twice.
+$lock_fh = @fopen('/tmp/ww_nurture.lock', 'c');
+if ($lock_fh === false || !flock($lock_fh, LOCK_EX | LOCK_NB)) {
+    echo "Nurture run skipped: another run is already in progress.\n";
+    exit(0);
+}
+
 $due = ww_nurture_due_contacts($db, $max_per_run);
 $started = microtime(true);
 

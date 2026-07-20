@@ -452,8 +452,42 @@ function ww_nurture_upsert_contact(PDO $db, array $data): int {
     return (int)$db->lastInsertId();
 }
 
+/**
+ * Advance a contact to the next step, with retries. This is the single most
+ * important write in the engine: if it does not land, the hourly cron will
+ * re-send the same email again and again. Never let a DB lock skip it.
+ */
+function ww_nurture_advance_contact(PDO $db, array $contact, int $step): bool {
+    $now  = gmdate('Y-m-d H:i:s');
+    $next = ww_nurture_compute_next_send((string)$contact['created_at'], $step, $now);
+    for ($i = 0; $i < 6; $i++) {
+        try {
+            $st = $db->prepare("UPDATE nurture_contacts SET current_step = ?, last_sent_at = ?, next_send_at = ?, updated_at = datetime('now') WHERE id = ?");
+            $st->execute([$step, $now, $next, (int)$contact['id']]);
+            return true;
+        } catch (Throwable $e) {
+            usleep(200000 * ($i + 1));
+        }
+    }
+    error_log('[nurture] CRITICAL: could not advance contact ' . (int)$contact['id'] . ' past step ' . $step);
+    return false;
+}
+
 function ww_nurture_send_one(PDO $db, array $contact, string $brevo_key, string $hmac_secret, string $mailing_address): array {
     $step = (int)$contact['current_step'] + 1;
+
+    // Idempotency guard. A 'pending' row means an earlier run already handed
+    // this exact email to Brevo but died before recording it, so the recipient
+    // already has it. Never send the same step twice. Genuine 'failed:*' rows
+    // are excluded so real delivery failures still retry.
+    $g = $db->prepare("SELECT COUNT(*) FROM nurture_sends WHERE contact_id = ? AND step = ? AND status IN ('sent','pending')");
+    $g->execute([(int)$contact['id'], $step]);
+    if ((int)$g->fetchColumn() > 0) {
+        ww_nurture_advance_contact($db, $contact, $step);
+        error_log('[nurture] skipped duplicate step ' . $step . ' for contact ' . (int)$contact['id']);
+        return ['ok' => true, 'message_id' => null, 'send_id' => null, 'error' => null, 'skipped' => 'already_sent'];
+    }
+
     $tpl = ww_nurture_template($step);
     $subject_merged = ww_nurture_apply_merge($tpl['subject'], $contact);
     $unsub_url      = ww_nurture_unsub_url((int)$contact['id'], $hmac_secret);
@@ -524,17 +558,19 @@ function ww_nurture_send_one(PDO $db, array $contact, string $brevo_key, string 
     $msg_id = is_array($data) && isset($data['messageId']) ? (string)$data['messageId'] : null;
 
     $now = gmdate('Y-m-d H:i:s');
-    $next = ww_nurture_compute_next_send((string)$contact['created_at'], $step, $now);
-    $db->beginTransaction();
+
+    // The email is already out the door. Advance the contact FIRST and with
+    // retries: if this write is lost the cron re-sends the same email hourly.
+    // (This used to be one all-or-nothing transaction; a rollback under SQLite
+    // lock left the contact un-advanced and spammed the recipient.)
+    ww_nurture_advance_contact($db, $contact, $step);
+
+    // Bookkeeping is best effort and must never block or undo the advance.
     try {
         $db->prepare("UPDATE nurture_sends SET brevo_message_id = ?, status = 'sent', sent_at = ? WHERE id = ?")
            ->execute([$msg_id, $now, $send_id]);
-        $db->prepare("UPDATE nurture_contacts SET current_step = ?, last_sent_at = ?, next_send_at = ?, updated_at = datetime('now') WHERE id = ?")
-           ->execute([$step, $now, $next, (int)$contact['id']]);
-        $db->commit();
     } catch (Throwable $e) {
-        $db->rollBack();
-        error_log('[nurture] persist after send failed: ' . $e->getMessage());
+        error_log('[nurture] send-row update failed (email was delivered): ' . $e->getMessage());
     }
     return ['ok' => true, 'message_id' => $msg_id, 'send_id' => $send_id, 'error' => null];
 }
@@ -547,6 +583,9 @@ function ww_nurture_due_contacts(PDO $db, int $limit = 50): array {
                AND next_send_at IS NOT NULL
                AND next_send_at <= datetime('now')
                AND (pause_until IS NULL OR pause_until = '' OR pause_until <= datetime('now'))
+               -- Hard rail: never touch the same person twice in a day, no
+               -- matter what else goes wrong. Real cadence is days apart.
+               AND (last_sent_at IS NULL OR last_sent_at <= datetime('now','-20 hours'))
              ORDER BY next_send_at ASC
              LIMIT ?";
     $st = $db->prepare($sql);
