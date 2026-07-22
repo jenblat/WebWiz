@@ -527,7 +527,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
   @media (max-width:900px){
     .reveal-layout{grid-template-columns:1fr;}
     .edit-panel{position:relative;top:auto;max-height:none;min-height:0;}
-    .reveal-frame{height:60vh;}
+    .reveal-frame{height:100%;}
   }
   @media (max-width:768px){
     main{padding:16px 20px 60px;} header.topbar{padding:16px 20px;}
@@ -545,7 +545,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
     .cta{font-size:16px;height:52px;}
     footer{padding:18px 20px;} footer .row{flex-direction:column;text-align:center;}
     .loading-h2{font-size:32px;} .loading-mascot{width:200px;height:200px;}
-    .reveal-frame{height:55vh;} .wizzy-badge{width:64px;height:64px;}
+    .reveal-frame{height:100%;} .wizzy-badge{width:64px;height:64px;}
     .wizzy-badge-wrap{top:-14px;left:-10px;}
     .speech-bubble{font-size:13px;padding:8px 12px;max-width:200px;}
     .view-reveal{padding:12px;}
