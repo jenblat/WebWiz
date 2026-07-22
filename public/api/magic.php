@@ -278,7 +278,21 @@ if ($describe) {
 } else {
     if ($website === '') ml_fail('Add your website so Wizzy has something to start from.');
     if (!preg_match('~^https?://~i', $website)) $website = 'https://' . $website;
-    if (!filter_var($website, FILTER_VALIDATE_URL)) ml_fail('That website URL looks invalid.');
+    // If the "website" is not a real domain (a business name or typo typed into
+    // the URL box, e.g. "AirGym") and we have a description, don't attempt a
+    // doomed scrape -- generate from the description instead. Never dead-end.
+    $ml_host = (string)parse_url($website, PHP_URL_HOST);
+    $ml_is_domain = ($ml_host !== '' && preg_match('~\.[a-z]{2,}$~i', $ml_host));
+    if (!$ml_is_domain) {
+        if (mb_strlen(trim($description)) >= 20) {
+            if ($company === '') $company = ($ml_host !== '' ? $ml_host : $website);
+            $describe = true; $website = '';
+        } else {
+            ml_fail('Enter a full web address like yourbusiness.com, or leave it blank and tell Wizzy about your business below.');
+        }
+    } elseif (!filter_var($website, FILTER_VALIDATE_URL)) {
+        ml_fail('That website URL looks invalid.');
+    }
 }
 $gen_mode = $describe ? 'describe' : 'magic';
 
@@ -364,6 +378,34 @@ if ($async) {
     ignore_user_abort(true);
     ml_debug("ASYNC token=$token returned; generating in background");
 }
+/**
+ * Last-resort site: a clean, on-brand single page built with NO AI, from just
+ * the business name + owner description. Only used if generation returns nothing
+ * even after a retry, so a visitor is NEVER shown an error page.
+ */
+function ww_last_resort_site(string $biz, string $description, string $website): string {
+    $biz = trim($biz) !== '' ? $biz : 'Your Business';
+    $desc = trim($description);
+    $tagline = $desc !== '' ? preg_split('~(?<=[.!?])\s+~', $desc)[0] : ('Welcome to ' . $biz);
+    $tagline = mb_substr($tagline, 0, 120);
+    $about = $desc !== '' ? $desc : ($biz . ' is committed to quality work and taking great care of every customer.');
+    $h = function ($s) { return htmlspecialchars((string)$s, ENT_QUOTES); };
+    return '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+      . '<title>' . $h($biz) . '</title>'
+      . '<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Georgia,serif;color:#12184A;background:#FAF5EA;line-height:1.6}'
+      . '.wrap{max-width:900px;margin:0 auto;padding:0 24px}header{padding:22px 0;font-weight:700;font-size:20px}'
+      . '.hero{padding:90px 0 70px;text-align:center}.hero h1{font-size:clamp(34px,6vw,60px);line-height:1.1;margin-bottom:18px}'
+      . '.hero p{font-size:20px;color:#3a4166;max-width:640px;margin:0 auto 30px}'
+      . '.btn{display:inline-block;background:#12184A;color:#fff;text-decoration:none;padding:15px 30px;border-radius:10px;font-family:Arial,sans-serif;font-weight:700}'
+      . '.about{background:#fff;padding:64px 0;margin:20px 0;border-radius:20px}.about h2{font-size:30px;margin-bottom:14px}.about p{font-size:18px;color:#3a4166}'
+      . 'footer{padding:40px 0;text-align:center;color:#3a4166;font-family:Arial,sans-serif;font-size:14px}</style></head><body>'
+      . '<div class="wrap"><header>' . $h($biz) . '</header>'
+      . '<section class="hero"><h1>' . $h($biz) . '</h1><p>' . $h($tagline) . '</p><a class="btn" href="#contact">Get in touch</a></section>'
+      . '<section class="about"><div class="wrap"><h2>About us</h2><p>' . $h($about) . '</p></div></section>'
+      . '<footer id="contact">Contact ' . $h($biz) . '</footer>'
+      . '</div></body></html>';
+}
+
 try {
     ml_debug('scrape begin');
     $tS = microtime(true);
@@ -743,7 +785,25 @@ try {
             $htmls[$best] = $rejected[$best];
         }
     }
-    if (!$htmls) throw new Exception('generation produced no usable site');
+    if (!$htmls) {
+        // Retry once -- most empty results are a transient API timeout/rate-limit.
+        ml_debug('no usable site on first pass -- retrying generation once');
+        try {
+            $res2 = anthropic_multi('claude-sonnet-4-6', $reqs, 14000, 0.7, null, ['</html>']);
+            foreach ($res2 as $ri => $_) {
+                $cost += (float)($res2[$ri]['cost_usd'] ?? 0);
+                $rc = finalize_html($res2[$ri]['text'] ?? '');
+                if ($rc && quality_gate($rc)['ok']) { $htmls[$ri] = $rc; }
+                elseif ($rc && strlen($rc) > 3000 && stripos($rc, '<body') !== false) { $htmls[$ri] = $rc; }
+            }
+        } catch (Throwable $e2) { ml_debug('retry gen failed: ' . $e2->getMessage()); }
+    }
+    if (!$htmls) {
+        // Last resort: never show the visitor an error. Build a clean on-brand
+        // template from the business name + description so they ALWAYS get a site.
+        ml_debug('generation still empty -- using last-resort template site');
+        $htmls[1] = ww_last_resort_site($biz, $description, $website);
+    }
     ksort($htmls);
 
     // 1) Write preview files (filesystem — this is what the USER sees)

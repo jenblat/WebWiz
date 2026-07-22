@@ -1275,11 +1275,18 @@ window.__TRY_INIT__ = {
     fetch('/api/magic.php?async=1', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify({
-        website: web.value.trim(), description: desc.value.trim(),
-        name: leadName.trim(), email: leadEmail.trim(), company: leadCompany.trim(),
-        describe: (web.value.trim() === '' ? 1 : 0)
-      })
+      body: (function(){
+        var __w = web.value.trim();
+        // If the URL box holds a business name / typo (no real domain), treat it
+        // as blank so Wizzy builds from the description instead of a doomed scrape.
+        var __host = __w.replace(/^https?:\/\//i,'').split('/')[0];
+        var __web = /\.[a-z]{2,}$/i.test(__host) ? __w : '';
+        return JSON.stringify({
+          website: __web, description: desc.value.trim(),
+          name: leadName.trim(), email: leadEmail.trim(), company: leadCompany.trim(),
+          describe: (__web === '' ? 1 : 0)
+        });
+      })()
     })
     .then(function(r){ return r.json().then(function(j){ return { ok: r.ok, body: j }; }); })
     .then(function(res){
