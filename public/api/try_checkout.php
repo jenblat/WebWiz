@@ -28,7 +28,8 @@ $job = $db->prepare("SELECT id, business_name, generation_mode, customer_email F
 $job->execute([$token]);
 $job = $job->fetch(PDO::FETCH_ASSOC);
 if (!$job) tc_fail('Preview not found.', 404);
-if (($job['generation_mode'] ?? '') !== 'magic') tc_fail('Checkout is only available on instant previews.', 403);
+$gm = (string)($job['generation_mode'] ?? '');
+if ($gm !== 'magic' && $gm !== 'describe') tc_fail('Checkout is only available on instant previews.', 403);
 
 $biz = (string)($job['business_name'] ?? 'Your business');
 $preview_url = 'https://trywebwiz.com/preview/' . $token . '/v1/index.html';

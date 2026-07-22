@@ -1020,6 +1020,9 @@ window.__TRY_INIT__ = {
   if (topbarBuy) {
     topbarBuy.addEventListener('click', function () {
       try { track('topbar_buy_click'); } catch (e) {}
+      body.setAttribute('data-conv', 'on');
+      var __cvc = document.getElementById('convCard');
+      if (__cvc) __cvc.scrollIntoView({behavior: 'smooth', block: 'center'});
       var cc = document.getElementById('convCta');
       if (cc) { cc.click(); return; }
       // Fallback if convCta isn't bound yet — set conv view directly.
