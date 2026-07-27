@@ -1549,7 +1549,7 @@ window.__TRY_INIT__ = {
     fetch('/api/edit.php', {
       method: 'POST',
       headers: { 'Content-Type':'application/json', 'Accept':'application/json' },
-      body: JSON.stringify({ token: state.token, message: message, images: imgs, decisive: decisive }),
+      body: JSON.stringify({ token: state.token, message: message, images: imgs, decisive: decisive, label: display }),
       signal: editCtl ? editCtl.signal : undefined
     })
     .then(function(r){ return r.json().then(function(j){ return { ok:r.ok, body:j }; }); })

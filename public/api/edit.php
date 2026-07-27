@@ -92,6 +92,11 @@ $message = trim((string)($body['message'] ?? ''));
 // expects to SEE a change, not be asked a question. Never answer these with a
 // clarifying reply - make a confident, tasteful choice and apply it.
 $decisive = !empty($body['decisive']);
+// Human-readable label for the request (chips send a long internal instruction
+// but we log the short button text, so the design brief and the nurture emails
+// can quote the customer in words they'd recognise).
+$log_label = trim((string)($body['label'] ?? ''));
+if ($log_label === '' || mb_strlen($log_label) > 160) $log_label = $message;
 
 // ---- Reference images pasted/attached in the editor (base64 data URLs) ----
 $ref_images = [];
@@ -185,7 +190,7 @@ if ($used >= EDIT_CAP) {
 }
 
 $t0 = microtime(true);
-$log_id = ee_log_start($db, $token, (int)$job['id'], $message, count($ref_images));
+$log_id = ee_log_start($db, $token, (int)$job['id'], $log_label, count($ref_images));
 $ee_inflight = '/tmp/wwedit_inflight_' . substr(sha1($token), 0, 12) . '_' . getmypid() . '.marker';
 @file_put_contents($ee_inflight, $token . '|' . date('c') . '|' . mb_substr($message, 0, 140));
 register_shutdown_function(function () use ($ee_inflight) { @unlink($ee_inflight); });
