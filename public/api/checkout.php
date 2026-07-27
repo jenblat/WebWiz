@@ -67,11 +67,16 @@ if ($errors) {
 }
 
 // ---------- Plan price config ----------
-$BUILD_FEE_CENTS = 49900;
+// Canonical pricing: $500 one-time build + $50/month hosting & care.
+// Plan IDs are kept as-is so historical Stripe/webhook records still resolve,
+// but the amounts now match what we actually advertise. (This legacy /start
+// funnel previously charged $499 build and $49/mo while webhook.php's receipt
+// labelled it "$500 plus $50/mo".)
+$BUILD_FEE_CENTS = 50000;
 
 $plan_config = [
     'build_only'    => ['mode' => 'payment',      'monthly_cents' => 0,    'label' => 'WebWiz Build'],
-    'build_plus_49' => ['mode' => 'subscription', 'monthly_cents' => 4900, 'label' => 'WebWiz Hosting & Care'],
+    'build_plus_49' => ['mode' => 'subscription', 'monthly_cents' => 5000, 'label' => 'WebWiz Hosting & Care'],
     'build_plus_99' => ['mode' => 'subscription', 'monthly_cents' => 9900, 'label' => 'WebWiz Hosting & Care + Edits'],
 ];
 $cfg = $plan_config[$plan];

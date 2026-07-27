@@ -663,8 +663,13 @@ if ($tab === 'stats') {
     $subs = stripe_get($STRIPE_SECRET, 'subscriptions', ['status' => 'all', 'limit' => 100]);
     $charges = stripe_get($STRIPE_SECRET, 'charges', ['limit' => 100]);
 
-    $mrr_49 = 0; $mrr_99 = 0; $mrr_other = 0;
-    $count_49 = 0; $count_99 = 0;
+    // Bucket by the CURRENT plan ($50/mo hosting from /try), not the retired
+    // $49/$99 tiers. Previously every real /try customer fell into $mrr_other,
+    // which no tile displayed, and the "active" count under Total MRR summed
+    // only the two dead tiers - so the dashboard could read "0 active" while
+    // the business was actually collecting money.
+    $mrr_50 = 0; $mrr_other = 0;
+    $count_50 = 0; $count_other = 0;
     $past_due = 0;
     foreach (($subs['data'] ?? []) as $s) {
         if (in_array($s['status'], ['active','trialing'], true)) {
@@ -672,13 +677,13 @@ if ($tab === 'stats') {
             foreach (($s['items']['data'] ?? []) as $it) {
                 $monthly += ($it['price']['unit_amount'] ?? 0) * ($it['quantity'] ?? 1);
             }
-            if ($monthly === 4900) { $mrr_49 += 4900; $count_49++; }
-            elseif ($monthly === 9900) { $mrr_99 += 9900; $count_99++; }
-            else { $mrr_other += $monthly; }
+            if ($monthly === 5000) { $mrr_50 += $monthly; $count_50++; }
+            else { $mrr_other += $monthly; $count_other++; }
         }
         if ($s['status'] === 'past_due') $past_due++;
     }
-    $mrr_total = $mrr_49 + $mrr_99 + $mrr_other;
+    $mrr_total    = $mrr_50 + $mrr_other;
+    $count_active = $count_50 + $count_other;
     $rev_total = 0; $one_time = 0;
     foreach (($charges['data'] ?? []) as $c) {
         if ($c['paid']) { $rev_total += $c['amount'] - $c['amount_refunded']; if (empty($c['invoice'])) $one_time++; }
@@ -687,9 +692,9 @@ if ($tab === 'stats') {
     $api_calls = (int)(ww_db()->query('SELECT COUNT(*) FROM api_calls')->fetchColumn() ?? 0);
     ?>
     <div class="stat-grid">
-      <div class="stat"><div class="lbl">Total MRR</div><div class="val">$<?= number_format($mrr_total/100, 0) ?></div><div class="sub"><?= $count_49 + $count_99 ?> active</div></div>
-      <div class="stat"><div class="lbl">$49 plan</div><div class="val"><?= $count_49 ?></div><div class="sub">$<?= number_format($mrr_49/100, 0) ?>/mo</div></div>
-      <div class="stat"><div class="lbl">$99 plan</div><div class="val"><?= $count_99 ?></div><div class="sub">$<?= number_format($mrr_99/100, 0) ?>/mo</div></div>
+      <div class="stat"><div class="lbl">Total MRR</div><div class="val">$<?= number_format($mrr_total/100, 0) ?></div><div class="sub"><?= $count_active ?> active</div></div>
+      <div class="stat"><div class="lbl">$50 hosting</div><div class="val"><?= $count_50 ?></div><div class="sub">$<?= number_format($mrr_50/100, 0) ?>/mo</div></div>
+      <div class="stat"><div class="lbl">Other plans</div><div class="val"><?= $count_other ?></div><div class="sub">$<?= number_format($mrr_other/100, 0) ?>/mo</div></div>
       <div class="stat"><div class="lbl">Past due</div><div class="val"><?= $past_due ?></div><div class="sub">need attention</div></div>
     </div>
     <div class="stat-grid">
