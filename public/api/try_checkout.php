@@ -54,6 +54,11 @@ $payload = [
     'subscription_data[metadata][token]' => $token,
     'subscription_data[metadata][source]'=> 'try_ad_funnel',
     'subscription_data[description]'     => 'WebWiz Hosting',
+    // First month of hosting is on us, so the total due today is exactly the
+    // $500 we advertise everywhere. Without this Stripe collects $500 + the
+    // first $50 hosting period = $550, and the headline number changing at the
+    // moment of payment is a classic way to lose the sale.
+    'subscription_data[trial_period_days]' => 30,
     'automatic_tax[enabled]'             => 'false',
     'billing_address_collection'         => 'required',
     'allow_promotion_codes'              => 'true',

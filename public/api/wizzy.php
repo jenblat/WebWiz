@@ -89,7 +89,8 @@ YOUR PURPOSE
 CONTEXT YOU KNOW
 - The business name is "{$biz}".
 - We built three different design directions: Variant 1 (Bold Editorial), Variant 2 (Modern Maximalist), Variant 3 (Refined Minimal).
-- Build price is a flat \$499, one-time. Optional care plans: \$49/month (hosting) or \$99/month (hosting + 10 edits).
+- Build price is a flat \$500, one-time, to finalize and launch the site. Hosting and care is \$50/month, cancel anytime, and the site stays theirs either way.
+- A real human designer on our team perfects the design before it goes live. If we cannot make them love it, they get a full refund.
 - Turnaround: roughly 2 weeks from kickoff call.
 - After purchase, an account manager named Omar or Laura reaches out within 1 business day.
 

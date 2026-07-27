@@ -28,7 +28,10 @@ $job = $db->prepare("SELECT id, edit_count, generation_mode FROM jobs WHERE toke
 $job->execute([$token]);
 $job = $job->fetch(PDO::FETCH_ASSOC);
 if (!$job) up_fail('Preview not found.', 404);
-if (($job['generation_mode'] ?? '') !== 'magic') up_fail('Uploads are only available on instant previews.', 403);
+// Must accept BOTH modes. Describe-mode is the majority path, and the editor
+// explicitly tells people to "upload the file with the paperclip button" - so
+// rejecting them here produced a 403 right after we invited the upload.
+if (!in_array(($job['generation_mode'] ?? ''), ['magic', 'describe'], true)) up_fail('Uploads are only available on instant previews.', 403);
 
 $used = (int)$job['edit_count'];
 if ($used >= EDIT_CAP_U) up_fail('You\'ve used all your edits for this preview.', 403);
