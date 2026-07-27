@@ -5,7 +5,7 @@
 declare(strict_types=1);
 
 // ---- WebWiz release version (semantic; bump on each meaningful deploy) ----
-if (!defined('WW_VERSION')) define('WW_VERSION', '1.0.0');
+if (!defined('WW_VERSION')) define('WW_VERSION', '1.1.0');
 
 function ww_secrets(): array {
     static $cache = null;

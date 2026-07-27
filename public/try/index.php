@@ -1520,6 +1520,18 @@ window.__TRY_INIT__ = {
         return;
       }
     }
+    // Extra pages are deliberately a HUMAN job, not a Wizzy job. Wizzy builds one
+    // beautiful page; multi-page work is exactly what the $500 designer does.
+    // Catch it before burning one of their 5 edits on something we won't do.
+    if (!decisive && /\b(multi[-\s]?page|pages|another page|new page|second page|(contact|about|services?|blog|gallery|pricing|projects?|shop|menu|team)\s+page)\b/i.test(message)) {
+      appendMsg('user', message); chatInput.value = '';
+      setTimeout(function(){
+        offerHuman("I build you one really strong page. Extra pages are where our human designers come in - they'll build the full multi-page site for you and get it live.");
+      }, 350);
+      try { track('multipage_requested', { message: message.slice(0,140) }); } catch(e){}
+      return;
+    }
+
     if (!message && imgs.length) message = 'Use the attached reference image(s) to guide this edit.';
 
     state.sending = true; chatSend.disabled = true;
