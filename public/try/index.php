@@ -907,7 +907,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
           <input type="text" id="briefContact" placeholder="you@yourbusiness.com">
           <div class="brief-guar">
             <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 2l7 3v6c0 4.4-2.9 8.4-7 9.9C7.9 19.4 5 15.4 5 11V5l7-3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8.6 11.8l2.3 2.3 4.5-4.6" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            <span><strong>Money-back guarantee.</strong> If our team can&rsquo;t make you love it, you get a full refund.</span>
+            <span><strong>100% satisfaction guarantee.</strong> We revise until you love it, however many rounds it takes. Cancel anytime, and your $50/mo never goes up.</span>
           </div>
           <p class="brief-err" id="briefErr"></p>
           <button type="button" class="brief-go" id="briefGo">Send to my designer &amp; launch &mdash; $500</button>
@@ -963,11 +963,47 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
         </div>
         <div class="conv-guarantee">
           <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M12 2l7 3v6c0 4.4-2.9 8.4-7 9.9C7.9 19.4 5 15.4 5 11V5l7-3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8.6 11.8l2.3 2.3 4.5-4.6" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <span><strong>Money-back guarantee.</strong> If our human team can&rsquo;t make you love your website, we refund you in full.</span>
+          <?php
+        // Designer byline for the guarantee block. Photo is optional: if no file is
+        // present yet we fall back to an initial avatar so the block never breaks.
+        $ww_designer_name  = 'Laura';
+        $ww_designer_title = 'Co-founder &amp; Design Lead';
+        $ww_designer_img   = '';
+        foreach (['laura.jpg','laura.jpeg','laura.webp','laura.png'] as $ww_f) {
+            if (is_file(dirname(__DIR__) . '/preview/' . $ww_f)) { $ww_designer_img = '/preview/' . $ww_f; break; }
+        }
+      ?>
+        <span class="cg-head-txt">100% Satisfaction Guarantee</span>
+        <div class="cg-person">
+          <?php if ($ww_designer_img !== ''): ?>
+            <img class="cg-face" src="<?= htmlspecialchars($ww_designer_img, ENT_QUOTES) ?>" alt="<?= htmlspecialchars($ww_designer_name, ENT_QUOTES) ?>, your designer at WebWiz" width="54" height="54" loading="lazy" decoding="async">
+          <?php else: ?>
+            <span class="cg-face cg-initial" aria-hidden="true"><?= htmlspecialchars(mb_substr($ww_designer_name, 0, 1)) ?></span>
+          <?php endif; ?>
+          <div class="cg-quote">
+            <p>&ldquo;Your site isn&rsquo;t finished until you say it is. We keep revising until you love it.&rdquo;</p>
+            <span class="cg-by"><?= $ww_designer_name ?>, <?= $ww_designer_title ?></span>
+          </div>
+        </div>
+        <ul class="cg-list">
+          <li><span class="cg-ck">&#10003;</span><span><strong>Revisions until you love it.</strong> No round limit.</span></li>
+          <li><span class="cg-ck">&#10003;</span><span><strong>Cancel anytime.</strong> No contract, no cancellation fee.</span></li>
+          <li><span class="cg-ck">&#10003;</span><span><strong>Price locked at $50/mo.</strong> It never goes up.</span></li>
+        </ul>
         </div>
         <style>
-          .conv-guarantee{display:flex;gap:11px;align-items:flex-start;background:#eaf7f1;border:1.5px solid #bfe6d4;border-radius:13px;padding:13px 15px;margin:14px 0 2px;color:#12603f;font-size:14px;line-height:1.45;}
-          .conv-guarantee svg{flex:none;margin-top:1px;}
+          .conv-guarantee{display:flex;flex-wrap:wrap;gap:9px;align-items:center;background:#eaf7f1;border:1.5px solid #bfe6d4;border-radius:13px;padding:13px 15px;margin:14px 0 2px;color:#12603f;font-size:14px;line-height:1.45;}
+          .conv-guarantee svg{flex:none;}
+      .conv-guarantee .cg-head-txt{font-weight:800;font-size:14.5px;letter-spacing:.01em;}
+      .cg-person{flex-basis:100%;display:flex;gap:11px;align-items:flex-start;margin:2px 0 2px;}
+      .cg-face{flex:none;width:54px;height:54px;border-radius:50%;object-fit:cover;object-position:center top;border:2px solid #12603f;background:#d8efe3;}
+      .cg-initial{display:flex;align-items:center;justify-content:center;font-weight:800;font-size:23px;color:#12603f;line-height:1;}
+      .cg-quote p{margin:0 0 3px;font-style:italic;line-height:1.4;}
+      .cg-by{font-size:12.5px;font-weight:700;opacity:.85;}
+      .cg-list{flex-basis:100%;list-style:none;margin:0;padding:0;display:grid;gap:6px;}
+      .cg-list li{display:flex;gap:8px;align-items:flex-start;font-size:13.5px;line-height:1.4;}
+      .cg-ck{flex:none;font-weight:900;}
+      @media (max-width:420px){.cg-face{width:46px;height:46px;}.cg-list li{font-size:13px;}}
         </style>
         <button type="button" class="conv-cta" id="convCta">Launch my site for $500 &rarr;</button>
         <p class="conv-foot">We handle everything. You don&rsquo;t touch a thing.</p>
