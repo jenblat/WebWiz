@@ -129,7 +129,7 @@ $plan_label = [
       <div class="step">
         <span class="num">Step 2</span>
         <h3>We design and build.</h3>
-        <p>You get a designed site within ~10 business days. Two revision rounds included. We handle hosting, domain, email, the lot.</p>
+        <p>You get a designed site within ~10 business days. We revise until you love it. We handle hosting, domain, email, the lot.</p>
       </div>
       <div class="step">
         <span class="num">Step 3</span>

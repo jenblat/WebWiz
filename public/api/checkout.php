@@ -109,7 +109,7 @@ if ($cfg['mode'] === 'payment') {
         'price_data' => [
             'currency'     => 'usd',
             'unit_amount'  => $BUILD_FEE_CENTS,
-            'product_data' => ['name' => 'WebWiz Build', 'description' => 'Hand-designed website. Two revision rounds. Hosting, SSL, domain — first year on us.'],
+            'product_data' => ['name' => 'WebWiz Build', 'description' => 'Hand-designed website. Revisions until you love it. Hosting, SSL, domain — first year on us.'],
         ],
         'quantity' => 1,
     ]];

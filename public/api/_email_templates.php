@@ -151,7 +151,7 @@ function ww_email_order_received(array $v): array {
             ])
            . ww_email_steps('What happens next.', [
                 ['title' => "We'll reach out.",   'body' => 'Keep an eye on your inbox.'],
-                ['title' => 'We design and build.', 'body' => 'Hand-built site, two rounds of revisions, real human notes.'],
+                ['title' => 'We design and build.', 'body' => 'Hand-built site, revisions until you love it, real human notes.'],
                 ['title' => 'Your site goes live.', 'body' => 'A handful of days, start to finish.'],
             ])
            . ww_email_cta('Reply with any questions', 'mailto:hello@trywebwiz.com')

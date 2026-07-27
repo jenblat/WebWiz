@@ -959,7 +959,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
           <div class="big">$500 to launch</div>
           <div class="save" style="font-size:14px;font-weight:800;color:#1a7f4b;margin-top:2px;">You save $4,500</div>
           <div class="sub">+ $50/month for hosting &amp; care</div>
-          <div class="note">Cancel hosting anytime. The site stays yours either way.</div>
+          <div class="note">Cancel hosting anytime, no cancellation fee. We&rsquo;ll send you your site files.</div>
         </div>
         <div class="conv-guarantee">
           <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M12 2l7 3v6c0 4.4-2.9 8.4-7 9.9C7.9 19.4 5 15.4 5 11V5l7-3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8.6 11.8l2.3 2.3 4.5-4.6" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>

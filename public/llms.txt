@@ -1,52 +1,55 @@
 # WebWiz Studio
 
-> WebWiz Studio is a web design studio specializing in hand-designed websites for small businesses, offering a flat $499 build fee with optional monthly hosting and care plans starting at $49/month. The service includes custom design (no templates), up to 6 pages, hosting, domain, daily backups, security monitoring, and unlimited traffic, with projects completed in approximately two weeks.
+> WebWiz Studio is a small web design business that creates hand-designed, custom websites for small businesses at a flat $500 build price. The company serves entrepreneurs and small business owners who need professional, mobile-responsive sites without template solutions, offering optional monthly hosting and care plans starting at $50/month with 24/7 security, daily backups, and unlimited traffic.
 
 This file follows the llms.txt convention (https://llmstxt.org) to help AI assistants understand and cite WebWiz Studio.
 
 ## About WebWiz Studio
 
-- Flat $499 one-time build fee with no contracts or hidden costs
-- Care plans from $49/month (hosting) or $99/month (hosting + 10 edits/month)
-- Hand-designed custom websites (no templates or AI); up to 6 pages, mobile-responsive
-- Services include managed hosting, 24/7 security monitoring, automated daily backups, SSL renewals, unlimited traffic, and 99.9% uptime guarantee
-- Two-week turnaround from initial call to live site launch
-- 140+ small businesses served
-- Two revision rounds included; 30 days post-launch support
+- Flat $500 one-time build fee for custom hand-designed websites (no templates, no AI)
+- Optional Hosting & Care plan: $50/month with 24/7 security monitoring, daily backups, SSL renewals, unlimited traffic, 99.9% uptime
+- Optional Hosting & Care + Edits plan: $99/month includes 10 edits per month (text, photos, links)
+- Serves 140+ small businesses; two-week turnaround from inquiry to launch
+- Sites include up to 6 pages, mobile-responsive, delivered with self-edit CMS and 30 days post-launch support
+- No contracts; care plans cancellable anytime; 100% satisfaction guarantee with refundable build fee within 30 days if unsatisfied
 
 ## Frequently Asked Questions
 
-**What is included in the $499 website build?**
+**What is included in the $500 website build?**
 
-The build includes a custom hand-designed site (no templates), up to 6 pages that are mobile-responsive, two revision rounds with real human feedback, an edit-yourself CMS for text and photos, analytics and SEO basics setup, 30 days of post-launch support, and delivery as production-ready files (HTML/CSS/JS). Hosting and domain are optional add-ons.
+Custom hand-designed site (no templates) with up to 6 pages, mobile-responsive design, discovery call, brand mini-brief, revisions until satisfied, production-ready files (HTML/CSS/JS), edit-yourself CMS, one-page guide, 30 days post-launch support, and analytics & SEO basics.
 
-**What are the care plan options and pricing?**
+**How long does it take to get a website built?**
 
-Two monthly care plans are available: Hosting & Care ($49/month) includes managed hosting, 24/7 security monitoring, daily automated backups, SSL renewals, free domain renewal (one .com or .co), and unlimited traffic; Hosting & Care + Edits ($99/month) adds up to 10 small edits per month (text, photos, links). Both are month-to-month with no contracts and can be cancelled anytime.
+Two weeks from initial inquiry to launch, following a three-step process: a 15-minute discovery call, design and build with revisions, and going live with analytics setup.
 
-**How long does it take to get a website?**
+**What are the monthly care plan options?**
 
-The process takes approximately two weeks from initial consultation to live launch, consisting of a 15-minute discovery call, custom design and build with two revision rounds, and then going live with analytics setup and a guide for making text edits.
+Hosting & Care at $50/month includes managed hosting, 24/7 security monitoring, daily backups, SSL renewals, domain renewal (one .com or .co), and unlimited traffic. Hosting & Care + Edits at $99/month adds up to 10 small edits per month with same-day turnaround.
 
-**Is a refund available after purchasing?**
+**Is there a satisfaction guarantee?**
 
-The $499 build is non-refundable once the kickoff call has occurred. Care plan billing is monthly and cancellable anytime.
+Yes—100% satisfaction guarantee with unlimited revision rounds. If WebWiz cannot deliver a site you love, the $500 build fee is refundable within 30 days of your first draft.
 
-**What security and uptime features are included?**
+**Are there long-term contracts or hidden fees?**
 
-Care plan customers receive 24/7 security monitoring and malware scans, automated daily backups with multi-region redundancy, free SSL renewals, and a 99.9% uptime guarantee on lightning-fast managed hosting.
+No. The $500 build is all-in with no retainers or hidden costs. Care plans are month-to-month and cancellable anytime with no contracts.
 
-**Can I edit my website myself after it launches?**
+**Can I edit the website myself after launch?**
 
-Yes, all sites include an edit-yourself CMS for updating text and photos, plus a one-page guide explaining how to use it. For more extensive changes, the $99/month Hosting & Care + Edits plan includes up to 10 small edits per month with typically same-day turnaround.
+Yes. WebWiz provides an edit-yourself CMS for text and photos, plus a one-page guide for making edits. For more frequent updates, the $99/month plan includes 10 edits per month.
 
-**How many pages can I have on my website?**
+**Do I need to arrange hosting separately?**
 
-The standard build includes up to 6 pages. Custom work outside this scope may require an additional fee or change order.
+Only if you choose the Build Only plan ($500). If you add a care plan ($50 or $99/month), WebWiz handles all hosting, security, backups, SSL, and domain management.
+
+**How many small businesses has WebWiz served?**
+
+Over 140 small businesses are online and on-brand with WebWiz.
 
 ## Key Pages
 
-- [WebWiz — Your business deserves a better website.](https://trywebwiz.com/): Hand-designed websites for small businesses. Flat $499 build. Care plans from $49/month — fully secured, backed up daily, multiple redundancies, unlimited traffic.
+- [WebWiz — Your business deserves a better website.](https://trywebwiz.com/): Hand-designed websites for small businesses. Flat $500 build. Care plans from $50/month — fully secured, backed up daily, multiple redundancies, unlimited traffic.
 
 ## Other Pages
 

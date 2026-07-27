@@ -11,8 +11,8 @@ URL: https://trywebwiz.com/
 
 WebWiz — Your business deserves a better website. 
 
- ★ HAND-DESIGNED WEBSITES ★ FLAT $499 BUILD ★ CARE PLANS FROM $49/MO ★ UNLIMITED TRAFFIC ★ BACKED UP DAILY ★ MADE BY HUMANS 
- ★ HAND-DESIGNED WEBSITES ★ FLAT $499 BUILD ★ CARE PLANS FROM $49/MO ★ UNLIMITED TRAFFIC ★ BACKED UP DAILY ★ MADE BY HUMANS 
+ ★ HAND-DESIGNED WEBSITES ★ FLAT $500 BUILD ★ CARE PLANS FROM $50/MO ★ UNLIMITED TRAFFIC ★ BACKED UP DAILY ★ MADE BY HUMANS 
+ ★ HAND-DESIGNED WEBSITES ★ FLAT $500 BUILD ★ CARE PLANS FROM $50/MO ★ UNLIMITED TRAFFIC ★ BACKED UP DAILY ★ MADE BY HUMANS 
 
  WebWiz . 
 
@@ -25,7 +25,7 @@ WebWiz — Your business deserves a better website.
 
  ★ A WEB STUDIO FOR SMALL BUSINESS 
  Your business deserves a better website. 
- Hand-designed by humans. Hosting, domain, and the boring bits — sorted. Flat $499. No surprises. 
+ Hand-designed by humans. Hosting, domain, and the boring bits — sorted. Flat $500. No surprises. 
  
  Start my site → 
  See how it works 
@@ -37,7 +37,7 @@ WebWiz — Your business deserves a better website.
  
  140+ small businesses, online & on-brand 
 
- ★ FLAT $499 
+ ★ FLAT $500 
  ★ NO CONTRACTS 
  ★ MADE BY HUMANS 
  ★ HOSTING INCLUDED 
@@ -51,7 +51,7 @@ WebWiz — Your business deserves a better website.
 
  2 
  We design & build. 
- You get a real, hand-designed site — not a template. Two rounds of revisions. We handle hosting, domain, email, the lot. 
+ You get a real, hand-designed site — not a template. We revise until you love it. We handle hosting, domain, email, the lot. 
 
  3 
  You go live. 
@@ -63,11 +63,11 @@ WebWiz — Your business deserves a better website.
  ✓ Custom design — no templates, no AI sludge 
  ✓ Up to 6 pages, mobile-responsive 
  ✓ Delivered as ready-to-deploy files (or add a Care plan for hosting) 
- ✓ Two rounds of revisions, real human notes 
+ ✓ Revisions until you love it, real human notes 
  ✓ Edit-it-yourself CMS for text & photos 
 
  ★ FLAT RATE 
- $ 499 
+ $ 500 
  All-in. Forever. No retainers. No "from". 
  Tap to see what's inside ↻ ★ 
 
@@ -76,7 +76,7 @@ WebWiz — Your business deserves a better website.
  Discovery call & brand mini-brief 
  Custom design — desktop & mobile 
  Up to 6 pages, hand-built 
- Two revision rounds 
+ Revisions until you love it 
  Delivered as production-ready files (HTML/CSS/JS) 
  Hosting & domain: not included — add a Care plan or use your own 
  Analytics & SEO basics 
@@ -92,7 +92,7 @@ WebWiz — Your business deserves a better website.
 
  ★ HOSTING & CARE 
  Always-on hosting. 
- $ 49 / month 
+ $ 50 / month 
  The site lives, breathes, and stays bulletproof while you run your business. 
  
  ✓ Lightning-fast managed hosting 
@@ -151,7 +151,7 @@ WebWiz — Your business deserves a better website.
  Maria's Tortilla Co. · Oakland 
 
  ★ ★ ★ ★ ★ 
- "Three quotes from agencies, all over $8k. WebWiz did better work for $499. Wild." 
+ "Three quotes from agencies, all over $8k. WebWiz did better work for $500. Wild." 
  
  J 
  
@@ -430,17 +430,17 @@ Start a site · WebWiz
 
  &star; Build only 
  Just the files. 
- $ 499 one-time 
+ $ 500 one-time 
  Hand-designed site, delivered as ready-to-deploy files. You arrange your own hosting & domain. No ongoing support. 
 
  &star; Most popular 
  Build + Hosting & Care. 
- $ 499 + $49/mo 
+ $ 500 + $50/mo 
  Site + always-on hosting: security, daily backups, SSL renewals, unlimited traffic, 99.9% uptime. Cancel anytime. 
 
  &star; Full service 
  Build + Care + Edits. 
- $ 499 + $99/mo 
+ $ 500 + $99/mo 
  Everything above, plus 10 edits/month (text, photos, links). Usually same-day turnaround. 
 
  About you. 
@@ -469,7 +469,7 @@ Start a site · WebWiz
 
  Continue to secure checkout &rarr; 
  &star; Payments powered by Stripe &middot; SSL secured 
- By submitting, you agree to our Terms and Privacy Policy . $499 build is non-refundable once the kickoff call has happened. Care plan billing is monthly and cancellable anytime. 
+ By submitting, you agree to our Terms and Privacy Policy . 100% satisfaction guarantee: we revise until you love it, with no limit on rounds. If we still can&rsquo;t get there, the $500 build fee is refundable within 30 days of your first draft. Care plan billing is monthly and cancellable anytime. 
 
  WebWiz . 
  A tiny design studio making beautiful websites for small businesses. We're in your corner. 
@@ -535,7 +535,7 @@ Terms of Service · WebWiz
  Contact 
 
  The short version 
- Hire us to build a website for $499. Pay $49 or $99 per month if you want us to keep hosting and caring for it. Be honest with us, give us what we need, and we'll ship you a beautiful site. If something goes wrong, we'll work it out. The fine print below explains what to do when life gets weird.
+ Hire us to build a website for $500. Pay $50 or $99 per month if you want us to keep hosting and caring for it. We revise until you love it, and if we can&rsquo;t get there we refund the build fee. Be honest with us, give us what we need, and we'll ship you a beautiful site. If something goes wrong, we'll work it out. The fine print below explains what to do when life gets weird.
 
  The agreement 
  These Terms of Service (the "Terms") form a binding agreement between you ("you," "your," or "Client") and WebWiz Studio ("WebWiz," "we," "us," or "our"). They govern your purchase and use of any services we offer, including website design and build, ongoing hosting, and care plans (together, "the Services"), and your use of trywebwiz.com (the "Site"). 
@@ -553,15 +553,16 @@ Terms of Service · WebWiz
  Pricing and payment 
 
  Build cost 
- The standard build is a flat $499 USD , payable in full at the time you place the order. The build cost includes everything described on our pricing page at the time of purchase. Custom work outside that scope is quoted separately. 
+ The standard build is a flat $500 USD , payable in full at the time you place the order. The build cost includes everything described on our pricing page at the time of purchase. Custom work outside that scope is quoted separately. 
 
  Care plans 
  Our optional monthly care plans are billed in advance: 
  
- Hosting & Care &mdash; $49/month: managed hosting, security, backups, SSL, domain renewal (one .com or .co), and unlimited traffic. 
+ Hosting & Care &mdash; $50/month: managed hosting, security, backups, SSL, domain renewal (one .com or .co), and unlimited traffic. 
  Hosting & Care + Edits &mdash; $99/month: everything above plus up to 10 small edits per month (text, photos, links, simple swaps). Unused edits do not roll over. Edits are not transferable, refundable, or convertible to cash. Major redesigns or new pages aren't included; we'll quote those separately. 
  
- Care plans are month-to-month. You can cancel anytime; cancellation takes effect at the end of your current billing period. 
+ Care plans are month-to-month. You can cancel anytime; cancellation takes effect at the end of your current billing period. There is no contract, no minimum term, and no cancellation fee . 
+ Price lock. Your monthly rate is locked for as long as you stay continuously subscribed. We will not raise your price, regardless of what we charge new customers later. If your subscription lapses and you resubscribe, the then current rate applies. 
 
  Payment method 
  Payments are processed by Stripe. By placing an order, you authorize us (and Stripe) to charge your payment method for the amounts you've agreed to, including recurring charges if you've selected a care plan. You agree to keep your billing details current. If a charge fails, we'll notify you and may suspend the affected Services until you provide a working payment method. 
@@ -574,7 +575,9 @@ Terms of Service · WebWiz
 
  Refund policy 
  
- Build cost: non-refundable once we've started discovery (the project kickoff). If you cancel before the kickoff call, we'll refund the full $499 minus any payment processing fees. 
+ Our 100% satisfaction guarantee: your website is not finished until you say it is. After you order, a designer customizes your site, you tell us what to change, and we revise and send it back. There is no limit on the number of revision rounds . We keep going until you are happy. To use it, just reply to your designer or email us. 
+ Build cost: if we have made a good faith effort across revisions and you still do not love your site, the $500 build fee is refundable within 30 days of the day we deliver your first customized draft. The clock starts at delivery, not at purchase, so a slow turnaround on our side never eats into your window. We only ask that you have told us at least once what was wrong and given us a chance to fix it, since we cannot fix what we have not heard about. On refund we cancel your plan and take the site down. 
+ Not covered by the refund: domain registration, if we bought a domain for you. That is a real cost paid to the registrar and cannot be recovered. The domain stays yours and we will transfer it on request. Care plan fees for months already served are also not refundable. 
  Care plans: non-refundable for the current month, but you can cancel anytime to stop the next charge. 
  Errors and double charges: always refundable. Just let us know. 
 
@@ -588,7 +591,7 @@ Terms of Service · WebWiz
  Tell us if anything you submit is confidential. 
 
  Timeline and revisions 
- Most builds take about two weeks from kickoff to launch. The exact timeline depends on how quickly content and feedback come back to us. Each project includes two rounds of revisions . Additional rounds are billed at our then-current hourly rate; we'll quote you before doing the work. 
+ Most builds take about two weeks from kickoff to launch. The exact timeline depends on how quickly content and feedback come back to us. Under our 100% satisfaction guarantee there is no limit on revision rounds . We keep revising until you are happy with your site, at no additional cost. 
  "A revision" means changes to the design or copy on existing pages. New pages, new features, or net-new design directions are out of scope and quoted separately. 
 
  Hosting and care plans 
@@ -616,22 +619,4 @@ Terms of Service · WebWiz
  
  Tools, frameworks, libraries, snippets, and components we created or use across multiple projects. 
  Our methodology and know-how. 
- Drafts, mockups, and unused concepts we didn't deliver. 
- The WebWiz brand, marks, and "Wizzy" mascot. 
- 
- You grant us a non-exclusive, royalty-free license to display screenshots and links to your live site in our portfolio, case studies, and marketing materials, unless you ask us in writing not to. 
-
- Third-party tools 
- Your site may rely on third-party services we don't control: domain registrars, payment processors (Stripe), font providers (Google Fonts), email forwarding, analytics, and others. We're not responsible for their outages, pricing changes, policy changes, or discontinuation. If a third-party service we depend on becomes unavailable, we'll do our best to swap in a replacement. 
-
- Acceptable use 
- You agree not to use the Services to: 
- 
- Host or distribute illegal content, malware, phishing pages, or content that infringes someone else's rights. 
- Send unsolicited bulk email (spam) from infrastructure we manage. 
- Run cryptocurrency mining, torrenting nodes, ad networks, or proxy services. 
- Host adult content, gambling, or anything that violates our hosting provider's terms. 
- Resell our hosting to third parties without our written consent. 
- Attempt to reverse engineer, attack, or interfere with our infrastructure. 
- 
- "Unlimited traffic" means we don't meter normal business traffic. We reserve the right to reasonab
+ Drafts, mocku
