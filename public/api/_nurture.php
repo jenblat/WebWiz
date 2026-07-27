@@ -294,6 +294,39 @@ function ww_nurture_qa_answers(string $token): array {
     return $j['answers'];
 }
 
+/** What they actually asked Wizzy to change, in their own words. Max 4. */
+function ww_nurture_edit_requests(string $token): array {
+    $token = preg_replace('~[^a-f0-9]~', '', strtolower($token));
+    if ($token === '' || !function_exists('ww_db')) return [];
+    try {
+        $st = ww_db()->prepare("SELECT message FROM edit_log WHERE token = ? AND message IS NOT NULL AND message <> '' ORDER BY id ASC");
+        $st->execute([$token]);
+        $out = [];
+        foreach ($st->fetchAll(PDO::FETCH_COLUMN) as $m) {
+            $m = trim((string)$m);
+            // Skip the long decisive chip instructions - keep the human phrasing.
+            if ($m === '' || mb_strlen($m) > 120) continue;
+            if (!in_array($m, $out, true)) $out[] = $m;
+        }
+        return array_slice($out, 0, 4);
+    } catch (Throwable $e) { return []; }
+}
+
+/**
+ * Paragraph built from the edits they requested. This is the most persuasive
+ * thing we know about a lead: their own words about what they wanted changed.
+ */
+function ww_nurture_edits_para(array $contact): string {
+    $reqs = ww_nurture_edit_requests((string)($contact['token'] ?? ''));
+    if (!$reqs) return '';
+    $q = [];
+    foreach ($reqs as $r) $q[] = '&ldquo;' . htmlspecialchars($r, ENT_QUOTES) . '&rdquo;';
+    if (count($q) === 1)      $joined = $q[0];
+    elseif (count($q) === 2)  $joined = $q[0] . ' and ' . $q[1];
+    else                      $joined = implode(', ', array_slice($q, 0, -1)) . ' and ' . $q[count($q) - 1];
+    return 'When you were building it you asked for ' . $joined . '. A designer on our team can finish exactly that, by hand, and get it live for you.';
+}
+
 /** Warm personalized paragraph from the visitor's Q&A answers. '' if none. */
 function ww_nurture_qa_para(array $contact): string {
     $ans = ww_nurture_qa_answers((string)($contact['token'] ?? ''));
@@ -352,10 +385,12 @@ function ww_nurture_render_html(array $tpl, array $contact, string $unsub_url, s
     foreach (($tpl['paragraphs'] ?? []) as $i => $p) {
         $merged = ww_nurture_apply_merge($p, $contact);
         $body  .= ww_email_para($merged, $i === 0 ? 14 : 16);
-        // After the greeting, on the early touches, weave in what they told Wizzy.
-        if ($i === 0 && ((int)($contact['current_step'] ?? 0) + 1) <= 3) {
-            $qa_para = ww_nurture_qa_para($contact);
-            if ($qa_para !== '') $body .= ww_email_para($qa_para, 16);
+        // After the greeting, weave in what they actually did. Their edit
+        // requests beat their Q&A answers - more specific, more persuasive.
+        if ($i === 0 && ((int)($contact['current_step'] ?? 0) + 1) <= 4) {
+            $p_para = ww_nurture_edits_para($contact);
+            if ($p_para === '') $p_para = ww_nurture_qa_para($contact);
+            if ($p_para !== '') $body .= ww_email_para($p_para, 16);
         }
     }
     if ($cta_label !== '' && $cta_url !== '') {
@@ -389,9 +424,10 @@ function ww_nurture_render_text(array $tpl, array $contact, string $unsub_url, s
         // Strip HTML tags for the text version
         $out .= trim(html_entity_decode(strip_tags($merged), ENT_QUOTES)) . "\n\n";
     }
-    if (((int)($contact['current_step'] ?? 0) + 1) <= 3) {
-        $qa_para = ww_nurture_qa_para($contact);
-        if ($qa_para !== '') $out .= trim(html_entity_decode(strip_tags($qa_para), ENT_QUOTES)) . "\n\n";
+    if (((int)($contact['current_step'] ?? 0) + 1) <= 4) {
+        $p_para = ww_nurture_edits_para($contact);
+        if ($p_para === '') $p_para = ww_nurture_qa_para($contact);
+        if ($p_para !== '') $out .= trim(html_entity_decode(strip_tags($p_para), ENT_QUOTES)) . "\n\n";
     }
     $cta_url   = ww_nurture_apply_merge($tpl['cta_url']   ?? NURTURE_DOMAIN . '/try/', $contact);
     $cta_label = ww_nurture_apply_merge($tpl['cta_label'] ?? 'See your website', $contact);

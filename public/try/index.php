@@ -854,10 +854,10 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
       <div class="chat-history" id="chatHistory" aria-live="polite"><div class="msg msg-wiz"><img class="tinywiz" src="/preview/wizzy-face.png" alt=""><span>Here&rsquo;s what I made you. What do you think?</span></div></div>
 
       <div class="suggested-row" id="suggestedRow">
-        <span class="sugchip" data-fill="Change the colors">Change the colors</span>
-        <span class="sugchip" data-fill="Make it feel more modern">Make it feel more modern</span>
-        <span class="sugchip" data-fill="Add a section about our services">Add a section about our services</span>
-        <span class="sugchip" data-fill="Update the contact info">Update the contact info</span>
+        <span class="sugchip" data-send="Choose a fresh color palette that genuinely suits this business and apply it across the entire site (backgrounds, buttons, accents, headings). Commit to one specific tasteful scheme.">Change the colors</span>
+        <span class="sugchip" data-send="Modernize the visual design across the whole site: cleaner layout, more generous spacing, stronger type hierarchy, contemporary buttons and cards. Keep all existing content and images.">Make it feel more modern</span>
+        <span class="sugchip" data-send="Add a clear services section that fits this business, placed sensibly in the page and matching the existing design language.">Add a section about our services</span>
+        <span class="sugchip" data-fill="Update the contact info to: ">Update the contact info</span>
       </div>
 
       <div class="chat-input-row">
@@ -883,15 +883,68 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
         </style>
       </div>
 
+      <!-- ============ Design brief: "have a human finish it" ============ -->
+      <div class="brief-back" id="briefBack" aria-hidden="true">
+        <div class="brief-card" role="dialog" aria-modal="true" aria-labelledby="briefTitle">
+          <button type="button" class="brief-x" id="briefX" aria-label="Close">&times;</button>
+          <div class="brief-head">
+            <img src="/preview/wizzy-face.png" alt="" class="brief-wiz">
+            <div>
+              <h2 id="briefTitle">Let a real designer finish it</h2>
+              <p>Wizzy gets you 90% there. Tell us the rest and a human on our team takes it the last mile.</p>
+            </div>
+          </div>
+          <label class="brief-lbl" for="briefChanges">What should we change or add?</label>
+          <textarea id="briefChanges" rows="5" placeholder="Colors, photos, wording, sections you want added..."></textarea>
+          <p class="brief-hint" id="briefHint" style="display:none">We pulled in what you already asked Wizzy. Edit or add to it.</p>
+          <label class="brief-lbl" for="briefNotes">Anything else your designer should know? <span>(optional)</span></label>
+          <textarea id="briefNotes" rows="3" placeholder="Brand colors, your logo, examples you like, who your customers are..."></textarea>
+          <label class="brief-lbl" for="briefContact">Best email or phone to reach you <span>(optional)</span></label>
+          <input type="text" id="briefContact" placeholder="you@yourbusiness.com">
+          <div class="brief-guar">
+            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 2l7 3v6c0 4.4-2.9 8.4-7 9.9C7.9 19.4 5 15.4 5 11V5l7-3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8.6 11.8l2.3 2.3 4.5-4.6" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span><strong>Money-back guarantee.</strong> If our team can&rsquo;t make you love it, you get a full refund.</span>
+          </div>
+          <p class="brief-err" id="briefErr"></p>
+          <button type="button" class="brief-go" id="briefGo">Send to my designer &amp; launch &mdash; $500</button>
+          <p class="brief-sub">You&rsquo;ll go to secure checkout next. We save your notes either way.</p>
+        </div>
+      </div>
+      <style>
+        .brief-back{display:none;position:fixed;inset:0;background:rgba(18,24,74,0.55);z-index:9000;align-items:center;justify-content:center;padding:20px;overflow-y:auto;}
+        body[data-brief="on"] .brief-back{display:flex;}
+        .brief-card{background:var(--cream,#FAF5EA);border:2px solid var(--navy,#12184A);border-radius:20px;box-shadow:8px 8px 0 var(--navy,#12184A);max-width:520px;width:100%;padding:24px;position:relative;max-height:92vh;overflow-y:auto;}
+        .brief-x{position:absolute;top:12px;right:14px;background:none;border:none;font-size:26px;line-height:1;color:var(--navy,#12184A);cursor:pointer;opacity:.6;}
+        .brief-x:hover{opacity:1;}
+        .brief-head{display:flex;gap:12px;align-items:flex-start;margin-bottom:16px;padding-right:24px;}
+        .brief-wiz{width:44px;height:44px;border-radius:50%;border:2px solid var(--navy,#12184A);background:#fff;flex:none;}
+        .brief-head h2{font-family:var(--display,Georgia,serif);font-weight:900;font-size:22px;color:var(--navy,#12184A);margin:0 0 4px;line-height:1.15;}
+        .brief-head p{font-size:14px;color:#4a5170;margin:0;line-height:1.45;}
+        .brief-lbl{display:block;font-weight:700;font-size:13.5px;color:var(--navy,#12184A);margin:14px 0 5px;}
+        .brief-lbl span{font-weight:500;color:#7a819c;}
+        .brief-card textarea,.brief-card input[type=text]{width:100%;box-sizing:border-box;font-family:inherit;font-size:15px;padding:11px 13px;border:2px solid #e0d8c6;border-radius:11px;background:#fff;color:#26364a;resize:vertical;}
+        .brief-card textarea:focus,.brief-card input[type=text]:focus{outline:none;border-color:var(--navy,#12184A);}
+        .brief-hint{font-size:12.5px;color:#7a819c;margin:6px 0 0;}
+        .brief-guar{display:flex;gap:10px;align-items:flex-start;background:#eaf7f1;border:1.5px solid #bfe6d4;border-radius:12px;padding:12px 14px;margin:18px 0 4px;color:#12603f;font-size:13.5px;line-height:1.45;}
+        .brief-guar svg{flex:none;margin-top:1px;}
+        .brief-err{display:none;color:#b3261e;font-size:13.5px;font-weight:600;margin:10px 0 0;}
+        .brief-err.on{display:block;}
+        .brief-go{width:100%;margin-top:14px;background:var(--navy,#12184A);color:#fff;font-family:inherit;font-weight:800;font-size:16.5px;padding:15px;border:none;border-radius:13px;cursor:pointer;box-shadow:4px 4px 0 var(--gold,#F7C84A);}
+        .brief-go:hover{filter:brightness(1.08);}
+        .brief-go[disabled]{opacity:.6;cursor:not-allowed;}
+        .brief-sub{text-align:center;font-size:12.5px;color:#7a819c;margin:10px 0 0;}
+        @media(max-width:560px){.brief-card{padding:20px;box-shadow:5px 5px 0 var(--navy,#12184A);}}
+      </style>
+
       <!-- ============ Phase 4 conversion card (lives in same panel) ============ -->
       <div class="conv-card" id="convCard">
         <div class="conv-head">
           <h2>Want to make it real?</h2>
           <div class="wiz-mini"><img src="/preview/wizzy-face.png" alt="Wizzy"></div>
         </div>
-        <p class="conv-lead">Previewing is free. A custom website design typically runs $5,000. Yours is a flat $500 to finalize and launch, so you save about $4,500. Here&rsquo;s what that covers:</p>
+        <p class="conv-lead">Wizzy gets you the first draft. Then a <strong>real human designer</strong> on our team finishes it properly. A custom design usually runs $5,000. Yours is a flat $500 to perfect and launch, so you save about $4,500. Here&rsquo;s what that covers:</p>
         <ul class="conv-checklist">
-          <li><span class="ck">&#10003;</span> Polish the design by hand (real human designer review)</li>
+          <li><span class="ck">&#10003;</span> A human designer perfects every detail you ask for</li>
           <li><span class="ck">&#10003;</span> Set up your domain and point it to your new site</li>
           <li><span class="ck">&#10003;</span> Host it on our servers and keep it running</li>
           <li><span class="ck">&#10003;</span> Set up your business email</li>
@@ -904,6 +957,14 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
           <div class="sub">+ $50/month for hosting &amp; care</div>
           <div class="note">Cancel hosting anytime. The site stays yours either way.</div>
         </div>
+        <div class="conv-guarantee">
+          <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M12 2l7 3v6c0 4.4-2.9 8.4-7 9.9C7.9 19.4 5 15.4 5 11V5l7-3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8.6 11.8l2.3 2.3 4.5-4.6" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span><strong>Money-back guarantee.</strong> If our human team can&rsquo;t make you love your website, we refund you in full.</span>
+        </div>
+        <style>
+          .conv-guarantee{display:flex;gap:11px;align-items:flex-start;background:#eaf7f1;border:1.5px solid #bfe6d4;border-radius:13px;padding:13px 15px;margin:14px 0 2px;color:#12603f;font-size:14px;line-height:1.45;}
+          .conv-guarantee svg{flex:none;margin-top:1px;}
+        </style>
         <button type="button" class="conv-cta" id="convCta">Launch my site for $500 &rarr;</button>
         <p class="conv-foot">We handle everything. You don&rsquo;t touch a thing.</p>
         <div class="conv-err" id="convErr"></div>
@@ -1398,6 +1459,10 @@ window.__TRY_INIT__ = {
   suggestedRow.addEventListener('click', function(e){
     var c = e.target.closest('.sugchip'); if (!c) return;
     if (c.classList.contains('upload')) { openUploadModal(); return; }
+    // One-click chips fire immediately in DECISIVE mode so the customer always
+    // sees their site actually change (never a "what colors?" question back).
+    var send = c.getAttribute('data-send');
+    if (send) { sendEdit(send, { decisive: true, display: (c.textContent || '').trim() }); return; }
     var fill = c.getAttribute('data-fill') || c.textContent;
     chatInput.value = fill; chatInput.focus();
   });
@@ -1437,12 +1502,16 @@ window.__TRY_INIT__ = {
     return arr[Math.floor(Math.random() * arr.length)];
   }
 
-  function sendEdit(message){
+  function sendEdit(message, opts){
+    opts = opts || {};
+    var decisive = !!opts.decisive;              // one-click chip: must produce a real edit
+    var display  = opts.display || message;      // what we show in the chat bubble
     if (!state.token || state.sending || state.editsRemaining <= 0) return;
     var imgs = (typeof refImages !== 'undefined' ? refImages.slice() : []);
 
     // Conversational shortcut only when there are NO attached images.
-    if (imgs.length === 0) {
+    // Never short-circuit a decisive chip - it has to change the site.
+    if (imgs.length === 0 && !decisive) {
       var kind = classifyMessage(message);
       if (kind === 'praise' || kind === 'maybe' || kind === 'hello' || kind === 'question' || kind === 'chat') {
         appendMsg('user', message); chatInput.value = '';
@@ -1454,7 +1523,7 @@ window.__TRY_INIT__ = {
     if (!message && imgs.length) message = 'Use the attached reference image(s) to guide this edit.';
 
     state.sending = true; chatSend.disabled = true;
-    appendMsg('user', message + (imgs.length ? ('  📎 ' + imgs.length + ' image' + (imgs.length > 1 ? 's' : '')) : '')); chatInput.value = '';
+    appendMsg('user', display + (imgs.length ? ('  📎 ' + imgs.length + ' image' + (imgs.length > 1 ? 's' : '')) : '')); chatInput.value = '';
     if (typeof refImages !== 'undefined') { refImages.length = 0; renderRefThumbs(); }
     // Text-message style: drop a short "On it..." reply + show overlay over iframe
     var typing = appendTyping('On it…');
@@ -1468,7 +1537,7 @@ window.__TRY_INIT__ = {
     fetch('/api/edit.php', {
       method: 'POST',
       headers: { 'Content-Type':'application/json', 'Accept':'application/json' },
-      body: JSON.stringify({ token: state.token, message: message, images: imgs }),
+      body: JSON.stringify({ token: state.token, message: message, images: imgs, decisive: decisive }),
       signal: editCtl ? editCtl.signal : undefined
     })
     .then(function(r){ return r.json().then(function(j){ return { ok:r.ok, body:j }; }); })
@@ -1481,15 +1550,24 @@ window.__TRY_INIT__ = {
         previewFrame.src = src;
         appendMsg('wiz', b.reply || "Done! Take a look 👀");
         updateEditsChip(typeof b.edits_remaining === 'number' ? b.edits_remaining : (state.editsRemaining - 1));
+        wwEditsDone++;
         if (b.cap_hit) onCapHit();
+        // They're invested and it's working. Soft offer at the 2nd edit.
+        else if (wwEditsDone === 2) setTimeout(function(){
+          offerHuman("Want this exactly right? One of our designers can take it from here and finish every detail for you.");
+        }, 1100);
       } else if (b.cap_hit) {
         updateEditsChip(0); onCapHit(b.reply);
       } else if (b.needs_input) {
         appendMsg('wiz', b.reply || "I need a little more to do that — could you clarify, or upload the file with the 📎 button?");
+        // Peak friction: they asked for something Wizzy can't do alone.
+        offerHuman("Or skip the back and forth — tell a human designer what you want and we'll just do it.");
       } else if (b.system_error) {
         appendMsg('wiz', b.error || 'Something broke on our end — we\'ve been alerted. Give it a sec and try again.');
+        offerHuman("Want a person to handle it instead? Tell our designer what you're after.");
       } else {
         appendMsg('wiz', 'Hmm, that one didn\'t take. ' + (b.error || 'Try wording it a different way?'));
+        offerHuman("Or let a human do it — describe what you want and our designer will build it.");
       }
     })
     .catch(function(e){
@@ -1508,11 +1586,35 @@ window.__TRY_INIT__ = {
     });
   }
 
+  var wwEditsDone = 0;
+
+  // Inline "let a human finish it" offer inside the chat. Appears at the exact
+  // moments people used to give up: a failed edit, the 2nd tweak, or the cap.
+  function offerHuman(text){
+    try {
+      appendMsg('wiz', text);
+      var hist = document.getElementById('chatHistory');
+      if (!hist) return;
+      var wrap = document.createElement('div');
+      wrap.className = 'msg msg-wiz';
+      wrap.style.cssText = 'padding-left:34px;margin-top:-4px;';
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = 'Have a designer finish it →';
+      btn.style.cssText = 'background:#12184A;color:#fff;border:none;border-radius:10px;padding:10px 14px;font-weight:800;font-size:13.5px;cursor:pointer;font-family:inherit;box-shadow:3px 3px 0 #F7C84A;';
+      btn.addEventListener('click', function(){ openBrief('chat_offer'); });
+      wrap.appendChild(btn);
+      hist.appendChild(wrap);
+      hist.scrollTop = hist.scrollHeight;
+    } catch(e){}
+  }
+
   function onCapHit(customMsg){
-    var msg = customMsg || "That's all the tweaks I can do here. If you love where it's at, let's make it real. If it still needs work, my human teammates can take it from here once you launch it.";
+    var msg = customMsg || "That's all the tweaks I can do here. If it still isn't perfect, that's normal — this is a first draft. Let one of our human designers finish it properly for you.";
     appendMsg('wiz', msg);
     track('edit_cap_hit');
-    setTimeout(showConvCard, 700);
+    offerHuman("Tell us what's left and a real designer will finish it.");
+    setTimeout(showConvCard, 900);
   }
 
   function showConvCard(){
@@ -1525,7 +1627,9 @@ window.__TRY_INIT__ = {
   }
   convBack.addEventListener('click', hideConvCard);
 
-  convCta.addEventListener('click', function(){
+  // "Make it real" now runs through a short design brief first, so a human
+  // designer gets the work order (saved even if checkout is abandoned).
+  function wwGoCheckout(){
     if (!state.token) { convErr.textContent = 'Lost track of your preview — refresh and try again.'; convErr.classList.add('on'); return; }
     track('make_it_real_clicked');
     if(window.wwMetaTrack){try{window.wwMetaTrack('AddToCart',{content_name:'make_it_real',content_category:'website_build',value:500,currency:'USD'});}catch(e){}}
@@ -1549,7 +1653,71 @@ window.__TRY_INIT__ = {
       convErr.classList.add('on');
       convCta.disabled = false; convCta.textContent = 'Make it real →';
     });
+  }
+
+  // ---------- Design brief ("let a human finish it") ----------
+  var briefBack = document.getElementById('briefBack');
+  // The chat panel is transform-positioned, which breaks position:fixed for any
+  // descendant. Re-parent the modal to <body> so it centers on the real viewport.
+  try { if (briefBack && briefBack.parentNode !== document.body) document.body.appendChild(briefBack); } catch(e){}
+  var briefChanges = document.getElementById('briefChanges');
+  var briefNotes = document.getElementById('briefNotes');
+  var briefContact = document.getElementById('briefContact');
+  var briefErrEl = document.getElementById('briefErr');
+  var briefGo = document.getElementById('briefGo');
+  var briefX = document.getElementById('briefX');
+  var briefHint = document.getElementById('briefHint');
+  var briefPrefilled = false, briefSource = 'conv_cta';
+
+  function openBrief(src){
+    if (!state.token) return;
+    briefSource = src || 'conv_cta';
+    body.setAttribute('data-brief', 'on');
+    try { track('brief_opened', { source: briefSource }); } catch(e){}
+    if (briefPrefilled) return;
+    briefPrefilled = true;
+    // Pre-fill with what they already asked Wizzy for, in their own words.
+    fetch('/api/brief.php?t=' + encodeURIComponent(state.token), { headers:{'Accept':'application/json'} })
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if (j && j.ok && j.requests && j.requests.length) {
+          briefChanges.value = j.requests.map(function(m){ return '- ' + m; }).join('\n') + '\n';
+          if (briefHint) briefHint.style.display = 'block';
+        }
+      }).catch(function(){});
+  }
+  function closeBrief(){ body.removeAttribute('data-brief'); }
+  if (briefX) briefX.addEventListener('click', closeBrief);
+  if (briefBack) briefBack.addEventListener('click', function(e){ if (e.target === briefBack) closeBrief(); });
+
+  if (briefGo) briefGo.addEventListener('click', function(){
+    var changes = (briefChanges.value || '').trim();
+    if (changes.length < 3) {
+      briefErrEl.textContent = 'Tell us at least one thing you want changed.';
+      briefErrEl.classList.add('on'); briefChanges.focus(); return;
+    }
+    briefErrEl.classList.remove('on');
+    briefGo.disabled = true; briefGo.textContent = 'Saving your notes…';
+    fetch('/api/brief.php', {
+      method:'POST', headers:{'Content-Type':'application/json','Accept':'application/json'},
+      body: JSON.stringify({ token: state.token, changes: changes,
+        notes: (briefNotes.value||'').trim(), contact: (briefContact.value||'').trim(), source: briefSource })
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(){
+      // Brief is saved server-side regardless of what happens at checkout.
+      briefGo.textContent = 'Opening secure checkout…';
+      closeBrief();
+      wwGoCheckout();
+    })
+    .catch(function(){
+      // Never block the sale on the brief save.
+      closeBrief(); wwGoCheckout();
+    })
+    .then(function(){ briefGo.disabled = false; briefGo.textContent = 'Send to my designer & launch — $500'; });
   });
+
+  convCta.addEventListener('click', function(){ openBrief('conv_cta'); });
 
   // ---------- reference image attach (paste + upload) ----------
   var refImages = [];

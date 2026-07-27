@@ -88,6 +88,10 @@ $body = json_decode($raw, true);
 if (!is_array($body)) $body = [];
 $token   = trim((string)($body['token']   ?? ''));
 $message = trim((string)($body['message'] ?? ''));
+// DECISIVE mode: the request came from a one-click suggestion chip. The customer
+// expects to SEE a change, not be asked a question. Never answer these with a
+// clarifying reply - make a confident, tasteful choice and apply it.
+$decisive = !empty($body['decisive']);
 
 // ---- Reference images pasted/attached in the editor (base64 data URLs) ----
 $ref_images = [];
@@ -282,6 +286,20 @@ RULES:
   exactly: {"full_rewrite": true}
 SYS;
 
+// In DECISIVE mode the customer clicked a quick-action button. Asking them a
+// question here reads as "nothing happened" and is the single biggest reason
+// people abandon the editor. Force a real, visible change every time.
+if ($decisive) {
+    $partial_system .= "\n\nDECISIVE MODE (IMPORTANT): This request came from a one-click button, so it is\n"
+        . "intentionally broad. You MUST make a real, visible change. NEVER return a \"reply\".\n"
+        . "NEVER ask a clarifying question. Use your own taste as a senior designer and commit to a\n"
+        . "specific, confident choice that suits this business. Make the change substantial enough\n"
+        . "that the customer can clearly see it happened.";
+    $system .= "\n\nDECISIVE MODE (IMPORTANT): This request came from a one-click button and is intentionally\n"
+        . "broad. Make a real, visible change. Never ask a clarifying question. Use your own taste and\n"
+        . "commit to a specific, confident choice that suits this business.";
+}
+
 try {
     // ---- Attempt 1: PARTIAL (diff) edit - fast, surgical, leaves the rest of the page untouched ----
     $text = '';
@@ -291,8 +309,10 @@ try {
         if ($praw !== '') {
             $pr = ee_apply_partial($current_html, $praw);
             if (!empty($pr['ok'])) { $text = $pr['html']; error_log('[edit] partial edit applied ' . $pr['applied'] . ' change(s)'); }
-            elseif (!empty($pr['chat'])) {
+            elseif (!empty($pr['chat']) && !$decisive) {
                 // Model answered a question / needs an asset rather than editing. Surface it - not a failure.
+                // (In decisive mode we never do this: we fall through to a full rewrite so the
+                //  customer always sees their site actually change.)
                 ee_log_finish($db, $log_id, 'chat', null, (int)round((microtime(true) - $t0) * 1000));
                 echo json_encode(['ok' => false, 'needs_input' => true, 'reply' => $pr['reply']]);
                 exit;
