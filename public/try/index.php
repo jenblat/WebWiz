@@ -144,7 +144,11 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
         $st = $db->prepare("SELECT business_name, edit_count, generation_mode FROM jobs WHERE token = ? LIMIT 1");
         $st->execute([$tparam]);
         $row = $st->fetch(PDO::FETCH_ASSOC);
-        if ($row && ($row['generation_mode'] ?? '') === 'magic') {
+        // Must accept BOTH modes. Describe-mode is now the majority path; when it
+        // fell through to the filesystem fallback below, returning visitors got
+        // "5 edits remaining" no matter how many they'd used, and their business
+        // name showed as "Your site".
+        if ($row && in_array(($row['generation_mode'] ?? ''), ['magic', 'describe'], true)) {
             $initial_token = $tparam;
             $initial_biz   = (string)$row['business_name'];
             $initial_edits = max(0, 5 - (int)$row['edit_count']);
