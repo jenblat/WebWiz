@@ -7,6 +7,24 @@ declare(strict_types=1);
 // ---- WebWiz release version (semantic; bump on each meaningful deploy) ----
 if (!defined('WW_VERSION')) define('WW_VERSION', '1.1.0');
 
+// ---- Deploy identity ----
+// WW_VERSION is the human-facing semver. WW_RELEASE adds the commit actually on
+// disk so Sentry can attribute a regression to a specific deploy rather than to a
+// version string that only changes when someone remembers to bump it.
+// private/RELEASE is written by private/stamp-release.sh, which the git post-merge
+// and post-checkout hooks call. If the file is missing we fall back to WW_VERSION.
+if (!defined('WW_RELEASE')) {
+    $__ww_rel = WW_VERSION;
+    $__ww_rf  = __DIR__ . '/RELEASE';
+    if (is_file($__ww_rf)) {
+        $__ww_sha = trim((string) @file_get_contents($__ww_rf));
+        // git describe already embeds the tag (e.g. v1.1.0-9-gd41378f), so use it as-is.
+        if ($__ww_sha !== '') { $__ww_rel = $__ww_sha; }
+    }
+    define('WW_RELEASE', $__ww_rel);
+    unset($__ww_rel, $__ww_rf, $__ww_sha);
+}
+
 function ww_secrets(): array {
     static $cache = null;
     if ($cache !== null) return $cache;
@@ -154,3 +172,47 @@ function ww_send_email(array $to, string $subject, string $html, ?string $reply_
     curl_close($ch);
     return $http < 300;
 }
+
+// ---- Sentry error monitoring -------------------------------------------
+// Added 2026-07-29. DSN lives in secrets.php (SeedSite Secrets Manager) and is
+// never hardcoded. vendor/ sits under private/ so it is not web-accessible.
+// This must never break a page render: everything is guarded.
+function ww_sentry_init(): void {
+    static $started = false;
+    if ($started) { return; }
+    $started = true;
+
+    try {
+        $autoload = __DIR__ . '/vendor/autoload.php';
+        if (!is_file($autoload)) { return; }
+        require_once $autoload;
+
+        $s   = ww_secrets();
+        $dsn = $s['SENTRY_DSN'] ?? '';
+        if ($dsn === '') { return; }
+
+        \Sentry\init([
+            'dsn'                => $dsn,
+            'environment'        => $s['SENTRY_ENVIRONMENT'] ?? 'production',
+            'release'             => defined('WW_RELEASE') ? WW_RELEASE : (defined('WW_VERSION') ? WW_VERSION : null),
+            'traces_sample_rate' => 0.1,
+            'send_default_pii'   => false,
+        ]);
+
+        // Report fatals that PHP would otherwise only write to the error log.
+        register_shutdown_function(static function (): void {
+            $e = error_get_last();
+            if ($e !== null && in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
+                \Sentry\captureMessage(
+                    sprintf('PHP fatal: %s in %s:%d', $e['message'], $e['file'], $e['line']),
+                    \Sentry\Severity::fatal()
+                );
+                \Sentry\flush(2);
+            }
+        });
+    } catch (\Throwable $t) {
+        // Never let monitoring take the site down.
+    }
+}
+
+ww_sentry_init();

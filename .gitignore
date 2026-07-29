@@ -24,3 +24,8 @@ Thumbs.db
 *.swp
 private/sessions/
 public/api/_*.php
+
+# Sentry rollout (2026-07-29)
+*.bak-*
+*.bak_*
+private/RELEASE

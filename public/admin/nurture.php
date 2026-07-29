@@ -198,6 +198,8 @@ $counts['all'] = array_sum($counts);
   .preview-link{font-family:ui-monospace,monospace;font-size:11px;}
 </style>
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+  <!-- Sentry browser monitoring. Config + DSN served by /api/sentry.js.php so no key lands in the repo. -->
+  <script src="/api/sentry.js.php"></script>
 </head>
 <body>
 <header class="topbar">

@@ -77,6 +77,8 @@ $plan_label = [
 <script>!function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');fbq('init','1974530180093513');fbq('track','PageView');window.wwMetaTrack=function(name,params,userParams){var eid='ww_'+Date.now().toString(36)+Math.random().toString(36).slice(2,14);try{if(window.fbq)fbq('track',name,params||{},{eventID:eid});}catch(e){}try{var body=Object.assign({event_name:name,event_id:eid,event_source_url:location.href},params||{},userParams||{});if(navigator.sendBeacon){var blob=new Blob([JSON.stringify(body)],{type:'application/json'});navigator.sendBeacon('/api/capi.php',blob);}else{fetch('/api/capi.php',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),keepalive:true});}}catch(e){}return eid;};</script>
 <noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=1974530180093513&ev=PageView&noscript=1"/></noscript>
 <!-- End Meta Pixel -->
+  <!-- Sentry browser monitoring. Config + DSN served by /api/sentry.js.php so no key lands in the repo. -->
+  <script src="/api/sentry.js.php"></script>
 </head>
 <body>
 
