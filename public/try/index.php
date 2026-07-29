@@ -320,17 +320,23 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
   .sticker small{display:block;font-family:var(--body);font-weight:600;font-size:10px;letter-spacing:0.12em;text-transform:uppercase;margin-top:2px;opacity:0.85;}
 
   /* ----------- Loading ----------- */
-  .view-loading{padding:0 24px 60px;}
+  .view-loading{padding:0 24px 32px;}
   .loading-wrap{max-width:600px;margin:0 auto;text-align:center;}
-  .loading-mascot{width:280px;height:280px;margin:0 auto 8px;display:flex;align-items:center;justify-content:center;background:var(--wizbg);border:3px solid var(--navy);border-radius:50%;overflow:hidden;box-shadow:8px 8px 0 var(--yellow);}
+  .loading-mascot{width:196px;height:196px;margin:0 auto 4px;display:flex;align-items:center;justify-content:center;background:var(--wizbg);border:3px solid var(--navy);border-radius:50%;overflow:hidden;box-shadow:8px 8px 0 var(--yellow);}
   .loading-mascot img{width:100%;height:100%;object-fit:contain;}
   @keyframes bob{0%,100%{transform:translateY(0);}50%{transform:translateY(-8px);}}
-  .loading-h2{font-family:var(--display);font-weight:900;font-size:48px;letter-spacing:-0.02em;line-height:1.05;color:var(--navy);margin:24px 0 0;}
+  .loading-h2{font-family:var(--display);font-weight:900;font-size:clamp(23px,4.4vw,38px);letter-spacing:-0.02em;line-height:1.12;color:var(--navy);margin:12px auto 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:min(92vw,880px);}
+    /* Long business names are allowed to wrap on narrow screens rather than truncate. */
+    @media (max-width:560px){.loading-h2{white-space:normal;overflow:visible;}}
   .loading-sub{font-size:16px;color:rgba(18,24,74,0.7);margin:8px 0 0;}
-  .progress-track{margin:24px auto 0;max-width:520px;height:12px;background:var(--cream);border:2px solid var(--navy);border-radius:999px;overflow:hidden;}
+  .progress-track{margin:16px auto 0;max-width:520px;height:12px;background:var(--cream);border:2px solid var(--navy);border-radius:999px;overflow:hidden;}
   .progress-fill{display:block;height:100%;width:5%;background:var(--teal);border-radius:999px;transition:width 600ms ease;}
-  .loading-status{font-family:var(--body);font-weight:500;font-size:16px;color:var(--teal);margin:16px 0 0;min-height:22px;transition:opacity 250ms ease;}
-  .wq-card{max-width:440px;margin:26px auto 0;background:#fffdf8;border:2px solid var(--navy);border-radius:18px;box-shadow:0 10px 30px rgba(18,24,74,.12);padding:20px 20px 16px;text-align:left;}
+  .loading-status{font-family:var(--body);font-weight:500;font-size:15px;color:var(--teal);margin:0;transition:opacity 250ms ease;}
+    /* Status and elapsed sit on one row instead of stacking two blocks. */
+    .loading-meta{display:flex;align-items:baseline;justify-content:center;gap:8px;flex-wrap:wrap;margin:12px 0 0;min-height:21px;}
+    .loading-elapsed{font-family:var(--body);font-weight:500;font-size:13px;color:rgba(18,24,74,0.55);letter-spacing:0.04em;margin:0;}
+    .loading-dot{color:rgba(18,24,74,0.3);}
+  .wq-card{max-width:440px;margin:18px auto 0;background:#fffdf8;border:2px solid var(--navy);border-radius:18px;box-shadow:0 10px 30px rgba(18,24,74,.12);padding:20px 20px 16px;text-align:left;}
   .wq-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
   .wq-kicker{font-family:var(--body);font-weight:700;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--teal);}
   .wq-count{font-family:var(--body);font-weight:600;font-size:12px;color:rgba(18,24,74,.5);}
@@ -343,7 +349,10 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
   .wq-skip button{background:none;border:none;color:rgba(18,24,74,.45);font-family:var(--body);font-size:12.5px;cursor:pointer;text-decoration:underline;}
   .wq-done{text-align:center;padding:6px 0 2px;}
   .wq-done p{font-family:var(--body);font-size:15px;color:var(--navy);margin:0;line-height:1.5;}
-  .powered-chip{display:inline-block;margin-top:32px;background:var(--navy);color:var(--cream);font-family:var(--body);font-weight:600;font-size:12px;letter-spacing:0.14em;text-transform:uppercase;padding:6px 14px;border-radius:999px;}
+  /* Pinned to the top-right instead of sitting in the flow, so it stops
+       pushing the loading content down the page. */
+    .powered-chip{position:fixed;top:14px;right:16px;z-index:60;margin:0;background:var(--navy);color:var(--cream);font-family:var(--body);font-weight:600;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;padding:5px 12px;border-radius:999px;pointer-events:none;}
+    @media (max-width:560px){.powered-chip{top:10px;right:10px;font-size:9.5px;letter-spacing:0.1em;padding:4px 9px;}}
   .late-fallback{display:none;max-width:520px;margin:32px auto 0;background:var(--cream);border:2px solid var(--navy);border-radius:14px;padding:20px 22px;text-align:left;box-shadow:4px 4px 0 var(--navy);}
   .late-fallback.on{display:block;}
   .late-fallback p{margin:0 0 12px;font-size:15px;color:var(--navy);}
@@ -737,10 +746,12 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
   <div class="loading-wrap">
     <div class="loading-mascot"><video class="wizzy-vid wizzy-proc" autoplay muted playsinline preload="metadata" poster="/preview/wizzy-processing-poster.jpg" aria-label="Wizzy processing"><source src="/preview/wizzy-processing.webm" type="video/webm"><source src="/preview/wizzy-processing.mp4" type="video/mp4"><img src="/preview/wizzy-wave.gif" alt="Wizzy processing"></video></div>
     <h2 class="loading-h2" id="loadingHead">Wizzy is designing your site&hellip;</h2>
-    <p class="loading-sub">Hang tight. He&rsquo;s working fast.</p>
     <div class="progress-track"><span class="progress-fill" id="progFill"></span></div>
-    <p class="loading-status" id="loadingStatus">Picking your colors&hellip;</p>
-    <p class="loading-elapsed" id="loadingElapsed" aria-live="polite" style="font-family:var(--body);font-weight:500;font-size:13px;color:rgba(18,24,74,0.55);margin:6px 0 0;letter-spacing:0.04em;">0s elapsed</p>
+    <div class="loading-meta">
+      <p class="loading-status" id="loadingStatus">Picking your colors&hellip;</p>
+      <span class="loading-dot" aria-hidden="true">&middot;</span>
+      <p class="loading-elapsed" id="loadingElapsed" aria-live="polite">0s elapsed</p>
+    </div>
     <div class="powered-chip">Powered by WebWiz</div>
     <?php
       $__wwqa_default = [
@@ -906,8 +917,24 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
           <label class="brief-lbl" for="briefContact">Best email or phone to reach you <span>(optional)</span></label>
           <input type="text" id="briefContact" placeholder="you@yourbusiness.com">
           <div class="brief-guar">
-            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 2l7 3v6c0 4.4-2.9 8.4-7 9.9C7.9 19.4 5 15.4 5 11V5l7-3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8.6 11.8l2.3 2.3 4.5-4.6" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            <span><strong>100% satisfaction guarantee.</strong> We revise until you love it, however many rounds it takes. Cancel anytime, and your $50/mo never goes up.</span>
+            <?php
+          // Designer byline, defined ONCE here because this modal renders earlier in
+          // the document than the conversion card, which reuses these variables.
+          // Photo is optional: if the file is missing we fall back to an initial
+          // avatar so neither block ever breaks.
+          $ww_designer_name  = 'Laura Montoya';
+          $ww_designer_title = 'Co-founder';
+          $ww_designer_img   = '';
+          foreach (['laura.jpg','laura.jpeg','laura.webp','laura.png'] as $ww_f) {
+              if (is_file(dirname(__DIR__) . '/preview/' . $ww_f)) { $ww_designer_img = '/preview/' . $ww_f; break; }
+          }
+        ?>
+        <?php if ($ww_designer_img !== ''): ?>
+          <img class="bg-face" src="<?= htmlspecialchars($ww_designer_img, ENT_QUOTES) ?>" alt="<?= htmlspecialchars($ww_designer_name, ENT_QUOTES) ?>, Co-founder at WebWiz" width="52" height="52" loading="lazy" decoding="async">
+        <?php else: ?>
+          <span class="bg-face bg-initial" aria-hidden="true"><?= htmlspecialchars(mb_substr($ww_designer_name, 0, 1)) ?></span>
+        <?php endif; ?>
+            <span><strong>100% satisfaction guarantee.</strong> &ldquo;We revise until you love it, however many rounds it takes.&rdquo;<span class="bg-by"><?= $ww_designer_name ?>, <?= $ww_designer_title ?></span></span>
           </div>
           <p class="brief-err" id="briefErr"></p>
           <button type="button" class="brief-go" id="briefGo">Send to my designer &amp; launch &mdash; $500</button>
@@ -964,13 +991,16 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
         <div class="conv-guarantee">
           <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M12 2l7 3v6c0 4.4-2.9 8.4-7 9.9C7.9 19.4 5 15.4 5 11V5l7-3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8.6 11.8l2.3 2.3 4.5-4.6" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <?php
-        // Designer byline for the guarantee block. Photo is optional: if no file is
-        // present yet we fall back to an initial avatar so the block never breaks.
-        $ww_designer_name  = 'Laura Montoya-Jaramillo';
-        $ww_designer_title = 'Co-founder';
-        $ww_designer_img   = '';
-        foreach (['laura.jpg','laura.jpeg','laura.webp','laura.png'] as $ww_f) {
-            if (is_file(dirname(__DIR__) . '/preview/' . $ww_f)) { $ww_designer_img = '/preview/' . $ww_f; break; }
+        // $ww_designer_name / _title / _img are defined once in the brief modal
+        // above, which renders earlier in this document. Guard anyway so this
+        // block still works if the views are ever reordered.
+        if (!isset($ww_designer_name)) {
+            $ww_designer_name  = 'Laura Montoya';
+            $ww_designer_title = 'Co-founder';
+            $ww_designer_img   = '';
+            foreach (['laura.jpg','laura.jpeg','laura.webp','laura.png'] as $ww_f) {
+                if (is_file(dirname(__DIR__) . '/preview/' . $ww_f)) { $ww_designer_img = '/preview/' . $ww_f; break; }
+            }
         }
       ?>
         <span class="cg-head-txt">100% Satisfaction Guarantee</span>
@@ -995,6 +1025,10 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
           .conv-guarantee{display:flex;flex-wrap:wrap;gap:9px;align-items:center;background:#eaf7f1;border:1.5px solid #bfe6d4;border-radius:13px;padding:13px 15px;margin:14px 0 2px;color:#12603f;font-size:14px;line-height:1.45;}
           .conv-guarantee svg{flex:none;}
       .conv-guarantee .cg-head-txt{font-weight:800;font-size:14.5px;letter-spacing:.01em;}
+      /* Designer avatar inside the brief modal's guarantee strip. */
+      .bg-face{flex:none;width:52px;height:52px;border-radius:50%;object-fit:cover;border:2px solid #12603f;background:#d8efe3;}
+      .bg-initial{display:flex;align-items:center;justify-content:center;font-weight:800;font-size:20px;color:#12603f;line-height:1;}
+      .bg-by{display:block;margin-top:3px;font-weight:800;font-size:12px;opacity:.9;}
       .cg-person{flex-basis:100%;display:flex;gap:11px;align-items:flex-start;margin:2px 0 2px;}
       .cg-face{flex:none;width:68px;height:68px;border-radius:50%;object-fit:cover;object-position:center top;border:2px solid #12603f;background:#d8efe3;}
       .cg-initial{display:flex;align-items:center;justify-content:center;font-weight:800;font-size:23px;color:#12603f;line-height:1;}
@@ -1103,6 +1137,22 @@ window.__TRY_INIT__ = {
   var ctaBtn = document.getElementById('ctaBtn');
 
   var loadingHead = document.getElementById('loadingHead');
+
+  // Keep the headline on ONE line. The business name is the emotional payload of
+  // this screen, so shrink the type to fit rather than ellipsis it away. Only if
+  // we hit the floor (20px) does CSS truncation take over.
+  function wwFitHead() {
+    if (!loadingHead) return;
+    if (window.matchMedia('(max-width:560px)').matches) { loadingHead.style.fontSize = ''; return; }
+    var size = 38;
+    loadingHead.style.fontSize = size + 'px';
+    var guard = 0;
+    while (loadingHead.scrollWidth > loadingHead.clientWidth && size > 20 && guard++ < 40) {
+      size -= 1;
+      loadingHead.style.fontSize = size + 'px';
+    }
+  }
+  window.addEventListener('resize', wwFitHead);
   var loadingStatus = document.getElementById('loadingStatus');
   var progFill = document.getElementById('progFill');
   var lateFallback = document.getElementById('lateFallback');
@@ -1351,7 +1401,7 @@ window.__TRY_INIT__ = {
     generating = true; ctaBtn.disabled = true;
     var hostGuess = '';
     try { var raw = web.value.trim().replace(/^https?:\/\//i,'').replace(/^www\./i,''); hostGuess = raw.split('/')[0].split('?')[0]; } catch(e){}
-    loadingHead.innerHTML = 'Wizzy is designing ' + (hostGuess ? escapeHtml(hostGuess) : 'your site') + '…';
+    loadingHead.innerHTML = 'Wizzy is designing ' + (hostGuess ? escapeHtml(hostGuess) : 'your site') + '…'; wwFitHead();
     setView('loading'); startLoadingTickers();
 
     var leadName    = (document.getElementById('lead_name')    || {}).value || '';
@@ -1405,6 +1455,7 @@ window.__TRY_INIT__ = {
       try { window.__wwStartQA && window.__wwStartQA(b.token); } catch(e){}
       state.businessName = leadCompany.trim() || 'your site';
       loadingHead.innerHTML = 'Wizzy is designing ' + escapeHtml(state.businessName) + '…';
+    wwFitHead();
       var polls = 0, maxPolls = 100; // ~5 min ceiling at 3s
       var poll = function(){
         polls++;
