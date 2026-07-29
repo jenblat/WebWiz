@@ -966,8 +966,8 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
           <?php
         // Designer byline for the guarantee block. Photo is optional: if no file is
         // present yet we fall back to an initial avatar so the block never breaks.
-        $ww_designer_name  = 'Laura';
-        $ww_designer_title = 'Co-founder &amp; Design Lead';
+        $ww_designer_name  = 'Laura Montoya-Jaramillo';
+        $ww_designer_title = 'Co-founder';
         $ww_designer_img   = '';
         foreach (['laura.jpg','laura.jpeg','laura.webp','laura.png'] as $ww_f) {
             if (is_file(dirname(__DIR__) . '/preview/' . $ww_f)) { $ww_designer_img = '/preview/' . $ww_f; break; }
@@ -976,13 +976,13 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
         <span class="cg-head-txt">100% Satisfaction Guarantee</span>
         <div class="cg-person">
           <?php if ($ww_designer_img !== ''): ?>
-            <img class="cg-face" src="<?= htmlspecialchars($ww_designer_img, ENT_QUOTES) ?>" alt="<?= htmlspecialchars($ww_designer_name, ENT_QUOTES) ?>, your designer at WebWiz" width="54" height="54" loading="lazy" decoding="async">
+            <img class="cg-face" src="<?= htmlspecialchars($ww_designer_img, ENT_QUOTES) ?>" alt="<?= htmlspecialchars($ww_designer_name, ENT_QUOTES) ?>, Co-founder at WebWiz" width="68" height="68" loading="lazy" decoding="async">
           <?php else: ?>
             <span class="cg-face cg-initial" aria-hidden="true"><?= htmlspecialchars(mb_substr($ww_designer_name, 0, 1)) ?></span>
           <?php endif; ?>
           <div class="cg-quote">
             <p>&ldquo;Your site isn&rsquo;t finished until you say it is. We keep revising until you love it.&rdquo;</p>
-            <span class="cg-by"><?= $ww_designer_name ?>, <?= $ww_designer_title ?></span>
+            <span class="cg-by"><?= $ww_designer_name ?><br><span class="cg-role"><?= $ww_designer_title ?>, WebWiz</span></span>
           </div>
         </div>
         <ul class="cg-list">
@@ -996,14 +996,15 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
           .conv-guarantee svg{flex:none;}
       .conv-guarantee .cg-head-txt{font-weight:800;font-size:14.5px;letter-spacing:.01em;}
       .cg-person{flex-basis:100%;display:flex;gap:11px;align-items:flex-start;margin:2px 0 2px;}
-      .cg-face{flex:none;width:54px;height:54px;border-radius:50%;object-fit:cover;object-position:center top;border:2px solid #12603f;background:#d8efe3;}
+      .cg-face{flex:none;width:68px;height:68px;border-radius:50%;object-fit:cover;object-position:center top;border:2px solid #12603f;background:#d8efe3;}
       .cg-initial{display:flex;align-items:center;justify-content:center;font-weight:800;font-size:23px;color:#12603f;line-height:1;}
       .cg-quote p{margin:0 0 3px;font-style:italic;line-height:1.4;}
-      .cg-by{font-size:12.5px;font-weight:700;opacity:.85;}
+      .cg-by{font-size:12.5px;font-weight:800;opacity:.9;line-height:1.35;display:block;margin-top:2px;}
+      .cg-role{font-weight:600;opacity:.8;white-space:nowrap;}
       .cg-list{flex-basis:100%;list-style:none;margin:0;padding:0;display:grid;gap:6px;}
       .cg-list li{display:flex;gap:8px;align-items:flex-start;font-size:13.5px;line-height:1.4;}
       .cg-ck{flex:none;font-weight:900;}
-      @media (max-width:420px){.cg-face{width:46px;height:46px;}.cg-list li{font-size:13px;}}
+      @media (max-width:420px){.cg-face{width:58px;height:58px;}.cg-list li{font-size:13px;}}
         </style>
         <button type="button" class="conv-cta" id="convCta">Launch my site for $500 &rarr;</button>
         <p class="conv-foot">We handle everything. You don&rsquo;t touch a thing.</p>
