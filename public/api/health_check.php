@@ -9,11 +9,34 @@ declare(strict_types=1);
 require_once '/var/www/sites/trywebwiz/private/webwiz_lib.php';
 
 $is_cli = (PHP_SAPI === 'cli');
-$db = ww_db();
+
+// The database connection must NEVER be the thing that kills this script: the
+// whole point of this monitor is to REPORT a database failure.
+//
+// Until 2026-07-31 this line was a bare `$db = ww_db();`. When /mnt/sites-data
+// filled up during the nightly backup and SQLite could no longer write, ww_db()
+// threw inside webwiz_lib.php and the checker died with a fatal before reaching
+// any of its own alerting code. It computed a `db_writable` metric that it was
+// structurally incapable of ever reporting as false, and it stayed silent
+// through a 51-minute outage (Sentry WEBWIZ-2 / WEBWIZ-3, 06:09-07:00 UTC).
+$db = null;
+$db_err = '';
+try {
+    $db = ww_db();
+} catch (Throwable $e) {
+    $db_err = $e->getMessage();
+}
 
 // --- auth (HTTP only) ---
 if (!$is_cli) {
     header('Content-Type: application/json');
+    // The key lives in the DB, so with no DB we cannot authenticate the caller.
+    // Report unhealthy without leaking any metrics to an unverified requester.
+    if (!$db) {
+        http_response_code(503);
+        echo json_encode(['status'=>'RED','db_writable'=>false,'error'=>'database unavailable']);
+        exit;
+    }
     $st = $db->prepare("SELECT value FROM settings WHERE key='health_check_key'");
     $st->execute();
     $stored = (string)$st->fetchColumn();
@@ -21,7 +44,13 @@ if (!$is_cli) {
     if (!hash_equals($stored, (string)($_GET['key'] ?? ''))) { http_response_code(403); echo json_encode(['error'=>'forbidden']); exit; }
 }
 
-function hc_setting(PDO $db, string $k, string $d=''): string { $s=$db->prepare("SELECT value FROM settings WHERE key=?"); $s->execute([$k]); $v=$s->fetchColumn(); return $v===false?$d:(string)$v; }
+// Null-safe: with no usable connection every setting falls back to its default
+// rather than throwing, so the checker can still run and still alert.
+function hc_setting(?PDO $db, string $k, string $d=''): string {
+    if (!$db) return $d;
+    try { $s=$db->prepare("SELECT value FROM settings WHERE key=?"); $s->execute([$k]); $v=$s->fetchColumn(); return $v===false?$d:(string)$v; }
+    catch (Throwable $e) { return $d; }
+}
 
 $WINDOW = 900; // 15 min
 $now = time();
@@ -48,15 +77,30 @@ if (is_file($log)) {
 
 // --- system checks ---
 $pending = count(glob('/var/www/sites/trywebwiz/data/pending_magic/*.json') ?: []);
-$df = @disk_free_space('/var/www'); $dt = @disk_total_space('/var/www');
+// The SQLite database, all site content and all backups live on the
+// /mnt/sites-data block device, NOT on the root volume that /var/www resolves
+// to. Until 2026-07-31 this measured '/var/www' (root, ~74% used) while the
+// volume that actually fills up every night is /mnt/sites-data (~93% used), so
+// the "disk free below 10%" alarm was watching the wrong filesystem entirely
+// and could not have fired during the outage it was meant to catch.
+// Both are measured now; the data volume is the one that matters.
+$WW_DATA_MOUNT = '/mnt/sites-data';
+$df = @disk_free_space($WW_DATA_MOUNT); $dt = @disk_total_space($WW_DATA_MOUNT);
 $disk_free_pct = ($df && $dt) ? round(100*$df/$dt, 1) : null;
+$dfr = @disk_free_space('/'); $dtr = @disk_total_space('/');
+$root_free_pct = ($dfr && $dtr) ? round(100*$dfr/$dtr, 1) : null;
+// Free bytes matter as much as percentage here: the nightly tarball is ~12G, so
+// "8% free" on a 98G volume is already too little to complete a backup.
+$disk_free_gb = $df ? round($df/1073741824, 1) : null;
 $s = ww_secrets();
 $has_anthropic = !empty($s['ANTHROPIC_API_KEY']);
 $has_brevo     = !empty($s['BREVO_API_KEY']);
 // DB write test (also records last run)
-$db_ok = true;
-try { $db->prepare("INSERT OR REPLACE INTO settings (key,value) VALUES ('health_last_run',?)")->execute([gmdate('Y-m-d H:i:s')]); }
-catch (Throwable $e) { $db_ok = false; }
+$db_ok = false;
+if ($db) {
+    try { $db->prepare("INSERT OR REPLACE INTO settings (key,value) VALUES ('health_last_run',?)")->execute([gmdate('Y-m-d H:i:s')]); $db_ok = true; }
+    catch (Throwable $e) { $db_ok = false; if ($db_err === '') $db_err = $e->getMessage(); }
+}
 // magic link master switch
 $magic_enabled = hc_setting($db, 'magic_link_enabled', '1') === '1';
 
@@ -65,10 +109,15 @@ $reasons = [];
 if ($m['hard_fail'] >= 1)      $reasons[] = $m['hard_fail']." generation FAILURE(s) in last 15 min";
 if ($m['lock_fallback'] >= 3)  $reasons[] = $m['lock_fallback']." DB-lock persist fallbacks (write contention)";
 if ($pending >= 10)            $reasons[] = "pending_magic backlog = $pending (drainer/DB stuck)";
-if ($disk_free_pct !== null && $disk_free_pct < 10) $reasons[] = "disk free {$disk_free_pct}%";
+if ($disk_free_pct !== null && $disk_free_pct < 10) $reasons[] = "data volume {$WW_DATA_MOUNT} free {$disk_free_pct}% ({$disk_free_gb}G)";
+// The nightly site tarball is ~12G. Less than 15G free means tonight's backup
+// cannot complete, which is exactly how the DB gets taken down.
+if ($disk_free_gb !== null && $disk_free_gb < 15) $reasons[] = "data volume only {$disk_free_gb}G free, nightly backup needs ~12G";
+if ($root_free_pct !== null && $root_free_pct < 10) $reasons[] = "root volume free {$root_free_pct}%";
 if (!$has_anthropic)           $reasons[] = "ANTHROPIC_API_KEY missing";
 if (!$has_brevo)               $reasons[] = "BREVO_API_KEY missing";
-if (!$db_ok)                   $reasons[] = "DB write test FAILED";
+if (!$db)                      $reasons[] = "DATABASE UNAVAILABLE: " . substr($db_err, 0, 200);
+elseif (!$db_ok)               $reasons[] = "DB write test FAILED" . ($db_err !== '' ? ': ' . substr($db_err, 0, 200) : '');
 if (!$magic_enabled)           $reasons[] = "magic_link_enabled is OFF (generation disabled)";
 
 $status = $reasons ? 'RED' : 'OK';
@@ -77,7 +126,15 @@ $force  = (($_GET['test'] ?? '') === '1' || ($_GET['force'] ?? '') === '1');
 // --- alert (throttled) ---
 $alerted = false;
 $THROTTLE = 1800; // 30 min
-$last_alert = (int)hc_setting($db, 'health_alert_ts', '0');
+// Throttle state normally lives in the DB, but during a DB outage that store is
+// precisely what is unavailable. Without a fallback the checker would email
+// every 5 minutes for the entire outage. Mirror the timestamp to a file and
+// take whichever source is newer.
+$THROTTLE_FILE = '/tmp/ww_health_alert_ts';
+$last_alert = max(
+    (int)hc_setting($db, 'health_alert_ts', '0'),
+    (int)@file_get_contents($THROTTLE_FILE)
+);
 if (($status === 'RED' || $force) && ($now - $last_alert > $THROTTLE || $force) && function_exists('ww_send_email')) {
     $to = !empty($s['NOTIFY_EMAIL']) ? $s['NOTIFY_EMAIL'] : 'ultimax97@gmail.com';
     $rows = '';
@@ -92,8 +149,12 @@ if (($status === 'RED' || $force) && ($now - $last_alert > $THROTTLE || $force) 
           . $fl
           . '<p style="color:#666;font-size:12px;margin-top:16px">Window: last 15 min · '.gmdate('Y-m-d H:i:s').' UTC · alerts throttled to 1 per 30 min.</p>';
     $sent = ww_send_email(['email'=>$to,'name'=>'WebWiz Ops'], $subj, $html);
-    if ($sent) { $db->prepare("INSERT OR REPLACE INTO settings (key,value) VALUES ('health_alert_ts',?)")->execute([(string)$now]); $alerted = true; }
+    if ($sent) {
+        @file_put_contents($THROTTLE_FILE, (string)$now);
+        if ($db) { try { $db->prepare("INSERT OR REPLACE INTO settings (key,value) VALUES ('health_alert_ts',?)")->execute([(string)$now]); } catch (Throwable $e) {} }
+        $alerted = true;
+    }
 }
 
-$out = ['status'=>$status,'reasons'=>$reasons,'window_min'=>15,'metrics'=>$m,'pending_backlog'=>$pending,'disk_free_pct'=>$disk_free_pct,'db_writable'=>$db_ok,'anthropic_key'=>$has_anthropic,'brevo_key'=>$has_brevo,'generation_enabled'=>$magic_enabled,'alert_sent'=>$alerted,'checked_at'=>gmdate('Y-m-d H:i:s').' UTC'];
+$out = ['status'=>$status,'reasons'=>$reasons,'window_min'=>15,'metrics'=>$m,'pending_backlog'=>$pending,'disk_mount'=>$WW_DATA_MOUNT,'disk_free_pct'=>$disk_free_pct,'disk_free_gb'=>$disk_free_gb,'root_free_pct'=>$root_free_pct,'db_writable'=>$db_ok,'db_error'=>($db_err !== '' ? substr($db_err,0,200) : null),'anthropic_key'=>$has_anthropic,'brevo_key'=>$has_brevo,'generation_enabled'=>$magic_enabled,'alert_sent'=>$alerted,'checked_at'=>gmdate('Y-m-d H:i:s').' UTC'];
 if ($is_cli) { echo json_encode($out)."\n"; } else { echo json_encode($out, JSON_PRETTY_PRINT); }

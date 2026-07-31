@@ -531,7 +531,12 @@ function ww_nurture_send_one(PDO $db, array $contact, string $brevo_key, string 
     // Reserve the send_id BEFORE building HTML so we can stamp the tracking
     // pixel + click-tracked links with it.
     $ins = $db->prepare("INSERT INTO nurture_sends (contact_id, step, subject, brevo_message_id, status) VALUES (?, ?, ?, NULL, 'pending')");
-    $ins->execute([(int)$contact['id'], $step, $subject_merged]);
+    // Retry on SQLITE_BUSY. This INSERT is the one that threw in Sentry
+    // WEBWIZ-4 / WEBWIZ-5 when the hourly cron collided with a live
+    // /api/prospect_add.php transaction at 13:00:02.
+    ww_db_write_retry(function () use ($ins, $contact, $step, $subject_merged) {
+        return $ins->execute([(int)$contact['id'], $step, $subject_merged]);
+    });
     $send_id = (int)$db->lastInsertId();
 
     // Plain-text body for non-HTML clients

@@ -79,7 +79,15 @@ foreach ($due as $c) {
     if (!$row || $row['status'] !== 'active') continue;
     if (!empty($row['pause_until']) && $row['pause_until'] > gmdate('Y-m-d H:i:s')) continue;
 
-    $r = ww_nurture_send_one($db, $c, $brevo_key, $hmac_secret, $mailing);
+    // A single contact must never abort the whole run. Until 2026-07-31 a
+    // PDOException thrown in here was uncaught and killed the cron outright, so
+    // every remaining queued contact was silently skipped for that hour
+    // (Sentry WEBWIZ-4: uncaught fatal at _nurture.php:534).
+    try {
+        $r = ww_nurture_send_one($db, $c, $brevo_key, $hmac_secret, $mailing);
+    } catch (Throwable $e) {
+        $r = ['ok' => false, 'error' => 'exception: ' . $e->getMessage()];
+    }
     if ($r['ok']) { $sent++; }
     else {
         $failed++;

@@ -216,3 +216,34 @@ function ww_sentry_init(): void {
 }
 
 ww_sentry_init();
+
+/**
+ * Run a DB write, retrying on SQLITE_BUSY ("database is locked", error 5).
+ *
+ * PRAGMA busy_timeout already makes a writer WAIT for a lock, but it does NOT
+ * cover every case: when a DEFERRED transaction tries to upgrade from read to
+ * write while another writer has already written, SQLite returns SQLITE_BUSY
+ * immediately rather than waiting, because waiting could deadlock. That is the
+ * class of failure behind Sentry WEBWIZ-4 / WEBWIZ-5, where the hourly nurture
+ * cron collided with a live /api/prospect_add.php transaction at 13:00:02 and
+ * threw instead of waiting.
+ *
+ * This wrapper turns those into a short bounded backoff (~0.1s .. ~1.6s), so a
+ * collision blocks and then succeeds instead of surfacing as a 500 or, worse,
+ * an uncaught fatal that aborts the whole cron run.
+ */
+function ww_db_write_retry(callable $fn, int $tries = 6) {
+    $delay = 100000; // 100ms, doubled each attempt
+    for ($i = 1; ; $i++) {
+        try {
+            return $fn();
+        } catch (Throwable $e) {
+            $msg = $e->getMessage();
+            $busy = (stripos($msg, 'database is locked') !== false)
+                 || (stripos($msg, 'database table is locked') !== false);
+            if (!$busy || $i >= $tries) throw $e;
+            usleep($delay);
+            $delay = min($delay * 2, 1600000);
+        }
+    }
+}

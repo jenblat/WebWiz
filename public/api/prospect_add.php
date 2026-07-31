@@ -72,7 +72,15 @@ $extras = [
 
 try {
     $db = ww_db();
-    $db->beginTransaction();
+    // BEGIN IMMEDIATE takes the write lock up front. PDO's beginTransaction()
+    // issues a plain DEFERRED BEGIN, which acquires the write lock lazily; if
+    // another writer got there first, SQLite returns SQLITE_BUSY *immediately*
+    // and does NOT honour busy_timeout, because waiting could deadlock. That is
+    // the collision behind Sentry WEBWIZ-4 / WEBWIZ-5, where the hourly nurture
+    // cron hit "database is locked" against this endpoint's transaction.
+    // Transaction control is done with exec() throughout so PDO's internal
+    // transaction tracking stays consistent with what SQLite actually has open.
+    $db->exec('BEGIN IMMEDIATE');
     $stmt = $db->prepare("INSERT INTO prospects (email, name, business_name, current_url, industry, source, apollo_data) VALUES (?, ?, ?, ?, ?, 'manual', ?)");
     $stmt->execute([$email, $contact, $biz, $url, $industry, json_encode($extras)]);
     $pid = (int)$db->lastInsertId();
@@ -82,10 +90,12 @@ try {
     $jstmt->execute([$pid, $email, $biz, $token]);
     $jid = (int)$db->lastInsertId();
 
-    $db->commit();
+    $db->exec('COMMIT');
     echo json_encode(['ok' => true, 'prospect_id' => $pid, 'job_id' => $jid, 'token' => $token]);
 } catch (Throwable $e) {
-    if (isset($db) && $db->inTransaction()) $db->rollBack();
+    // inTransaction() only tracks PDO-managed transactions, and we now begin
+    // with exec(), so roll back defensively instead of asking PDO.
+    if (isset($db)) { try { $db->exec('ROLLBACK'); } catch (Throwable $ignore) {} }
     http_response_code(500);
     echo json_encode(['error' => $e->getMessage()]);
 }

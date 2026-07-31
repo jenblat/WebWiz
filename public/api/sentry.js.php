@@ -43,6 +43,28 @@ $cfg = json_encode(array(
         'NetworkError',
         'AbortError',
         'top.GLOBALS',
+        // ---- in-app browser native-bridge noise (Sentry WEBWIZ-FRONTEND-3/4) ----
+        // These are NOT our code and NOT a script we load. Instagram/Facebook and
+        // Android WebView hosts INJECT their own JavaScript into the page, so when
+        // that injected code throws it is attributed to /try/ and looks like ours.
+        // Evidence: WEBWIZ-FRONTEND-3 events carry browser "Instagram 440.0.0" on
+        // iOS with frames sendDataToNative / sendPageHideMessage - the host app's
+        // own bridge, firing on pagehide as the user leaves, when the webview has
+        // already begun tearing the bridge down. Users Impacted: 0. Our funnel
+        // JavaScript is unaffected; the only real damage was burying genuine
+        // errors in noise.
+        //
+        // Deliberately NOT fixed by shimming window.webkit.messageHandlers: faking
+        // a native bridge would make the host's injected code take its "bridge
+        // present" path and post to a handler that does not exist, which is a
+        // worse failure than the one being suppressed.
+        //
+        // Substring matches, same as denyUrls above - not regexes.
+        'window.webkit.messageHandlers',
+        'Java object is gone',
+        'Error invoking postMessage',
+        'sendDataToNative',
+        'sendPageHideMessage',
     ),
     // denyUrls entries coming from JSON can only be strings, and the SDK treats a
     // string as a substring match - not a regex. Regex-looking strings would never
