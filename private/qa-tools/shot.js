@@ -12,6 +12,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const browser = await puppeteer.launch({
     executablePath: '/bin/google-chrome-stable',
     headless: 'new',
+    // Pass the profile dir as a LAUNCH OPTION, not only as a Chrome arg. With only
+    // the arg, puppeteer does not know we supplied one and still provisions its
+    // own puppeteer_dev_chrome_profile-* temp dir, which the finally block below
+    // never removes (it only deletes ud). That leaked 16,855 profile dirs and 66G
+    // into /tmp between 2026-06-16 and 2026-07-31.
+    userDataDir: ud,
     args: [
       '--no-sandbox',
       '--disable-dev-shm-usage',
