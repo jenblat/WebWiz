@@ -42,8 +42,10 @@ $email   = trim((string)($body['email'] ?? ''));
 
 // Offer table. Keep in lockstep with /o/_offer.php.
 $OFFERS = [
+    // Only A charges a build fee. B and C bill the $50/month and nothing else,
+    // so they have no trial: the $50 taken today IS their first month.
     'a' => ['build' => 10000, 'monthly' => 5000, 'trial' => 30, 'label' => 'WebWiz website build'],
-    'b' => ['build' => 10000, 'monthly' => 5000, 'trial' => 30, 'label' => 'WebWiz website build'],
+    'b' => ['build' => 0,     'monthly' => 5000, 'trial' => 0,  'label' => 'WebWiz hosting & care'],
     'c' => ['build' => 0,     'monthly' => 5000, 'trial' => 0,  'label' => 'WebWiz hosting & care'],
 ];
 if (!isset($OFFERS[$variant])) oc_fail('Unknown offer.');

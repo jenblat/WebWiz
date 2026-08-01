@@ -35,39 +35,40 @@ header('X-Robots-Tag: noindex, nofollow, noarchive');
 // Variant definitions. price_cents is the one-time build fee.
 // ---------------------------------------------------------------------------
 // Two axes, three cells:
-//   a vs c  = PRICE      ($100 build      vs  free build)          both no-builder
-//   b vs c  = BUILDER    (AI builder      vs  showcase only)       both free
+//   a vs b  = PRICE    ($100 build  vs  free build)      both WITH the builder
+//   b vs c  = BUILDER  (AI builder  vs  showcase only)   both free build
+// Only A ever charges a build fee. B and C bill the $50/month and nothing else.
 // 'builder' => true sends the visitor into the /try generator instead of
 // showing the brief form.
 $VARIANTS = [
-    // A: $100 one-time build. No builder - showcase + brief.
+    // A: $100 one-time build, WITH the builder.
     'a' => [
         'key'        => 'a',
-        'builder'    => false,
+        'builder'    => true,
         'price_cents'=> 10000,   // $100 one-time build fee
         'monthly'    => 5000,    // $50/month hosting
         'kicker'     => 'For local businesses',
-        'headline'   => 'A real website for <em>$100</em>.',
-        'sub'        => 'One hundred dollars, once. A real designer builds it for you, usually within 3 business days. Then $50/month to host and look after it.',
-        'price_line' => '$100 to build',
-        'price_note' => 'then $50/month for hosting &amp; care',
-        'cta'        => 'Build my site for $100',
-        'badge'      => 'Flat $100',
-    ],
-    // B: same $100 offer as A, but WITH the AI builder. a vs b is the builder
-    // test - price is held constant so the only difference is the experience.
-    'b' => [
-        'key'        => 'b',
-        'builder'    => true,
-        'price_cents'=> 10000,
-        'monthly'    => 5000,
-        'kicker'     => 'For local businesses',
         'headline'   => 'Watch your website <em>build itself</em>.',
-        'sub'        => 'Type your business name and watch a real website appear in about two minutes. If you like it, it is $100 to launch, then $50/month to host it.',
+        'sub'        => 'Type your business name and watch a real website appear in about two minutes. If you like it, it is $100 to launch, then $50/month to host and look after it.',
         'price_line' => '$100 to build',
         'price_note' => 'then $50/month for hosting &amp; care',
         'cta'        => 'Build my site now',
         'badge'      => 'Flat $100',
+    ],
+    // B: free build, WITH the builder. Same experience as A, no build fee -
+    // that pairing is what makes a vs b a clean price test.
+    'b' => [
+        'key'        => 'b',
+        'builder'    => true,
+        'price_cents'=> 0,       // no build fee - $50/month is the whole cost
+        'monthly'    => 5000,
+        'kicker'     => 'For local businesses',
+        'headline'   => 'Watch your website <em>build itself</em>. Free.',
+        'sub'        => 'Type your business name and watch a real website appear in about two minutes. Building it costs nothing. You pay $50/month to host it, and that is the whole cost of having a website.',
+        'price_line' => '$50/month',
+        'price_note' => 'no build fee &mdash; the website itself is free',
+        'cta'        => 'Build my site free',
+        'badge'      => 'Website built free',
     ],
     // C: free build, NO builder. Showcase only, $50 today opens the account.
     'c' => [
@@ -77,10 +78,10 @@ $VARIANTS = [
         'monthly'    => 5000,
         'kicker'     => 'For local businesses',
         'headline'   => 'The website is <em>free</em>. You pay for hosting.',
-        'sub'        => 'Open your account for $50 and that is your first month. We build the website for nothing and look after it for $50/month. That is the whole cost of having a website.',
-        'price_line' => '$50 to start',
-        'price_note' => 'that is your first month &mdash; then $50/month, website built free',
-        'cta'        => 'Open my account &mdash; $50',
+        'sub'        => 'A real designer builds your site for nothing, usually within 3 business days. You pay $50/month to host it and look after it, and that is the whole cost of having a website.',
+        'price_line' => '$50/month',
+        'price_note' => 'no build fee &mdash; the website itself is free',
+        'cta'        => 'Start my free website',
         'badge'      => 'Website built free',
     ],
 ];
