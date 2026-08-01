@@ -44,6 +44,8 @@ $VARIANTS = [
     'a' => [
         'key'        => 'a',
         'builder'    => false,
+        'price_cents'=> 10000,   // $100 one-time build fee
+        'monthly'    => 5000,    // $50/month hosting
         'kicker'     => 'For local businesses',
         'headline'   => 'A real website for <em>$100</em>.',
         'sub'        => 'One hundred dollars, once. A real designer builds it for you, usually within 3 business days. Then $50/month to host and look after it.',
@@ -52,22 +54,27 @@ $VARIANTS = [
         'cta'        => 'Build my site for $100',
         'badge'      => 'Flat $100',
     ],
-    // B: free build, WITH the AI builder. The CTA starts the generator.
+    // B: same $100 offer as A, but WITH the AI builder. a vs b is the builder
+    // test - price is held constant so the only difference is the experience.
     'b' => [
         'key'        => 'b',
         'builder'    => true,
+        'price_cents'=> 10000,
+        'monthly'    => 5000,
         'kicker'     => 'For local businesses',
         'headline'   => 'Watch your website <em>build itself</em>.',
-        'sub'        => 'Type your business name and watch a real website appear in about two minutes. The build is free. You only pay $50/month to host it.',
-        'price_line' => '$0 to build',
+        'sub'        => 'Type your business name and watch a real website appear in about two minutes. If you like it, it is $100 to launch, then $50/month to host it.',
+        'price_line' => '$100 to build',
         'price_note' => 'then $50/month for hosting &amp; care',
         'cta'        => 'Build my site now',
-        'badge'      => 'Free build',
+        'badge'      => 'Flat $100',
     ],
     // C: free build, NO builder. Showcase only, $50 today opens the account.
     'c' => [
         'key'        => 'c',
         'builder'    => false,
+        'price_cents'=> 0,       // no build fee - the $50 IS month one
+        'monthly'    => 5000,
         'kicker'     => 'For local businesses',
         'headline'   => 'The website is <em>free</em>. You pay for hosting.',
         'sub'        => 'Open your account for $50 and that is your first month. We build the website for nothing and look after it for $50/month. That is the whole cost of having a website.',
@@ -374,6 +381,33 @@ if (function_exists('ww_meta_pixel_base_html')) { echo ww_meta_pixel_base_html()
     }).then(function(r){ return r.json().catch(function(){ return {ok:false}; }); })
       .then(function(j){
         if (j && j.ok) {
+          // Lead is saved first and separately. If Stripe then fails or the
+          // visitor abandons checkout we still have the lead and can follow up,
+          // which is the whole point of paying for the click.
+          try { if (window.wwMetaTrack) window.wwMetaTrack('Lead', {content_name:'offer_'+VARIANT, content_category:'price_test'}); } catch(e){}
+          go.textContent = 'Taking you to checkout...';
+          fetch('/api/offer_checkout.php', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({variant:VARIANT, lead_id:j.id, email:contact})
+          }).then(function(r){ return r.json().catch(function(){ return {ok:false}; }); })
+            .then(function(c){
+              if (c && c.ok && c.url) {
+                try { if (window.wwMetaTrack) window.wwMetaTrack('InitiateCheckout', {content_name:'offer_'+VARIANT}); } catch(e){}
+                window.location.href = c.url;
+              } else {
+                // Checkout unavailable: show the thank-you rather than a dead end.
+                // The brief is already captured, so a human can still pick it up.
+                document.getElementById('formFields').style.display = 'none';
+                document.getElementById('ok').style.display = 'block';
+              }
+            })
+            .catch(function(){
+              document.getElementById('formFields').style.display = 'none';
+              document.getElementById('ok').style.display = 'block';
+            });
+          return;
+        }
+        if (false) {
           document.getElementById('formFields').style.display = 'none';
           document.getElementById('ok').style.display = 'block';
           // wwMetaTrack fires the pixel AND the server-side CAPI copy with a
