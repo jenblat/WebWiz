@@ -34,39 +34,47 @@ header('X-Robots-Tag: noindex, nofollow, noarchive');
 // ---------------------------------------------------------------------------
 // Variant definitions. price_cents is the one-time build fee.
 // ---------------------------------------------------------------------------
+// Two axes, three cells:
+//   a vs c  = PRICE      ($100 build      vs  free build)          both no-builder
+//   b vs c  = BUILDER    (AI builder      vs  showcase only)       both free
+// 'builder' => true sends the visitor into the /try generator instead of
+// showing the brief form.
 $VARIANTS = [
-    // A: build free, monthly hosting only.
+    // A: $100 one-time build. No builder - showcase + brief.
     'a' => [
         'key'        => 'a',
-        'kicker'     => 'For local businesses',
-        'headline'   => 'Your new website is <em>free</em>.',
-        'sub'        => 'You only pay $50/month for hosting. A real designer builds it for you, usually within 3 business days.',
-        'price_line' => '$0 to build',
-        'price_note' => 'then $50/month for hosting &amp; care',
-        'cta'        => 'Start my free website',
-        'badge'      => 'No build fee',
-    ],
-    // B: $100 one-time + monthly.
-    'b' => [
-        'key'        => 'b',
+        'builder'    => false,
         'kicker'     => 'For local businesses',
         'headline'   => 'A real website for <em>$100</em>.',
-        'sub'        => 'One hundred dollars, once. A real designer builds it for you, usually within 3 business days. Then $50/month for hosting.',
+        'sub'        => 'One hundred dollars, once. A real designer builds it for you, usually within 3 business days. Then $50/month to host and look after it.',
         'price_line' => '$100 to build',
         'price_note' => 'then $50/month for hosting &amp; care',
         'cta'        => 'Build my site for $100',
         'badge'      => 'Flat $100',
     ],
-    // C: build free AND first month of hosting free.
-    'c' => [
-        'key'        => 'a2',
+    // B: free build, WITH the AI builder. The CTA starts the generator.
+    'b' => [
+        'key'        => 'b',
+        'builder'    => true,
         'kicker'     => 'For local businesses',
-        'headline'   => 'Free website. <em>Free first month.</em>',
-        'sub'        => 'No build fee and your first month of hosting is on us. A real designer builds it for you, usually within 3 business days. After that it is $50/month.',
-        'price_line' => '$0 today',
-        'price_note' => 'first month free, then $50/month',
-        'cta'        => 'Claim my free website',
-        'badge'      => 'Nothing to pay today',
+        'headline'   => 'Watch your website <em>build itself</em>.',
+        'sub'        => 'Type your business name and watch a real website appear in about two minutes. The build is free. You only pay $50/month to host it.',
+        'price_line' => '$0 to build',
+        'price_note' => 'then $50/month for hosting &amp; care',
+        'cta'        => 'Build my site now',
+        'badge'      => 'Free build',
+    ],
+    // C: free build, NO builder. Showcase only, $50 today opens the account.
+    'c' => [
+        'key'        => 'c',
+        'builder'    => false,
+        'kicker'     => 'For local businesses',
+        'headline'   => 'The website is <em>free</em>. You pay for hosting.',
+        'sub'        => 'Open your account for $50 and that is your first month. We build the website for nothing and look after it for $50/month. That is the whole cost of having a website.',
+        'price_line' => '$50 to start',
+        'price_note' => 'that is your first month &mdash; then $50/month, website built free',
+        'cta'        => 'Open my account &mdash; $50',
+        'badge'      => 'Website built free',
     ],
 ];
 
@@ -106,6 +114,14 @@ $ver = defined('WW_VERSION') ? WW_VERSION : '0';
 <title>Websites for local businesses &middot; WebWiz</title>
 <meta name="description" content="A real designer builds your website. See real examples and tell us what you want.">
 <link rel="icon" href="/favicon.ico">
+<?php
+// Meta Pixel + CAPI, reusing the same bootstrap /try uses (pixel 1974530180093513).
+// This gives us window.wwMetaTrack(), which fires the browser pixel AND posts to
+// /api/capi.php with a shared eventID so the two are deduplicated. Rolling our
+// own fbq() call here would have produced double-counted, unattributed events.
+@require_once '/var/www/sites/trywebwiz/public/api/_meta.php';
+if (function_exists('ww_meta_pixel_base_html')) { echo ww_meta_pixel_base_html(); }
+?>
 <script src="/api/sentry.js.php" defer></script>
 <style>
   :root{
@@ -195,8 +211,13 @@ $ver = defined('WW_VERSION') ? WW_VERSION : '0';
     <span class="kicker"><?= $V['kicker'] ?></span>
     <h1><?= $V['headline'] ?></h1>
     <p class="sub"><?= $V['sub'] ?></p>
-    <button class="cta" type="button" data-jump>&#9755; <?= htmlspecialchars($V['cta'], ENT_QUOTES) ?></button>
-    <p class="cta-note">Takes about a minute. No card needed to start.</p>
+    <?php if (!empty($V['builder'])): ?>
+      <a class="cta" href="/try/?offer=<?= htmlspecialchars($V['key'], ENT_QUOTES) ?>" data-builder>&#9755; <?= htmlspecialchars($V['cta'], ENT_QUOTES) ?></a>
+      <p class="cta-note">Free to watch it build. No card needed.</p>
+    <?php else: ?>
+      <button class="cta" type="button" data-jump>&#9755; <?= htmlspecialchars($V['cta'], ENT_QUOTES) ?></button>
+      <p class="cta-note">Takes about a minute. No card needed to start.</p>
+    <?php endif; ?>
   </div>
 </section>
 
@@ -263,6 +284,15 @@ $ver = defined('WW_VERSION') ? WW_VERSION : '0';
   </div>
 </section>
 
+<?php if (!empty($V['builder'])): ?>
+<section id="brief">
+  <div class="wrap" style="text-align:center">
+    <h2>Ready to see yours?</h2>
+    <p class="h2sub">Type your business name and watch the builder work. Takes about two minutes and costs nothing.</p>
+    <a class="cta" href="/try/?offer=<?= htmlspecialchars($V['key'], ENT_QUOTES) ?>" data-builder>&#9755; <?= htmlspecialchars($V['cta'], ENT_QUOTES) ?></a>
+  </div>
+</section>
+<?php else: ?>
 <section id="brief">
   <div class="wrap">
     <h2>Tell us what you want</h2>
@@ -293,6 +323,7 @@ $ver = defined('WW_VERSION') ? WW_VERSION : '0';
     </div>
   </div>
 </section>
+<?php endif; ?>
 
 <footer>
   <div class="wrap">Built by humans (and one spider) who care about your site. &copy; <?= date('Y') ?> WebWiz</div>
@@ -308,9 +339,21 @@ $ver = defined('WW_VERSION') ? WW_VERSION : '0';
     });
   });
 
+  // Tell Meta which cell this view belongs to, so the pixel data can be split
+  // by price the same way our own try_events are.
+  try { if (window.wwMetaTrack) window.wwMetaTrack('ViewContent', {content_name:'offer_'+VARIANT, content_category:'price_test'}); } catch(e){}
+
+  document.querySelectorAll('[data-builder]').forEach(function(a){
+    a.addEventListener('click', function(){
+      try { if (window.wwMetaTrack) window.wwMetaTrack('InitiateCheckout', {content_name:'offer_'+VARIANT+'_builder'}); } catch(e){}
+    });
+  });
+
   var form = document.getElementById('offerForm');
   var err  = document.getElementById('err');
   var go   = document.getElementById('go');
+  // The builder variant has no brief form - nothing below applies to it.
+  if (!form) { return; }
 
   form.addEventListener('submit', function(e){
     e.preventDefault();
@@ -333,7 +376,10 @@ $ver = defined('WW_VERSION') ? WW_VERSION : '0';
         if (j && j.ok) {
           document.getElementById('formFields').style.display = 'none';
           document.getElementById('ok').style.display = 'block';
-          if (window.fbq) { try { fbq('track','Lead',{content_name:'offer_'+VARIANT}); } catch(e){} }
+          // wwMetaTrack fires the pixel AND the server-side CAPI copy with a
+          // shared eventID, so Meta deduplicates them. A bare fbq('track')
+          // would have been browser-only and lost to iOS/ad blockers.
+          try { if (window.wwMetaTrack) window.wwMetaTrack('Lead', {content_name:'offer_'+VARIANT, content_category:'price_test'}); } catch(e){}
         } else {
           err.textContent = (j && j.error) ? j.error : 'Something went wrong. Please try again.';
           go.disabled = false; go.textContent = <?= json_encode($V['cta']) ?>;
