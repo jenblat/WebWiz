@@ -220,7 +220,7 @@ if (function_exists('ww_meta_pixel_base_html')) { echo ww_meta_pixel_base_html()
     <h1><?= $V['headline'] ?></h1>
     <p class="sub"><?= $V['sub'] ?></p>
     <?php if (!empty($V['builder'])): ?>
-      <a class="cta" href="/try/?offer=<?= htmlspecialchars($V['key'], ENT_QUOTES) ?>" data-builder>&#9755; <?= htmlspecialchars($V['cta'], ENT_QUOTES) ?></a>
+      <a class="cta" href="/o/<?= htmlspecialchars($V['key'], ENT_QUOTES) ?>/try/" data-builder>&#9755; <?= htmlspecialchars($V['cta'], ENT_QUOTES) ?></a>
       <p class="cta-note">Free to watch it build. No card needed.</p>
     <?php else: ?>
       <button class="cta" type="button" data-jump>&#9755; <?= htmlspecialchars($V['cta'], ENT_QUOTES) ?></button>
@@ -297,7 +297,7 @@ if (function_exists('ww_meta_pixel_base_html')) { echo ww_meta_pixel_base_html()
   <div class="wrap" style="text-align:center">
     <h2>Ready to see yours?</h2>
     <p class="h2sub">Type your business name and watch the builder work. Takes about two minutes and costs nothing.</p>
-    <a class="cta" href="/try/?offer=<?= htmlspecialchars($V['key'], ENT_QUOTES) ?>" data-builder>&#9755; <?= htmlspecialchars($V['cta'], ENT_QUOTES) ?></a>
+    <a class="cta" href="/o/<?= htmlspecialchars($V['key'], ENT_QUOTES) ?>/try/" data-builder>&#9755; <?= htmlspecialchars($V['cta'], ENT_QUOTES) ?></a>
   </div>
 </section>
 <?php else: ?>

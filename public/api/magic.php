@@ -72,6 +72,15 @@ try { $db->exec('PRAGMA busy_timeout = 30000'); } catch (Throwable $e) {}
             $st = $db->prepare("INSERT INTO jobs (type, prospect_id, customer_email, business_name, scrape_data, status, scheduled_for, token, generation_mode, item_status, total_cost_cents, completed_at, qa_status) VALUES ('outbound', ?, ?, ?, ?, 'ready', datetime('now'), ?, ?, 'done', ?, datetime('now'), 'magic')");
             $st->execute([$pid, $p['email'] ?? '', $p['biz'] ?? '', ($p['scrape_data'] ?? null), $p['token'], ($p['generation_mode'] ?? 'magic'), (int)round(((float)($p['cost'] ?? 0)) * 100)]);
             $jid = (int)$db->lastInsertId();
+            // Stamp the price-test cell onto the job. The reveal is reached later
+            // by ?t=<token> alone, so without this a returning visitor would be
+            // priced from a URL they no longer have. Read from $_GET because it
+            // is a superglobal and this runs inside the persist helper.
+            $__ww_off = (isset($_GET['offer']) && in_array($_GET['offer'], ['a','b'], true)) ? (string)$_GET['offer'] : null;
+            if ($__ww_off !== null) {
+                try { $db->prepare("UPDATE jobs SET offer_variant=? WHERE id=?")->execute([$__ww_off, $jid]); }
+                catch (Throwable $e) { /* pricing falls back to default, never break generation */ }
+            }
             $st = $db->prepare("INSERT INTO previews (job_id, variant_n, html_path, qa_score, qa_pass, qa_issues) VALUES (?, ?, ?, NULL, NULL, NULL)");
             foreach (($p['variants'] ?? [1]) as $vn) { $st->execute([$jid, (int)$vn, '/preview/' . $p['token'] . '/v' . (int)$vn . '/index.html']); }
             $st = $db->prepare("INSERT INTO magic_hits (ip, token) VALUES (?, ?)");
@@ -1038,6 +1047,15 @@ try {
             $st = $db->prepare("INSERT INTO jobs (type, prospect_id, customer_email, business_name, scrape_data, status, scheduled_for, token, generation_mode, item_status, total_cost_cents, completed_at, qa_status) VALUES ('outbound', ?, ?, ?, ?, 'ready', datetime('now'), ?, ?, 'done', ?, datetime('now'), 'magic')");
             $st->execute([$pid, $email, $biz, ($scrape_data_json ?? null), $token, $gen_mode, (int)round($cost * 100)]);
             $jid = (int)$db->lastInsertId();
+            // Stamp the price-test cell onto the job. The reveal is reached later
+            // by ?t=<token> alone, so without this a returning visitor would be
+            // priced from a URL they no longer have. Read from $_GET because it
+            // is a superglobal and this runs inside the persist helper.
+            $__ww_off = (isset($_GET['offer']) && in_array($_GET['offer'], ['a','b'], true)) ? (string)$_GET['offer'] : null;
+            if ($__ww_off !== null) {
+                try { $db->prepare("UPDATE jobs SET offer_variant=? WHERE id=?")->execute([$__ww_off, $jid]); }
+                catch (Throwable $e) { /* pricing falls back to default, never break generation */ }
+            }
             $st = $db->prepare("INSERT INTO previews (job_id, variant_n, html_path, qa_score, qa_pass, qa_issues) VALUES (?, ?, ?, NULL, NULL, NULL)");
             foreach ($htmls as $i => $_) {
                 $st->execute([$jid, $i, '/preview/' . $token . '/v' . $i . '/index.html']);

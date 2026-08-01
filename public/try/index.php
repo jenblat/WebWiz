@@ -143,7 +143,11 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
     try {
         require_once '/var/www/sites/trywebwiz/private/webwiz_lib.php';
         $db = ww_db();
-        $st = $db->prepare("SELECT business_name, edit_count, generation_mode FROM jobs WHERE token = ? LIMIT 1");
+        // offer_variant is needed here so a visitor returning by token alone is
+        // shown the price they were actually sold. Without it the reveal fell
+        // back to $500 while checkout correctly charged the offer price, so the
+        // page and the charge disagreed.
+        $st = $db->prepare("SELECT business_name, edit_count, generation_mode, offer_variant FROM jobs WHERE token = ? LIMIT 1");
         $st->execute([$tparam]);
         $row = $st->fetch(PDO::FETCH_ASSOC);
         // Must accept BOTH modes. Describe-mode is now the majority path; when it
@@ -179,8 +183,78 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>See your new website free. Launch it for $500 · WebWiz</title>
-<meta name="description" content="See your new website free in minutes. A custom design runs $5,000; yours launches for a flat $500, so you save about $4,500. Then $50/month hosting. Free to preview, no card to try.">
+<?php
+/* ---------------------------------------------------------------------------
+ * OFFER-AWARE PRICING (added 2026-08-01 for the /o price test).
+ *
+ * $WW_OFFER is set by the thin wrappers at /o/<v>/try/. ?offer= is accepted too
+ * so an ad URL can carry it directly. Anything absent or unrecognised falls
+ * through to $ww_offer = null and the page behaves EXACTLY as it did before -
+ * the live $500 funnel is untouched, which is the whole point.
+ *
+ * The variant is also persisted on the job row (jobs.offer_variant) because the
+ * reveal is reached later via ?t=<token>. Without that, someone returning to
+ * their preview would be priced from a URL they no longer have, and could be
+ * billed the wrong amount.
+ * ------------------------------------------------------------------------- */
+$WW_OFFER_PRICING = [
+    'a' => [
+        'build_cents' => 10000,
+        'title'    => 'See your new website free. Launch it for $100 · WebWiz',
+        'desc'     => 'See your new website free in minutes. A custom design runs $5,000; yours launches for a flat $100. Then $50/month hosting. Free to preview, no card to try.',
+        'buy'      => 'Buy now $100',
+        'anchor'   => '$100 to launch',
+        'save'     => 'Save $4,900',
+        'micro'    => 'Free to preview &middot; $100 to launch &middot; no card to try.',
+        'chip1'    => '$100 to launch',
+        'chip2'    => 'Save $4,900 vs a designer',
+        'brief'    => 'Send to my designer &amp; launch &mdash; $100',
+        'brief_js' => 'Send to my designer & launch — $100',
+        'big'      => '$100 to launch',
+        'save_big' => 'You save $4,900',
+        'conv_cta' => 'Launch my site for $100 &rarr;',
+        'lead'     => 'Wizzy gets you the first draft. Then a <strong>real human designer</strong> on our team finishes it properly. A custom design usually runs $5,000. Yours is a flat $100 to perfect and launch. Here&rsquo;s what that covers:',
+        'qa_price' => 'A designer would charge \\$3,000 to \\$5,000 to build this. At \\$100, how does that feel?',
+    ],
+    'b' => [
+        'build_cents' => 0,
+        'title'    => 'See your new website free. The build is free · WebWiz',
+        'desc'     => 'See your new website free in minutes. The build costs nothing. You pay $50/month to host it, and that is the whole cost of having a website.',
+        'buy'      => 'Launch free',
+        'anchor'   => 'Free to launch',
+        'save'     => 'Build free',
+        'micro'    => 'Free to preview &middot; free to launch &middot; $50/month hosting.',
+        'chip1'    => 'Free to launch',
+        'chip2'    => 'No build fee, ever',
+        'brief'    => 'Send to my designer &amp; launch &mdash; free',
+        'brief_js' => 'Send to my designer & launch — free',
+        'big'      => '$50/month',
+        'save_big' => 'No build fee',
+        'conv_cta' => 'Launch my site free &rarr;',
+        'lead'     => 'Wizzy gets you the first draft. Then a <strong>real human designer</strong> on our team finishes it properly. Building it costs you nothing &mdash; you pay $50/month to host it. Here&rsquo;s what that covers:',
+        'qa_price' => 'A designer would charge \\$3,000 to \\$5,000 to build this. At \\$50 a month with no build fee, how does that feel?',
+    ],
+];
+$ww_offer_key = '';
+if (isset($WW_OFFER) && isset($WW_OFFER_PRICING[$WW_OFFER])) {
+    $ww_offer_key = $WW_OFFER;
+} elseif (isset($_GET['offer']) && isset($WW_OFFER_PRICING[$_GET['offer']])) {
+    $ww_offer_key = (string)$_GET['offer'];
+}
+// If we arrived by token, the job remembers which offer it was created under.
+// That wins, so a returning visitor is always priced the way they were sold.
+if (isset($row) && is_array($row) && !empty($row['offer_variant']) && isset($WW_OFFER_PRICING[$row['offer_variant']])) {
+    $ww_offer_key = (string)$row['offer_variant'];
+}
+$OF = $ww_offer_key !== '' ? $WW_OFFER_PRICING[$ww_offer_key] : null;
+
+/** Offer value if an offer is active, else the original $500 default. */
+function ww_of(?array $OF, string $k, string $default): string {
+    return ($OF && isset($OF[$k])) ? (string)$OF[$k] : $default;
+}
+?>
+<title><?= ww_of($OF, 'title', 'See your new website free. Launch it for $500 · WebWiz') ?></title>
+<meta name="description" content="<?= ww_of($OF, 'desc', 'See your new website free in minutes. A custom design runs $5,000; yours launches for a flat $500, so you save about $4,500. Then $50/month hosting. Free to preview, no card to try.') ?>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="preload" as="image" href="/preview/wizzy-wave.gif">
@@ -638,7 +712,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
       </button>
     </div>
     <button type="button" class="topbar-customize" id="topbarCustomize">Customize</button>
-    <button type="button" class="topbar-buy" id="topbarBuy">Buy now $500</button>
+    <button type="button" class="topbar-buy" id="topbarBuy"><?= ww_of($OF, 'buy', 'Buy now $500') ?></button>
   </div>
 </header>
 <!-- Floating chat FAB (only on reveal view, shown when panel is closed) -->
@@ -674,7 +748,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
     <div class="twz-wiz"><video class="wizzy-vid" autoplay muted playsinline loop preload="metadata" poster="/preview/wizzy-waving-poster.jpg" aria-label="Wizzy waving"><source src="/preview/wizzy-waving.webm" type="video/webm"><source src="/preview/wizzy-waving.mp4" type="video/mp4"><img src="/preview/wizzy-wave.gif" alt="Wizzy waving"></video></div>
       <span class="eyebrow">&#9733; Free to preview &middot; no card to try</span>
       <h1 class="twz-h1">See your new website, <span class="twz-free">free.</span></h1>
-      <div class="twz-anchor"><span class="old">$5,000</span><span class="arrow">&rarr;</span><span class="new">$500 to launch</span><span class="save">Save $4,500</span></div>
+      <div class="twz-anchor"><span class="old">$5,000</span><span class="arrow">&rarr;</span><span class="new"><?= ww_of($OF, 'anchor', '$500 to launch') ?></span><span class="save"><?= ww_of($OF, 'save', 'Save $4,500') ?></span></div>
       <p class="lead">Tell Wizzy about your business and he&rsquo;ll design it in about two minutes.</p>
 
       <form class="form-card" id="tryForm" novalidate>
@@ -717,7 +791,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
           <div class="err-msg">Give Wizzy a few sentences about your business (at least 20 characters) so he can design the right site.</div>
         </div>
         <button type="submit" class="cta" id="ctaBtn">Make my website &rarr;</button>
-        <p class="cta-microcopy">Free to preview &middot; $500 to launch &middot; no card to try.</p>
+        <p class="cta-microcopy"><?= ww_of($OF, 'micro', 'Free to preview &middot; $500 to launch &middot; no card to try.') ?></p>
       </form>
 
       <div class="wiz-testi" id="wizTesti" aria-live="polite">
@@ -738,8 +812,8 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
       </div>
       <div class="trust">
         <span class="chip"><span class="tick">&#10003;</span> Free to preview</span>
-        <span class="chip"><span class="tick">&#10003;</span> $500 to launch</span>
-        <span class="chip"><span class="tick">&#10003;</span> Save $4,500 vs a designer</span>
+        <span class="chip"><span class="tick">&#10003;</span> <?= ww_of($OF, 'chip1', '$500 to launch') ?></span>
+        <span class="chip"><span class="tick">&#10003;</span> <?= ww_of($OF, 'chip2', 'Save $4,500 vs a designer') ?></span>
       </div>
     </div>
   </section>
@@ -941,7 +1015,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
             <span><strong>100% satisfaction guarantee.</strong> &ldquo;We revise until you love it, however many rounds it takes.&rdquo;<span class="bg-by"><?= $ww_designer_name ?>, <?= $ww_designer_title ?></span></span>
           </div>
           <p class="brief-err" id="briefErr"></p>
-          <button type="button" class="brief-go" id="briefGo">Send to my designer &amp; launch &mdash; $500</button>
+          <button type="button" class="brief-go" id="briefGo"><?= ww_of($OF, 'brief', 'Send to my designer &amp; launch &mdash; $500') ?></button>
           <p class="brief-sub">You&rsquo;ll go to secure checkout next. We save your notes either way.</p>
         </div>
       </div>
@@ -977,7 +1051,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
           <h2>Want to make it real?</h2>
           <div class="wiz-mini"><img src="/preview/wizzy-face.png" alt="Wizzy"></div>
         </div>
-        <p class="conv-lead">Wizzy gets you the first draft. Then a <strong>real human designer</strong> on our team finishes it properly. A custom design usually runs $5,000. Yours is a flat $500 to perfect and launch, so you save about $4,500. Here&rsquo;s what that covers:</p>
+        <p class="conv-lead"><?= ww_of($OF, 'lead', 'Wizzy gets you the first draft. Then a <strong>real human designer</strong> on our team finishes it properly. A custom design usually runs $5,000. Yours is a flat $500 to perfect and launch, so you save about $4,500. Here&rsquo;s what that covers:') ?></p>
         <ul class="conv-checklist">
           <li><span class="ck">&#10003;</span> A human designer perfects every detail you ask for</li>
           <li><span class="ck">&#10003;</span> Set up your domain and point it to your new site</li>
@@ -987,8 +1061,8 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
         </ul>
         <div class="conv-price">
           <div class="anchor" style="font-size:14px;color:#6a7a8a;margin-bottom:2px;">Typical website design <s>$5,000</s></div>
-          <div class="big">$500 to launch</div>
-          <div class="save" style="font-size:14px;font-weight:800;color:#1a7f4b;margin-top:2px;">You save $4,500</div>
+          <div class="big"><?= ww_of($OF, 'big', '$500 to launch') ?></div>
+          <div class="save" style="font-size:14px;font-weight:800;color:#1a7f4b;margin-top:2px;"><?= ww_of($OF, 'save_big', 'You save $4,500') ?></div>
           <div class="sub">+ $50/month for hosting &amp; care</div>
           <div class="note">Cancel hosting anytime, no cancellation fee. We&rsquo;ll send you your site files.</div>
         </div>
@@ -1044,7 +1118,7 @@ if (preg_match('~^[a-f0-9]{24}$~', $tparam)) {
       .cg-ck{flex:none;font-weight:900;}
       @media (max-width:420px){.cg-face{width:58px;height:58px;}.cg-list li{font-size:13px;}}
         </style>
-        <button type="button" class="conv-cta" id="convCta">Launch my site for $500 &rarr;</button>
+        <button type="button" class="conv-cta" id="convCta"><?= ww_of($OF, 'conv_cta', 'Launch my site for $500 &rarr;') ?></button>
         <p class="conv-foot">We handle everything. You don&rsquo;t touch a thing.</p>
         <div class="conv-err" id="convErr"></div>
         <button type="button" class="conv-back" id="convBack">&larr; Not yet, more tweaks</button>
@@ -1139,6 +1213,10 @@ window.__TRY_INIT__ = {
   var desc = document.getElementById('description');
   var web = document.getElementById('website');
   var ctaBtn = document.getElementById('ctaBtn');
+
+  // Which price-test cell this visit belongs to ('' = the default $500 funnel).
+  // Server-rendered so it survives a reload and matches whatever the job row says.
+  var WW_OFFER = <?= json_encode($ww_offer_key) ?>;
 
   var loadingHead = document.getElementById('loadingHead');
 
@@ -1431,7 +1509,9 @@ window.__TRY_INIT__ = {
         try { window.history.replaceState({t: token}, '', '/try/?t=' + encodeURIComponent(token)); window.__wwShareUrl = window.location.origin + '/try/?t=' + encodeURIComponent(token); } catch(e){}
       }, 500);
     };
-    fetch('/api/magic.php?async=1', {
+    // Carry the offer into generation so it lands on the job row and the reveal
+    // prices correctly even if the visitor returns later by token alone.
+    fetch('/api/magic.php?async=1' + (WW_OFFER ? '&offer=' + encodeURIComponent(WW_OFFER) : ''), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
       body: (function(){
@@ -1743,7 +1823,10 @@ window.__TRY_INIT__ = {
     if(window.wwMetaTrack){try{window.wwMetaTrack('AddToCart',{content_name:'make_it_real',content_category:'website_build',value:500,currency:'USD'});}catch(e){}}
     convCta.disabled = true; convCta.textContent = 'Spinning up checkout…';
     convErr.classList.remove('on');
-    fetch('/api/try_checkout.php', {
+    // Price-test cells check out through offer_checkout.php so the amount matches
+    // the landing page they came from. With no offer this is the untouched
+    // $500 path.
+    fetch(WW_OFFER ? '/api/offer_checkout.php' : '/api/try_checkout.php', {
       method:'POST',
       headers: { 'Content-Type':'application/json','Accept':'application/json' },
       body: JSON.stringify({ token: state.token })
@@ -1822,7 +1905,7 @@ window.__TRY_INIT__ = {
       // Never block the sale on the brief save.
       closeBrief(); wwGoCheckout();
     })
-    .then(function(){ briefGo.disabled = false; briefGo.textContent = 'Send to my designer & launch — $500'; });
+    .then(function(){ briefGo.disabled = false; briefGo.textContent = <?= json_encode(ww_of($OF, 'brief_js', 'Send to my designer & launch — $500')) ?>; });
   });
 
   convCta.addEventListener('click', function(){ openBrief('conv_cta'); });

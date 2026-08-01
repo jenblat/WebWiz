@@ -39,6 +39,26 @@ if (!is_array($body)) oc_fail('Bad request');
 $variant = substr(trim((string)($body['variant'] ?? '')), 0, 12);
 $lead_id = (int)($body['lead_id'] ?? 0);
 $email   = trim((string)($body['email'] ?? ''));
+$token   = substr(trim((string)($body['token'] ?? '')), 0, 64);
+
+// Builder cells (a, b) check out from /try and send a token rather than a
+// variant. The job row is the authority on which offer they were sold, so it
+// always wins over anything the client claims - otherwise a crafted request
+// could buy a $100 build for $0.
+if ($token !== '') {
+    try {
+        $st = ww_db()->prepare("SELECT offer_variant, customer_email FROM jobs WHERE token = ? LIMIT 1");
+        $st->execute([$token]);
+        $job = $st->fetch(PDO::FETCH_ASSOC);
+        if (!$job) oc_fail('Unknown preview.', 404);
+        if (empty($job['offer_variant'])) oc_fail('This preview is not part of a price test.', 400);
+        $variant = (string)$job['offer_variant'];
+        if ($email === '' && !empty($job['customer_email'])) $email = (string)$job['customer_email'];
+    } catch (Throwable $e) {
+        error_log('[offer_checkout] token lookup: ' . $e->getMessage());
+        oc_fail('Could not start checkout. Please try again.', 500);
+    }
+}
 
 // Offer table. Keep in lockstep with /o/_offer.php.
 $OFFERS = [
@@ -59,11 +79,19 @@ $origin = 'https://trywebwiz.com';
 
 $payload = [
     'mode'        => 'subscription',
-    'success_url' => $origin . '/o/' . $variant . '/?success=1&sid={CHECKOUT_SESSION_ID}',
-    'cancel_url'  => $origin . '/o/' . $variant . '/?cancelled=1',
+    // Builder cells must come back to their preview, not the landing page -
+    // returning someone to a sales page after they have paid, or losing their
+    // generated site on cancel, would both be bad.
+    'success_url' => $token !== ''
+        ? $origin . '/o/' . $variant . '/try/?success=1&t=' . urlencode($token) . '&sid={CHECKOUT_SESSION_ID}'
+        : $origin . '/o/' . $variant . '/?success=1&sid={CHECKOUT_SESSION_ID}',
+    'cancel_url'  => $token !== ''
+        ? $origin . '/o/' . $variant . '/try/?t=' . urlencode($token)
+        : $origin . '/o/' . $variant . '/?cancelled=1',
     'allow_promotion_codes' => 'true',
     'subscription_data[metadata][offer_variant]' => $variant,
     'subscription_data[metadata][lead_id]'       => (string)$lead_id,
+    'subscription_data[metadata][token]'         => $token,
     'subscription_data[metadata][source]'        => 'offer_price_test',
     'subscription_data[description]'             => 'WebWiz Hosting & Care',
     'metadata[offer_variant]' => $variant,
