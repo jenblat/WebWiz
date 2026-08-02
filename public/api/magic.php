@@ -76,7 +76,13 @@ try { $db->exec('PRAGMA busy_timeout = 30000'); } catch (Throwable $e) {}
             // by ?t=<token> alone, so without this a returning visitor would be
             // priced from a URL they no longer have. Read from $_GET because it
             // is a superglobal and this runs inside the persist helper.
-            $__ww_off = (isset($_GET['offer']) && in_array($_GET['offer'], ['a','b'], true)) ? (string)$_GET['offer'] : null;
+            // Prefer the payload: this helper also runs from the pending-file
+            // drainer, where there is no $_GET at all.
+            $__ww_off = $p['offer_variant'] ?? null;
+            if ($__ww_off === null && isset($_GET['offer']) && in_array($_GET['offer'], ['a','b'], true)) {
+                $__ww_off = (string)$_GET['offer'];
+            }
+            if ($__ww_off !== null && !in_array($__ww_off, ['a','b'], true)) { $__ww_off = null; }
             if ($__ww_off !== null) {
                 try { $db->prepare("UPDATE jobs SET offer_variant=? WHERE id=?")->execute([$__ww_off, $jid]); }
                 catch (Throwable $e) { /* pricing falls back to default, never break generation */ }
@@ -1019,6 +1025,13 @@ try {
         'variants' => array_keys($htmls), 'ip' => $ip, 'created_at' => date('Y-m-d H:i:s'),
         'generation_mode' => $gen_mode, 'description' => $description, 'describe' => $describe ? 1 : 0,
         'scrape_data' => $scrape_data_json ?? null,
+        // Which /o price-test cell this generation came from. It MUST live in the
+        // payload, not be read from $_GET at persist time: when the DB is busy the
+        // whole payload is written to data/pending_magic/ and replayed later by
+        // drain_pending.php from cron, where there is no request and no $_GET. A
+        // generation that fell back that way was losing its offer and the visitor
+        // was then priced at $500 despite arriving from the $100 or free cell.
+        'offer_variant' => (isset($_GET['offer']) && in_array($_GET['offer'], ['a','b'], true)) ? (string)$_GET['offer'] : null,
     ];
     $persist_ok = false;
     $maxAttempts = 12; // up to ~20s of retries
@@ -1051,7 +1064,13 @@ try {
             // by ?t=<token> alone, so without this a returning visitor would be
             // priced from a URL they no longer have. Read from $_GET because it
             // is a superglobal and this runs inside the persist helper.
-            $__ww_off = (isset($_GET['offer']) && in_array($_GET['offer'], ['a','b'], true)) ? (string)$_GET['offer'] : null;
+            // Prefer the payload: this helper also runs from the pending-file
+            // drainer, where there is no $_GET at all.
+            $__ww_off = $p['offer_variant'] ?? null;
+            if ($__ww_off === null && isset($_GET['offer']) && in_array($_GET['offer'], ['a','b'], true)) {
+                $__ww_off = (string)$_GET['offer'];
+            }
+            if ($__ww_off !== null && !in_array($__ww_off, ['a','b'], true)) { $__ww_off = null; }
             if ($__ww_off !== null) {
                 try { $db->prepare("UPDATE jobs SET offer_variant=? WHERE id=?")->execute([$__ww_off, $jid]); }
                 catch (Throwable $e) { /* pricing falls back to default, never break generation */ }

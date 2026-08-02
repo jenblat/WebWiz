@@ -40,6 +40,16 @@ foreach ($files as $f) {
             $st = $db->prepare("INSERT INTO jobs (type, prospect_id, customer_email, business_name, scrape_data, status, scheduled_for, token, generation_mode, item_status, total_cost_cents, completed_at, qa_status) VALUES ('outbound', ?, ?, ?, ?, 'ready', datetime('now'), ?, ?, 'done', ?, datetime('now'), 'magic')");
             $st->execute([$pid, $p['email'] ?? '', $p['biz'] ?? '', ($p['scrape_data'] ?? null), $tok, ($p['generation_mode'] ?? 'magic'), (int)round(((float)($p['cost'] ?? 0)) * 100)]);
             $jid = (int)$db->lastInsertId();
+            // Carry the /o price-test cell across the fallback. This drainer runs
+            // from cron with no request context, so the variant can only come from
+            // the queued payload. Without this a generation that hit DB contention
+            // silently lost its offer and the visitor was priced at $500 despite
+            // arriving from the $100 or free cell.
+            $__ww_off = $p['offer_variant'] ?? null;
+            if ($__ww_off !== null && in_array($__ww_off, ['a','b'], true)) {
+                try { $db->prepare("UPDATE jobs SET offer_variant=? WHERE id=?")->execute([$__ww_off, $jid]); }
+                catch (Throwable $e) { /* pricing falls back to default, never break the drain */ }
+            }
             $st = $db->prepare("INSERT INTO previews (job_id, variant_n, html_path, qa_score, qa_pass, qa_issues) VALUES (?, ?, ?, NULL, NULL, NULL)");
             foreach (($p['variants'] ?? [1]) as $vn) { $st->execute([$jid, (int)$vn, '/preview/' . $tok . '/v' . (int)$vn . '/index.html']); }
             $db->prepare("INSERT INTO magic_hits (ip, token) VALUES (?, ?)")->execute([$p['ip'] ?? '', $tok]);
