@@ -4,12 +4,17 @@
  *
  * WHY THIS EXISTS
  * Meta ad comments push back hard on price ("How you charging $500 for a website
- * in 2026", "Lovable is $20"). These pages test whether a lower entry price
- * converts better, and they deliberately DO NOT run the AI generator:
- *   - generation is the expensive step and the one that produces "looks like
- *     garbage" first impressions when it misses
- *   - instead we show real sites already built, and take a brief
- * The visitor presses a button, tells us what they want, and a human builds it.
+ * in 2026", "Lovable is $20"). These pages test a lower entry price, on two
+ * axes at once:
+ *   a vs b  = PRICE    ($100 build vs free build)      both WITH the builder
+ *   b vs c  = BUILDER  (AI builder vs showcase only)   both free build
+ *
+ * Cells A and B DO run the AI generator: their CTA goes to /o/<v>/try/, which is
+ * the real /try builder wrapped to carry the offer. (These pages originally
+ * avoided the generator on purpose; that changed on 2026-08-01, and only cell C
+ * still works the old way.) Cell C shows sites we have already built, takes a
+ * brief, and a human designs it - which is why cell C is the only cell whose
+ * visitors reach checkout with no job token.
  *
  * These pages are UNLISTED: noindex, disallowed in robots.txt, linked from
  * nowhere. Only people arriving from the ad should ever see them.
@@ -40,6 +45,13 @@ header('X-Robots-Tag: noindex, nofollow, noarchive');
 // Only A ever charges a build fee. B and C bill the $50/month and nothing else.
 // 'builder' => true sends the visitor into the /try generator instead of
 // showing the brief form.
+// Cells B and C bill the first $50 at checkout (trial => 0), while the page
+// sells the WEBSITE as free. Both are true, and the second has to be said at the
+// point of payment or the charge reads as a surprise - which is how chargebacks
+// start. A is unaffected: its page already leads with "$100 to build".
+$PAY_NOTE = 'The website is free. <strong>Getting started is $50</strong> &mdash; it covers your '
+          . 'hosting and setup, then it&rsquo;s $50/month. Cancel anytime.';
+
 $VARIANTS = [
     // A: $100 one-time build, WITH the builder.
     'a' => [
@@ -69,6 +81,9 @@ $VARIANTS = [
         'price_note' => 'no build fee &mdash; the website itself is free',
         'cta'        => 'Build my site free',
         'badge'      => 'Website built free',
+        // trial => 0 in offer_checkout.php, so the first $50 is charged the
+        // moment they check out. Say so next to the button, every time.
+        'pay_note'   => $PAY_NOTE,
     ],
     // C: free build, NO builder. Showcase only, $50 today opens the account.
     'c' => [
@@ -83,6 +98,8 @@ $VARIANTS = [
         'price_note' => 'no build fee &mdash; the website itself is free',
         'cta'        => 'Start my free website',
         'badge'      => 'Website built free',
+        // Same as B: free build, but the $50 is taken at checkout, not later.
+        'pay_note'   => $PAY_NOTE,
     ],
 ];
 
@@ -155,6 +172,11 @@ if (function_exists('ww_meta_pixel_base_html')) { echo ww_meta_pixel_base_html()
   .cta{display:inline-block;margin-top:22px;background:var(--navy);color:var(--cream);font-family:var(--display);font-weight:800;font-size:17px;text-decoration:none;padding:15px 30px;border-radius:14px;box-shadow:5px 5px 0 var(--yellow);border:none;cursor:pointer}
   .cta:active{transform:translate(2px,2px);box-shadow:3px 3px 0 var(--yellow)}
   .cta-note{font-size:13.5px;color:var(--muted);margin-top:10px}
+  /* Payment disclosure for the free-build cells. Deliberately darker and
+     heavier than .cta-note - this is the line that has to be read, not skimmed
+     past, because the $50 is taken at checkout and not a month later. */
+  .cta-pay{font-size:14px;color:var(--ink);opacity:.92;margin:8px auto 0;max-width:460px;line-height:1.45}
+  .cta-pay strong{font-weight:800;white-space:nowrap}
 
   h2{font-family:var(--display);font-weight:900;font-size:clamp(22px,3.6vw,32px);letter-spacing:-.015em;text-align:center;margin:0 0 6px}
   .h2sub{text-align:center;color:var(--muted);font-size:15.5px;margin:0 auto 24px;max-width:560px}
@@ -226,6 +248,7 @@ if (function_exists('ww_meta_pixel_base_html')) { echo ww_meta_pixel_base_html()
       <button class="cta" type="button" data-jump>&#9755; <?= htmlspecialchars($V['cta'], ENT_QUOTES) ?></button>
       <p class="cta-note">Takes about a minute. No card needed to start.</p>
     <?php endif; ?>
+    <?php if (!empty($V['pay_note'])): ?><p class="cta-pay"><?= $V['pay_note'] ?></p><?php endif; ?>
   </div>
 </section>
 
@@ -298,6 +321,7 @@ if (function_exists('ww_meta_pixel_base_html')) { echo ww_meta_pixel_base_html()
     <h2>Ready to see yours?</h2>
     <p class="h2sub">Type your business name and watch the builder work. Takes about two minutes and costs nothing.</p>
     <a class="cta" href="/o/<?= htmlspecialchars($V['key'], ENT_QUOTES) ?>/try/" data-builder>&#9755; <?= htmlspecialchars($V['cta'], ENT_QUOTES) ?></a>
+    <?php if (!empty($V['pay_note'])): ?><p class="cta-pay"><?= $V['pay_note'] ?></p><?php endif; ?>
   </div>
 </section>
 <?php else: ?>
@@ -322,6 +346,7 @@ if (function_exists('ww_meta_pixel_base_html')) { echo ww_meta_pixel_base_html()
 
           <p class="err" id="err"></p>
           <button class="cta" type="submit" id="go" style="width:100%;margin-top:4px"><?= htmlspecialchars($V['cta'], ENT_QUOTES) ?></button>
+          <?php if (!empty($V['pay_note'])): ?><p class="cta-pay" style="text-align:center"><?= $V['pay_note'] ?></p><?php endif; ?>
         </div>
         <div class="ok" id="ok">
           <h3>Got it &mdash; thank you.</h3>

@@ -231,6 +231,10 @@ $WW_OFFER_PRICING = [
         'big'      => '$50/month',
         'save_big' => 'No build fee',
         'conv_cta' => 'Launch my site free &rarr;',
+        // The BUILD is free; the first month is not, and it is taken now. This
+        // has to sit next to the pay buttons - a "free" button that charges $50
+        // is exactly the shape of a chargeback.
+        'pay_note' => 'The website is free. <strong>Getting started is $50</strong> &mdash; it covers your hosting and setup, then it&rsquo;s $50/month. Cancel anytime.',
         'lead'     => 'Wizzy gets you the first draft. Then a <strong>real human designer</strong> on our team finishes it properly. Building it costs you nothing &mdash; you pay $50/month to host it. Here&rsquo;s what that covers:',
         'qa_price' => 'A designer would charge \\$3,000 to \\$5,000 to build this. At \\$50 a month with no build fee, how does that feel?',
     ],
@@ -570,6 +574,10 @@ function ww_of(?array $OF, string $k, string $default): string {
   .conv-cta:hover{transform:translate(-2px,-2px);box-shadow:4px 4px 0 var(--navy);}
   .conv-cta[disabled]{opacity:0.6;cursor:not-allowed;transform:none;}
   .conv-foot{text-align:center;font-size:12px;color:rgba(18,24,74,0.6);margin-top:12px;}
+  /* Payment disclosure. Darker and heavier than .conv-foot on purpose: this is
+     the line that must be read before the card is charged. */
+  .conv-pay{text-align:center;font-size:13.5px;color:var(--navy,#12184A);opacity:.92;line-height:1.45;margin:10px auto 0;max-width:380px;}
+  .conv-pay strong{font-weight:800;white-space:nowrap;}
   .conv-err{display:none;background:#fde2e2;color:#5a0808;border:2px solid #8a0e0e;border-radius:8px;padding:10px 12px;font-size:13px;margin-top:12px;}
   .conv-err.on{display:block;}
   .conv-back{display:inline-block;margin-top:10px;background:transparent;color:var(--navy);text-decoration:underline;border:none;font-family:var(--body);font-weight:500;cursor:pointer;font-size:13px;padding:0;}
@@ -1016,6 +1024,7 @@ function ww_of(?array $OF, string $k, string $default): string {
           </div>
           <p class="brief-err" id="briefErr"></p>
           <button type="button" class="brief-go" id="briefGo"><?= ww_of($OF, 'brief', 'Send to my designer &amp; launch &mdash; $500') ?></button>
+          <?php if ($OF && !empty($OF['pay_note'])): ?><p class="conv-pay" style="margin-top:12px"><?= $OF['pay_note'] ?></p><?php endif; ?>
           <p class="brief-sub">You&rsquo;ll go to secure checkout next. We save your notes either way.</p>
         </div>
       </div>
@@ -1119,6 +1128,7 @@ function ww_of(?array $OF, string $k, string $default): string {
       @media (max-width:420px){.cg-face{width:58px;height:58px;}.cg-list li{font-size:13px;}}
         </style>
         <button type="button" class="conv-cta" id="convCta"><?= ww_of($OF, 'conv_cta', 'Launch my site for $500 &rarr;') ?></button>
+        <?php if ($OF && !empty($OF['pay_note'])): ?><p class="conv-pay"><?= $OF['pay_note'] ?></p><?php endif; ?>
         <p class="conv-foot">We handle everything. You don&rsquo;t touch a thing.</p>
         <div class="conv-err" id="convErr"></div>
         <button type="button" class="conv-back" id="convBack">&larr; Not yet, more tweaks</button>

@@ -7,16 +7,23 @@
  * Stripe payload is much cheaper than risking the funnel that currently earns.
  *
  * OFFERS (must stay in sync with $VARIANTS in /o/_offer.php):
- *   a  $100 build + $50/month   - one-time line + recurring line, 30-day trial
- *                                 on the recurring line so TODAY reads $100.
- *   b  same as a, reached through the builder instead of the brief form.
- *   c  $0 build + $50/month     - recurring line only, NO trial, so the $50
- *                                 charged today literally is month one, which
- *                                 is how the page words it.
+ *   a  $100 build + $50/month   - one-time build line + recurring line, with a
+ *                                 30-day trial on the recurring line so the
+ *                                 total due TODAY reads $100 and not $150.
+ *   b  $0 build + $50/month     - recurring line only, NO trial. Reached
+ *                                 through the builder, same as a, but the
+ *                                 build is free: the $50 taken today is
+ *                                 month one.
+ *   c  $0 build + $50/month     - recurring line only, NO trial, same money as
+ *                                 b. Reached through the brief form instead of
+ *                                 the builder, so it never carries a token.
  *
- * The 30-day trial on a/b is the same trick try_checkout.php uses: without it
- * Stripe bills the build fee AND the first month at once, and the total due
- * would read $150 against a page promising $100.
+ * The 30-day trial exists ONLY on a. Without it Stripe would bill the build fee
+ * AND the first month at once, and the total due would read $150 against a page
+ * promising $100. b and c have no build fee, so there is nothing to defer.
+ *
+ * SECURITY: the variant is never taken from the request body. See the
+ * resolution block below.
  */
 declare(strict_types=1);
 @set_time_limit(25);
@@ -36,15 +43,38 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') oc_fail('POST only', 405);
 $body = json_decode(file_get_contents('php://input') ?: '', true);
 if (!is_array($body)) oc_fail('Bad request');
 
-$variant = substr(trim((string)($body['variant'] ?? '')), 0, 12);
 $lead_id = (int)($body['lead_id'] ?? 0);
 $email   = trim((string)($body['email'] ?? ''));
 $token   = substr(trim((string)($body['token'] ?? '')), 0, 64);
 
-// Builder cells (a, b) check out from /try and send a token rather than a
-// variant. The job row is the authority on which offer they were sold, so it
-// always wins over anything the client claims - otherwise a crafted request
-// could buy a $100 build for $0.
+// Offer table. Keep in lockstep with $VARIANTS in /o/_offer.php.
+// Only A charges a build fee. B and C bill the $50/month and nothing else, so
+// they have no trial: the $50 taken today IS their first month.
+$OFFERS = [
+    'a' => ['build' => 10000, 'monthly' => 5000, 'trial' => 30, 'label' => 'WebWiz website build'],
+    'b' => ['build' => 0,     'monthly' => 5000, 'trial' => 0,  'label' => 'WebWiz hosting & care'],
+    'c' => ['build' => 0,     'monthly' => 5000, 'trial' => 0,  'label' => 'WebWiz hosting & care'],
+];
+
+// ---------------------------------------------------------------------------
+// VARIANT RESOLUTION - server-side only.
+//
+// The variant is NEVER read from the request body. It used to be, whenever no
+// token was supplied, which let a cell-A visitor POST {"variant":"b"} with no
+// token and buy A's product with the $100 build fee stripped out.
+//
+//   token present -> the jobs row is the only authority. Cells a and b are the
+//                    builder cells and ALWAYS carry the token of the site they
+//                    generated. A token that resolves to no known variant is a
+//                    hard 400: failing closed is correct, because failing open
+//                    means selling the wrong cell at the wrong price.
+//   no token      -> forced to 'c'. C is the only funnel without a builder,
+//                    therefore the only one that legitimately reaches checkout
+//                    with no job token. A tokenless request IS a cell-C brief
+//                    checkout by definition, and c is also the cheapest cell to
+//                    fulfil, so this cannot be used to buy down a price.
+// ---------------------------------------------------------------------------
+$variant = 'c';
 if ($token !== '') {
     try {
         $st = ww_db()->prepare("SELECT offer_variant, customer_email FROM jobs WHERE token = ? LIMIT 1");
@@ -52,7 +82,8 @@ if ($token !== '') {
         $job = $st->fetch(PDO::FETCH_ASSOC);
         if (!$job) oc_fail('Unknown preview.', 404);
         if (empty($job['offer_variant'])) oc_fail('This preview is not part of a price test.', 400);
-        $variant = (string)$job['offer_variant'];
+        $variant = strtolower(trim((string)$job['offer_variant']));
+        if (!isset($OFFERS[$variant])) oc_fail('This preview is not part of a price test.', 400);
         if ($email === '' && !empty($job['customer_email'])) $email = (string)$job['customer_email'];
     } catch (Throwable $e) {
         error_log('[offer_checkout] token lookup: ' . $e->getMessage());
@@ -60,15 +91,6 @@ if ($token !== '') {
     }
 }
 
-// Offer table. Keep in lockstep with /o/_offer.php.
-$OFFERS = [
-    // Only A charges a build fee. B and C bill the $50/month and nothing else,
-    // so they have no trial: the $50 taken today IS their first month.
-    'a' => ['build' => 10000, 'monthly' => 5000, 'trial' => 30, 'label' => 'WebWiz website build'],
-    'b' => ['build' => 0,     'monthly' => 5000, 'trial' => 0,  'label' => 'WebWiz hosting & care'],
-    'c' => ['build' => 0,     'monthly' => 5000, 'trial' => 0,  'label' => 'WebWiz hosting & care'],
-];
-if (!isset($OFFERS[$variant])) oc_fail('Unknown offer.');
 $O = $OFFERS[$variant];
 
 $secrets = function_exists('ww_secrets') ? ww_secrets() : [];
@@ -94,8 +116,13 @@ $payload = [
     'subscription_data[metadata][token]'         => $token,
     'subscription_data[metadata][source]'        => 'offer_price_test',
     'subscription_data[description]'             => 'WebWiz Hosting & Care',
+    // Session-level copies too: webhook.php reads $obj['metadata']['token'] and
+    // ['source'] off the checkout.session object to stop the nurture sequence
+    // and record checkout_completed. Subscription metadata is not visible there.
     'metadata[offer_variant]' => $variant,
     'metadata[lead_id]'       => (string)$lead_id,
+    'metadata[token]'         => $token,
+    'metadata[source]'        => 'offer_price_test',
 ];
 
 if ($email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL)) {
@@ -150,12 +177,30 @@ try {
             return $db->prepare("UPDATE offer_leads SET status='checkout' WHERE id=?")->execute([$lead_id]);
         });
     }
-    $db->prepare("INSERT INTO try_events (event, payload, ip, user_agent) VALUES ('offer_checkout', ?, ?, ?)")
+    // Builder cells: remember the session on the job, the same way
+    // try_checkout.php does, so the webhook can tie a payment to a preview.
+    if ($token !== '' && !empty($json['id'])) {
+        ww_db_write_retry(function () use ($db, $json, $token) {
+            return $db->prepare("UPDATE jobs SET stripe_session_id = ? WHERE token = ?")
+                      ->execute([(string)$json['id'], $token]);
+        });
+    }
+    $db->prepare("INSERT INTO try_events (event, token, session_id, payload, ip, user_agent) VALUES ('offer_checkout', ?, ?, ?, ?, ?)")
        ->execute([
+           $token !== '' ? $token : null,
+           $json['id'] ?? null,
            json_encode(['variant' => $variant, 'lead_id' => $lead_id, 'session' => $json['id'] ?? null], JSON_UNESCAPED_SLASHES),
            substr((string)($_SERVER['REMOTE_ADDR'] ?? ''), 0, 45),
            substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 300),
        ]);
 } catch (Throwable $e) { /* never block a paying customer on analytics */ }
 
-echo json_encode(['ok' => true, 'url' => $json['url']]);
+// 'url' is what /o/_offer.php's brief form reads; 'checkout_url' is what the
+// builder page (/try/index.php, shared with the $500 try_checkout.php path)
+// reads. Return both so neither caller has to care which endpoint answered.
+echo json_encode([
+    'ok'           => true,
+    'url'          => $json['url'],
+    'checkout_url' => $json['url'],
+    'session_id'   => $json['id'] ?? null,
+]);
