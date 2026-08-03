@@ -29,3 +29,6 @@ public/api/_*.php
 *.bak-*
 *.bak_*
 private/RELEASE
+
+# Local pre-change backups (may contain a copy of secrets.php). NEVER commit.
+backups/

@@ -74,16 +74,30 @@ $OFFERS = [
 //                    checkout by definition, and c is also the cheapest cell to
 //                    fulfil, so this cannot be used to buy down a price.
 // ---------------------------------------------------------------------------
-$variant = 'c';
+// Wording note: everything a buyer can see here has to be something a buyer can
+// ACT on. "This preview is not part of a price test." was an internal statement
+// about our own data model shown to someone holding a credit card.
+const OC_ERR_NO_PRICE = 'We could not confirm the price for this website, so we have not charged you anything. '
+                      . 'Please go back to the link you came from and press the button again — or email hello@trywebwiz.com '
+                      . 'and we will finish this off for you.';
+
+$variant   = 'c';
+$job_biz   = '';
+$from_job  = false;
 if ($token !== '') {
     try {
-        $st = ww_db()->prepare("SELECT offer_variant, customer_email FROM jobs WHERE token = ? LIMIT 1");
+        $st = ww_db()->prepare("SELECT offer_variant, customer_email, business_name FROM jobs WHERE token = ? LIMIT 1");
         $st->execute([$token]);
         $job = $st->fetch(PDO::FETCH_ASSOC);
-        if (!$job) oc_fail('Unknown preview.', 404);
-        if (empty($job['offer_variant'])) oc_fail('This preview is not part of a price test.', 400);
+        if (!$job) {
+            oc_fail('We could not find that preview. Please go back and generate your site again, '
+                  . 'or email hello@trywebwiz.com and we will sort it out.', 404);
+        }
+        if (empty($job['offer_variant']))                        oc_fail(OC_ERR_NO_PRICE, 409);
         $variant = strtolower(trim((string)$job['offer_variant']));
-        if (!isset($OFFERS[$variant])) oc_fail('This preview is not part of a price test.', 400);
+        if (!isset($OFFERS[$variant]))                           oc_fail(OC_ERR_NO_PRICE, 409);
+        $from_job = true;
+        $job_biz  = trim((string)($job['business_name'] ?? ''));
         if ($email === '' && !empty($job['customer_email'])) $email = (string)$job['customer_email'];
     } catch (Throwable $e) {
         error_log('[offer_checkout] token lookup: ' . $e->getMessage());
@@ -91,7 +105,77 @@ if ($token !== '') {
     }
 }
 
+// FAIL CLOSED ON PRICE. The tokenless default is 'c', the CHEAPEST cell. That
+// default is only safe for a request that legitimately has no token, i.e. a
+// cell-C brief checkout. A request that DID carry a token must be priced from
+// its job row and nothing else - if that lookup ever stopped short of setting
+// $from_job we would silently sell cell A's product at cell C's price. Belt and
+// braces: never let a tokenful request end up on the cheap default.
+if ($token !== '' && !$from_job) {
+    error_log('[offer_checkout] refusing tokenful checkout that did not resolve from jobs: ' . $token);
+    oc_fail(OC_ERR_NO_PRICE, 409);
+}
+
 $O = $OFFERS[$variant];
+
+// ---------------------------------------------------------------------------
+// LEAD ROW (added 2026-08-03).
+//
+// Until now offer_lead.php was called only by cell C's brief form, and the
+// builder cells posted nothing but {token}. offer_leads could therefore ONLY
+// ever contain C rows, so lead-per-view - the comparison the whole price test
+// exists to produce - was uncomputable for A and B.
+//
+// Written HERE, server-side and BEFORE the Stripe call, on purpose:
+//   * it cannot be skipped by a client that fails to fire it;
+//   * interest is captured even if Stripe errors or the buyer abandons the
+//     hosted checkout page and never comes back;
+//   * the id is available to go into Stripe metadata below, which is what lets
+//     webhook.php mark the lead purchased.
+// Deduped on token so revisiting the reveal and pressing buy twice is one lead.
+// ---------------------------------------------------------------------------
+if ($token !== '' && $lead_id <= 0) {
+    try {
+        $db = ww_db();
+        ww_offer_leads_ensure($db);
+        $st = $db->prepare("SELECT id FROM offer_leads WHERE token = ? ORDER BY id LIMIT 1");
+        $st->execute([$token]);
+        $existing = $st->fetchColumn();
+        if ($existing !== false && $existing !== null) {
+            $lead_id = (int)$existing;
+        } else {
+            $ins = $db->prepare("INSERT INTO offer_leads
+                (variant, business, about, wants, contact, ip, user_agent, status, created_at, token, source)
+                VALUES (?,?,?,?,?,?,?,'new',datetime('now'),?,'builder')");
+            ww_db_write_retry(function () use ($ins, $variant, $job_biz, $email, $token) {
+                return $ins->execute([
+                    $variant,
+                    $job_biz !== '' ? mb_substr($job_biz, 0, 200) : '(from builder)',
+                    'Generated their own site in the WebWiz builder.',
+                    '',
+                    mb_substr((string)$email, 0, 200),
+                    substr((string)($_SERVER['REMOTE_ADDR'] ?? ''), 0, 45),
+                    substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 300),
+                    $token,
+                ]);
+            });
+            $lead_id = (int)$db->lastInsertId();
+            try {
+                $db->prepare("INSERT INTO try_events (event, token, payload, ip, user_agent) VALUES ('offer_lead', ?, ?, ?, ?)")
+                   ->execute([
+                       $token,
+                       json_encode(['variant' => $variant, 'lead_id' => $lead_id, 'source' => 'builder'], JSON_UNESCAPED_SLASHES),
+                       substr((string)($_SERVER['REMOTE_ADDR'] ?? ''), 0, 45),
+                       substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 300),
+                   ]);
+            } catch (Throwable $e) { /* analytics must not block the sale */ }
+        }
+    } catch (Throwable $e) {
+        // A lead we failed to record is a measurement problem. Blocking the sale
+        // over it would be a revenue problem, which is worse.
+        error_log('[offer_checkout] builder lead write failed: ' . $e->getMessage());
+    }
+}
 
 $secrets = function_exists('ww_secrets') ? ww_secrets() : [];
 $STRIPE_SECRET = (string)($secrets['STRIPE_SECRET_KEY'] ?? '');
@@ -172,9 +256,16 @@ if ($http !== 200 || empty($json['url'])) {
 // Record that this lead reached checkout, so the funnel can be read per variant.
 try {
     $db = ww_db();
+    ww_offer_leads_ensure($db);
     if ($lead_id > 0) {
-        ww_db_write_retry(function () use ($db, $lead_id) {
-            return $db->prepare("UPDATE offer_leads SET status='checkout' WHERE id=?")->execute([$lead_id]);
+        // Record the session on the lead as well as the status. webhook.php and
+        // the /o success page both key off it to mark the lead purchased, and
+        // metadata[lead_id] alone does not survive a Stripe session the buyer
+        // reopens from an emailed link.
+        $sid_for_lead = (string)($json['id'] ?? '');
+        ww_db_write_retry(function () use ($db, $lead_id, $sid_for_lead) {
+            return $db->prepare("UPDATE offer_leads SET status='checkout', stripe_session_id=? WHERE id=? AND status <> 'purchased'")
+                      ->execute([$sid_for_lead !== '' ? $sid_for_lead : null, $lead_id]);
         });
     }
     // Builder cells: remember the session on the job, the same way

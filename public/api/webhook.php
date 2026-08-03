@@ -151,6 +151,15 @@ if ($type === 'checkout.session.completed') {
     $plan    = $obj['metadata']['plan'] ?? null;
     $amount  = $obj['amount_total'] ?? null;
     $sid     = (string)($obj['id'] ?? '');
+    // Price-test metadata. offer_checkout.php sets offer_variant / lead_id /
+    // token / source on BOTH the session and the subscription; only the session
+    // copies are visible here. It never sets 'plan' - that key belongs to the
+    // $500 try_checkout.php funnel - which is why content_name below used to go
+    // out empty on every single price-test purchase.
+    $ovariant = strtolower(trim((string)($obj['metadata']['offer_variant'] ?? '')));
+    if (!in_array($ovariant, ['a', 'b', 'c'], true)) $ovariant = '';
+    $olead_id = (int)($obj['metadata']['lead_id'] ?? 0);
+    $is_sub   = (string)($obj['mode'] ?? '') === 'subscription';
 
     $vars = [
         'first_name'    => first_name_from($name) ?: ($biz ?: 'friend'),
@@ -204,48 +213,115 @@ if ($type === 'checkout.session.completed') {
     } catch (Throwable $e) { error_log('[webhook] nurture purchased update failed: ' . $e->getMessage()); }
 
     // Funnel analytics
+    //
+    // FIX 2026-08-03: this used to be wrapped in `if (24-hex token)`, so a cell-C
+    // purchase - which by design never has a job token, because cell C has no
+    // builder - recorded NOTHING. The whole point of the price test is comparing
+    // cells, and one of the three cells could not register a sale at all.
+    // The token is now optional and only decides whether the token column is
+    // filled; the row is always written.
+    $tok_col = null;
     try {
         $token_meta = (string)($obj['metadata']['token'] ?? '');
         $source     = (string)($obj['metadata']['source'] ?? '');
-        if (preg_match('~^[a-f0-9]{24}$~', $token_meta)) {
-            $pl = json_encode([
-                'amount'    => $amount,
-                'plan'      => $plan,
-                'source'    => $source,
-                'biz'       => $biz,
-                'recurring' => (string)($obj['mode'] ?? '') === 'subscription',
-            ]);
-            ww_db()->prepare("INSERT INTO try_events (event, token, session_id, payload) VALUES ('checkout_completed', ?, ?, ?)")
-                   ->execute([$token_meta, (string)$sid, $pl]);
-        }
+        $tok_col    = preg_match('~^[a-f0-9]{24}$~', $token_meta) ? $token_meta : null;
+        $pl = json_encode([
+            'amount'    => $amount,
+            'plan'      => $plan,
+            'variant'   => $ovariant !== '' ? $ovariant : null,
+            'lead_id'   => $olead_id ?: null,
+            'source'    => $source,
+            'biz'       => $biz,
+            'recurring' => $is_sub,
+        ], JSON_UNESCAPED_SLASHES);
+        ww_db()->prepare("INSERT INTO try_events (event, token, session_id, payload) VALUES ('checkout_completed', ?, ?, ?)")
+               ->execute([$tok_col, (string)$sid, $pl]);
     } catch (Throwable $e) { error_log('[webhook] try-event insert failed: ' . $e->getMessage()); }
 
-    // Meta CAPI Purchase event (dedupes with success.php client Pixel via event_id)
+    // ----- FIX 2026-08-03: close the loop on the offer lead -----
+    // Nothing anywhere set offer_leads.status='purchased', so every lead sat at
+    // 'new'/'checkout' forever and the conversion end of the funnel was blank.
+    // Match on lead_id first (exact), then the Stripe session, then the job
+    // token - any one of the three is enough and they cost nothing.
+    try {
+        require_once __DIR__ . '/../../private/webwiz_lib.php';
+        $dbl = ww_db();
+        ww_offer_leads_ensure($dbl);
+        $where = null; $args = [];
+        if ($olead_id > 0)                { $where = "id = ?";                $args = [$olead_id]; }
+        elseif ($sid !== '')              { $where = "stripe_session_id = ?"; $args = [$sid]; }
+        elseif ($tok_col !== null)        { $where = "token = ?";             $args = [$tok_col]; }
+        if ($where !== null) {
+            $sqlu = "UPDATE offer_leads SET status='purchased'"
+                  . ($sid !== '' ? ", stripe_session_id=COALESCE(stripe_session_id, " . $dbl->quote($sid) . ")" : "")
+                  . " WHERE $where AND status <> 'purchased'";
+            $n = 0;
+            ww_db_write_retry(function () use ($dbl, $sqlu, $args, &$n) {
+                $stu = $dbl->prepare($sqlu);
+                $r = $stu->execute($args);
+                $n = $stu->rowCount();
+                return $r;
+            });
+            error_log('[webhook] offer_leads purchased rows=' . $n . ' variant=' . ($ovariant ?: '-') . ' lead_id=' . $olead_id);
+        }
+    } catch (Throwable $e) { error_log('[webhook] offer lead close failed: ' . $e->getMessage()); }
+
+    // ----- Meta CAPI: Purchase (+ Subscribe for recurring plans) -----
+    //
+    // FIX 2026-08-03. content_name was `$obj['metadata']['plan']`, a key
+    // offer_checkout.php never sets, so every price-test Purchase reached Meta
+    // with an EMPTY content_name and the algorithm could not tell the three
+    // cells apart. metadata['offer_variant'] is present on all of them; use it,
+    // and keep 'plan' for the untouched $500 funnel.
+    //
+    // event_id is derived deterministically from the Stripe session id, which is
+    // exactly what public/success.php and the /o receipt page use for the
+    // browser Pixel, so the browser and server copies dedupe into one
+    // conversion instead of double-counting the sale.
     try {
         $name_parts = $name ? explode(' ', trim($name), 2) : [];
         $first      = $name_parts[0] ?? '';
         $last       = $name_parts[1] ?? '';
         $phone      = (string)($obj['metadata']['phone'] ?? ($obj['customer_details']['phone'] ?? ''));
-        ww_meta_send_event(
-            'Purchase',
-            ww_meta_event_id($sid),
-            [
-                'email'             => (string)$email,
-                'phone'             => $phone,
-                'first_name'        => $first,
-                'last_name'         => $last,
-                'client_ip_address' => ww_meta_client_ip(),
-                'client_user_agent' => ww_meta_user_agent(),
-            ],
-            [
-                'value'            => $amount !== null ? round(((int)$amount) / 100, 2) : 0,
-                'currency'         => strtoupper((string)($obj['currency'] ?? 'usd')) ?: 'USD',
-                'content_name'     => (string)$plan,
-                'content_category' => 'website_build',
-            ],
-            'https://trywebwiz.com/success.php?session_id=' . $sid,
-            'website'
-        );
+        $value      = $amount !== null ? round(((int)$amount) / 100, 2) : 0;
+        $currency   = strtoupper((string)($obj['currency'] ?? 'usd')) ?: 'USD';
+        $content    = $ovariant !== '' ? ('offer_' . $ovariant) : ((string)$plan !== '' ? (string)$plan : 'try_build');
+        $category   = $ovariant !== '' ? 'price_test' : 'website_build';
+        $user_data  = [
+            'email'             => (string)$email,
+            'phone'             => $phone,
+            'first_name'        => $first,
+            'last_name'         => $last,
+            'client_ip_address' => ww_meta_client_ip(),
+            'client_user_agent' => ww_meta_user_agent(),
+        ];
+        $custom = [
+            'value'            => $value,
+            'currency'         => $currency,
+            'content_name'     => $content,
+            'content_category' => $category,
+        ];
+        if ($ovariant !== '') $custom['content_ids'] = ['offer_' . $ovariant];
+        $src_url = $ovariant !== ''
+            ? 'https://trywebwiz.com/o/' . $ovariant . '/?success=1&sid=' . $sid
+            : 'https://trywebwiz.com/success.php?session_id=' . $sid;
+
+        ww_meta_send_event('Purchase', ww_meta_event_id($sid), $user_data, $custom, $src_url, 'website');
+
+        // Subscribe: every /o cell and the hosting add-on are recurring, and Meta
+        // treats Subscribe as its own optimisable conversion. Distinct event_id
+        // (session id + suffix) so it is NOT deduped against the Purchase, but
+        // still deterministic, so a webhook retry cannot double-count it.
+        if ($is_sub) {
+            ww_meta_send_event(
+                'Subscribe',
+                ww_meta_event_id($sid . ':subscribe'),
+                $user_data,
+                array_merge($custom, ['predicted_ltv' => round(($value + 50 * 11), 2)]),
+                $src_url,
+                'website'
+            );
+        }
     } catch (Throwable $e) { error_log('[webhook] meta capi Purchase failed: ' . $e->getMessage()); }
 }
 

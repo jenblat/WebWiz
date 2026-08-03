@@ -36,6 +36,16 @@ require_once '/var/www/sites/trywebwiz/private/webwiz_lib.php';
 // not rely on robots.txt to hide these pages.
 header('X-Robots-Tag: noindex, nofollow, noarchive');
 
+// FIX (2026-08-03): these are MEASURED landing pages behind live paid traffic.
+// The site-wide `Cache-Control: public, max-age=86400` in public/.htaccess plus
+// LiteSpeed's `CacheEnable public /` meant a shared cache could hand cell A's
+// HTML to a cell B visitor, and could serve the ?success=1 receipt page to a
+// stranger. Per-variant tracking, the post-checkout receipt and the Stripe
+// session id are all per-visit, so nothing here is publicly cacheable.
+header('Cache-Control: no-store, no-cache, must-revalidate, private, max-age=0');
+header('Pragma: no-cache');
+header('Expires: 0');
+
 // ---------------------------------------------------------------------------
 // Variant definitions. price_cents is the one-time build fee.
 // ---------------------------------------------------------------------------
@@ -106,6 +116,73 @@ $VARIANTS = [
 $V = $VARIANTS[$WW_VARIANT] ?? $VARIANTS['a'];
 
 // ---------------------------------------------------------------------------
+// POST-CHECKOUT STATE (added 2026-08-03).
+//
+// offer_checkout.php sends tokenless (cell C) buyers back to
+//   /o/c/?success=1&sid=cs_...   on success
+//   /o/c/?cancelled=1            on cancel
+// and until now this file ignored both. A buyer who had just been charged $50
+// landed back on "The website is free... Start my free website" with the brief
+// form open and no receipt, which reads as "the payment did not work" and is
+// how refund requests and chargebacks start.
+// ---------------------------------------------------------------------------
+$ww_success   = (string)($_GET['success']   ?? '') === '1';
+$ww_cancelled = (string)($_GET['cancelled'] ?? '') === '1';
+$ww_sid = '';
+if (preg_match('~^cs_[A-Za-z0-9_]{8,120}$~', (string)($_GET['sid'] ?? ''))) {
+    $ww_sid = (string)$_GET['sid'];
+}
+// A success URL with no usable session id is not a receipt we can stand behind.
+if ($ww_success && $ww_sid === '') { $ww_success = false; }
+if ($ww_success) { $ww_cancelled = false; }
+
+// Receipt facts. Ask Stripe for the truth; fall back to this cell's own price
+// so the page still says something correct if the API call fails.
+$ww_paid_cents    = null;
+$ww_paid_status   = '';
+$ww_receipt_email = '';
+$ww_currency      = 'USD';
+if ($ww_success) {
+    try {
+        $sec = function_exists('ww_secrets') ? ww_secrets() : [];
+        $sk  = (string)($sec['STRIPE_SECRET_KEY'] ?? '');
+        if ($sk !== '') {
+            $ch = curl_init('https://api.stripe.com/v1/checkout/sessions/' . urlencode($ww_sid));
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_USERPWD        => $sk . ':',
+                CURLOPT_TIMEOUT        => 6,
+                CURLOPT_CONNECTTIMEOUT => 4,
+            ]);
+            $r = curl_exec($ch);
+            $hc = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+            $sj = json_decode((string)$r, true);
+            if ($hc === 200 && is_array($sj)) {
+                if (isset($sj['amount_total']))   $ww_paid_cents    = (int)$sj['amount_total'];
+                if (isset($sj['payment_status'])) $ww_paid_status   = (string)$sj['payment_status'];
+                if (!empty($sj['currency']))      $ww_currency      = strtoupper((string)$sj['currency']);
+                $ww_receipt_email = (string)($sj['customer_details']['email'] ?? ($sj['customer_email'] ?? ''));
+            }
+        }
+    } catch (Throwable $e) { /* fall through to the static fallback below */ }
+}
+if ($ww_paid_cents === null) {
+    $ww_paid_cents = ((int)$V['price_cents'] > 0) ? (int)$V['price_cents'] : (int)$V['monthly'];
+}
+// Short human reference for support, plus the full Stripe id for us.
+$ww_ref = $ww_sid !== '' ? 'WW-' . strtoupper(substr($ww_sid, -10)) : '';
+
+// Only claim money changed hands if Stripe says it did. Stripe normally only
+// sends anyone to success_url after payment, but ?success=1&sid=... is just a
+// URL and can be reached with a session that was never paid - telling that
+// person "Paid today $50" would be a false receipt.
+// If we could NOT reach Stripe at all ($ww_paid_status === '') we give the
+// buyer the benefit of the doubt and show the receipt: an API timeout on our
+// side must not tell a paying customer their payment failed.
+$ww_confirmed = ($ww_paid_status === '' || in_array($ww_paid_status, ['paid', 'no_payment_required'], true));
+
+// ---------------------------------------------------------------------------
 // Showcase. ONLY sites that have been looked at by a human and judged
 // presentable - a bad tile here costs more than an empty grid.
 // ---------------------------------------------------------------------------
@@ -116,6 +193,31 @@ $SHOWCASE = [
 ];
 
 // Record the pageview so variants can be compared on more than clicks.
+// NOT on the post-checkout receipt: that is the same person coming back from
+// Stripe, and counting it as a fresh view inflates the denominator of the
+// lead-per-view metric this whole price test exists to produce.
+if ($ww_success) {
+    try {
+        ww_db()->prepare("INSERT INTO try_events (event, session_id, payload, ip, user_agent) VALUES ('offer_success_view', ?, ?, ?, ?)")
+           ->execute([
+               $ww_sid ?: null,
+               json_encode(['variant' => $V['key'], 'amount_total' => $ww_paid_cents, 'payment_status' => $ww_paid_status], JSON_UNESCAPED_SLASHES),
+               substr((string)($_SERVER['REMOTE_ADDR'] ?? ''), 0, 45),
+               substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 300),
+           ]);
+    } catch (Throwable $e) { /* never let analytics break the receipt */ }
+    // Close the loop on the lead even if the Stripe webhook is late or fails.
+    // Stripe's own payment_status is the authority, never the query string.
+    if ($ww_paid_status === 'paid' || $ww_paid_status === 'no_payment_required') {
+        try {
+            $dbp = ww_db();
+            ww_db_write_retry(function () use ($dbp, $ww_sid) {
+                return $dbp->prepare("UPDATE offer_leads SET status='purchased' WHERE stripe_session_id = ? AND status <> 'purchased'")
+                           ->execute([$ww_sid]);
+            });
+        } catch (Throwable $e) { /* webhook.php also does this */ }
+    }
+} else {
 try {
     $db = ww_db();
     // try_events has no 'detail' column - the variant goes in payload, matching
@@ -127,8 +229,11 @@ try {
            substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 300),
        ]);
 } catch (Throwable $e) { /* never let analytics break the page */ }
+}
 
 $ver = defined('WW_VERSION') ? WW_VERSION : '0';
+$hh  = fn($x) => htmlspecialchars((string)$x, ENT_QUOTES);
+$ww_money = fn(int $c) => '$' . number_format($c / 100, ($c % 100 === 0) ? 0 : 2);
 ?><!DOCTYPE html>
 <html lang="en">
 <head>
@@ -221,6 +326,21 @@ if (function_exists('ww_meta_pixel_base_html')) { echo ww_meta_pixel_base_html()
   input:focus,textarea:focus{outline:none;border-color:var(--teal)}
   .req{color:#b00;font-weight:800}
   .err{color:#b00;font-size:13.5px;margin-top:10px;min-height:18px}
+  /* Checkout failure must look like a failure. The old code hid the form and
+     showed the thank-you panel when checkout errored, so a buyer who was never
+     charged believed the purchase had gone through. */
+  .err.on{display:block;border:2px solid #b00;background:#fff1f1;border-radius:11px;padding:11px 13px;font-size:14px;line-height:1.45;font-weight:600}
+  .notice{max-width:520px;margin:0 auto 18px;border:2px solid var(--navy);background:#fff8e0;border-radius:13px;padding:13px 15px;font-size:14.5px;line-height:1.45}
+  .notice b{font-weight:800}
+  /* Post-checkout receipt */
+  .rcpt{max-width:560px;margin:0 auto;background:#fffdf8;border:2.5px solid var(--navy);border-radius:20px;box-shadow:7px 7px 0 var(--navy);padding:24px}
+  .rcpt h3{font-family:var(--display);font-weight:900;font-size:19px;margin:0 0 14px}
+  .rline{display:flex;justify-content:space-between;gap:14px;padding:9px 0;border-bottom:1.5px dashed var(--line);font-size:15px}
+  .rline:last-of-type{border-bottom:none}
+  .rline b{font-weight:800;white-space:nowrap}
+  .rbig{font-size:19px}
+  .rref{margin:16px 0 0;font-size:13.5px;color:var(--muted);word-break:break-all}
+  .rref code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;background:#f2ecdd;border-radius:6px;padding:2px 6px;color:var(--ink)}
   .ok{display:none;text-align:center;padding:8px 0}
   .ok h3{font-family:var(--display);font-size:22px;margin:0 0 6px}
   .ok p{color:var(--muted);margin:0}
@@ -235,6 +355,60 @@ if (function_exists('ww_meta_pixel_base_html')) { echo ww_meta_pixel_base_html()
     <span class="hbadge"><?= $V['badge'] ?></span>
   </div>
 </header>
+
+<?php if ($ww_success): ?>
+<!-- ===================== POST-CHECKOUT RECEIPT =====================
+     Reached only from Stripe's success_url. The sales page and the brief form
+     are deliberately NOT rendered here: this person has already paid. -->
+<section class="hero">
+  <div class="wrap">
+    <?php if ($ww_confirmed): ?>
+    <span class="kicker">Payment received</span>
+    <h1>You&rsquo;re <em>all set</em>.</h1>
+    <p class="sub">Thank you &mdash; your account is open and your brief is with our design team.
+      <?php if ($ww_receipt_email !== ''): ?>A receipt is on its way to <strong><?= $hh($ww_receipt_email) ?></strong>.<?php endif; ?></p>
+    <?php else: ?>
+    <span class="kicker">Confirming your payment</span>
+    <h1>Almost <em>there</em>.</h1>
+    <p class="sub">Your bank has not confirmed this payment to us yet. That is normal for some payment
+      methods and usually clears within a few minutes. We&rsquo;ll email you the moment it does &mdash; you
+      do not need to pay again, and you do not need to do anything else.</p>
+    <?php endif; ?>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <h2><?= $ww_confirmed ? 'What you paid' : 'What this costs' ?></h2>
+    <p class="h2sub">No contract, no cancellation fee. You can cancel any time.</p>
+    <div class="rcpt">
+      <div class="rline rbig"><span><?= $ww_confirmed ? 'Paid today' : 'Due today (awaiting confirmation)' ?></span><b><?= $hh($ww_money($ww_paid_cents)) ?> <?= $hh($ww_currency) ?></b></div>
+      <div class="rline"><span>Your website build</span><b><?= (int)$V['price_cents'] > 0 ? $hh($ww_money((int)$V['price_cents'])) : '$0 &mdash; free' ?></b></div>
+      <div class="rline"><span>Hosting &amp; care from next month</span><b><?= $hh($ww_money((int)$V['monthly'])) ?>/month</b></div>
+      <div class="rline"><span>Cancel anytime</span><b>Yes</b></div>
+      <?php if ($ww_ref !== ''): ?>
+      <p class="rref">Your reference: <code><?= $hh($ww_ref) ?></code><br>
+        Quote it if you email us. <span style="opacity:.75">(Order id <?= $hh($ww_sid) ?>)</span></p>
+      <?php endif; ?>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>What happens next</h2>
+    <p class="h2sub">You do nothing else for now &mdash; we come to you.</p>
+    <div class="steps">
+      <div class="step"><span class="snum">1</span><b>We&rsquo;ve got your brief</b><p>Everything you told us is already with our team. There is no other form to fill in.</p></div>
+      <div class="step"><span class="snum">2</span><b>A real designer builds it</b><p>A person on our team designs your site, usually within 3 business days. We&rsquo;ll email you the moment there is something to look at.</p></div>
+      <div class="step"><span class="snum">3</span><b>You approve it</b><p>We revise until you love it, however many rounds it takes. It only goes live when you say so.</p></div>
+    </div>
+    <p class="h2sub" style="margin-top:26px">Questions in the meantime? Email
+      <a href="mailto:hello@trywebwiz.com?subject=<?= rawurlencode('My WebWiz order ' . $ww_ref) ?>" style="color:var(--ink);font-weight:700">hello@trywebwiz.com</a>
+      <?php if ($ww_ref !== ''): ?>and quote <strong><?= $hh($ww_ref) ?></strong><?php endif; ?>.</p>
+  </div>
+</section>
+<?php else: ?>
 
 <section class="hero">
   <div class="wrap">
@@ -329,6 +503,14 @@ if (function_exists('ww_meta_pixel_base_html')) { echo ww_meta_pixel_base_html()
   <div class="wrap">
     <h2>Tell us what you want</h2>
     <p class="h2sub">We'll email you when your site is ready to look at.</p>
+    <?php if ($ww_cancelled): ?>
+    <!-- Back from an abandoned Stripe session. Say plainly that no money moved;
+         a silent reset reads as "something broke" or "did I just get charged?" -->
+    <div class="notice" id="cancelNote" role="status">
+      <b>No charge was made.</b> You closed the payment page before anything was taken, so nothing has left your account.
+      Your details are safe with us &mdash; fill the form in again below whenever you&rsquo;re ready, or just leave it and we&rsquo;ll email you.
+    </div>
+    <?php endif; ?>
     <div class="formwrap">
       <form id="offerForm" novalidate>
         <div id="formFields">
@@ -357,6 +539,7 @@ if (function_exists('ww_meta_pixel_base_html')) { echo ww_meta_pixel_base_html()
   </div>
 </section>
 <?php endif; ?>
+<?php endif; /* $ww_success */ ?>
 
 <footer>
   <div class="wrap">Built by humans (and one spider) who care about your site. &copy; <?= date('Y') ?> WebWiz</div>
@@ -365,6 +548,34 @@ if (function_exists('ww_meta_pixel_base_html')) { echo ww_meta_pixel_base_html()
 <script>
 (function(){
   var VARIANT = document.body.getAttribute('data-variant');
+  // Amount due TODAY for this cell (A=100, B=50, C=50). Every Meta event below
+  // carries it, so per-cell value is comparable in Events Manager.
+  var CELL_VALUE = <?= json_encode(round(((int)$V['price_cents'] > 0 ? (int)$V['price_cents'] : (int)$V['monthly']) / 100, 2)) ?>;
+  var POST_CHECKOUT = <?= $ww_success ? 'true' : 'false' ?>;
+
+  if (POST_CHECKOUT) {
+    // Purchase, fired with the SAME deterministic event_id webhook.php derives
+    // from the Stripe session, so the browser Pixel and the server CAPI copy
+    // dedupe into one conversion instead of counting the sale twice.
+    try {
+      // Only on a payment Stripe has actually confirmed - reporting a Purchase
+      // for an unpaid session would poison the ad algorithm with fake buyers.
+      var PEID = <?= json_encode(($ww_confirmed && $ww_paid_status !== '' && $ww_sid !== '') ? 'ww_' . substr(hash('sha256', $ww_sid), 0, 24) : '') ?>;
+      var PVAL = <?= json_encode(round($ww_paid_cents / 100, 2)) ?>;
+      if (PEID && window.fbq) {
+        fbq('track', 'Purchase',
+            {value: PVAL, currency: <?= json_encode($ww_currency) ?>,
+             content_name: 'offer_' + VARIANT, content_category: 'price_test'},
+            {eventID: PEID});
+      }
+    } catch(e){}
+    return; // no ViewContent, no form wiring: this is a receipt, not a sales page.
+  }
+
+  if (document.getElementById('cancelNote')) {
+    try { document.getElementById('brief').scrollIntoView({behavior:'smooth', block:'start'}); } catch(e){}
+  }
+
   document.querySelectorAll('[data-jump]').forEach(function(b){
     b.addEventListener('click', function(){
       document.getElementById('brief').scrollIntoView({behavior:'smooth', block:'start'});
@@ -374,11 +585,11 @@ if (function_exists('ww_meta_pixel_base_html')) { echo ww_meta_pixel_base_html()
 
   // Tell Meta which cell this view belongs to, so the pixel data can be split
   // by price the same way our own try_events are.
-  try { if (window.wwMetaTrack) window.wwMetaTrack('ViewContent', {content_name:'offer_'+VARIANT, content_category:'price_test'}); } catch(e){}
+  try { if (window.wwMetaTrack) window.wwMetaTrack('ViewContent', {content_name:'offer_'+VARIANT, content_category:'price_test', value:CELL_VALUE, currency:'USD'}); } catch(e){}
 
   document.querySelectorAll('[data-builder]').forEach(function(a){
     a.addEventListener('click', function(){
-      try { if (window.wwMetaTrack) window.wwMetaTrack('InitiateCheckout', {content_name:'offer_'+VARIANT+'_builder'}); } catch(e){}
+      try { if (window.wwMetaTrack) window.wwMetaTrack('InitiateCheckout', {content_name:'offer_'+VARIANT+'_builder', content_category:'price_test', value:CELL_VALUE, currency:'USD'}); } catch(e){}
     });
   });
 
@@ -387,6 +598,22 @@ if (function_exists('ww_meta_pixel_base_html')) { echo ww_meta_pixel_base_html()
   var go   = document.getElementById('go');
   // The builder variant has no brief form - nothing below applies to it.
   if (!form) { return; }
+
+  var CTA_LABEL = <?= json_encode($V['cta']) ?>;
+  // The lead is saved before checkout is attempted. Remember its id so a retry
+  // after a checkout failure does not write the same person in twice.
+  var savedLeadId = 0;
+
+  // A failed checkout must LOOK failed. Previously this hid the form and showed
+  // "Got it - thank you.", so someone who had NOT been charged and had NOT
+  // bought anything was told they were done.
+  function checkoutFailed(msg){
+    err.textContent = msg || 'We could not open the secure checkout just then. Nothing has been charged. Your details are saved \u2014 please try again.';
+    err.classList.add('on');
+    go.disabled = false;
+    go.textContent = 'Try again \u2014 ' + CTA_LABEL;
+    try { err.scrollIntoView({behavior:'smooth', block:'center'}); } catch(e){}
+  }
 
   form.addEventListener('submit', function(e){
     e.preventDefault();
@@ -401,6 +628,11 @@ if (function_exists('ww_meta_pixel_base_html')) { echo ww_meta_pixel_base_html()
     if (contact.length < 6)   { err.textContent = 'We need an email or phone number to send it to.'; return; }
 
     go.disabled = true; go.textContent = 'Sending...';
+    err.classList.remove('on');
+
+    // Retry path: the lead already exists, go straight back to checkout.
+    if (savedLeadId) { startCheckout(savedLeadId, contact); return; }
+
     fetch('/api/offer_lead.php', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({variant:VARIANT, business:biz, about:about, wants:wants, contact:contact})
@@ -410,46 +642,41 @@ if (function_exists('ww_meta_pixel_base_html')) { echo ww_meta_pixel_base_html()
           // Lead is saved first and separately. If Stripe then fails or the
           // visitor abandons checkout we still have the lead and can follow up,
           // which is the whole point of paying for the click.
-          try { if (window.wwMetaTrack) window.wwMetaTrack('Lead', {content_name:'offer_'+VARIANT, content_category:'price_test'}); } catch(e){}
-          go.textContent = 'Taking you to checkout...';
-          fetch('/api/offer_checkout.php', {
-            method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({variant:VARIANT, lead_id:j.id, email:contact})
-          }).then(function(r){ return r.json().catch(function(){ return {ok:false}; }); })
-            .then(function(c){
-              if (c && c.ok && c.url) {
-                try { if (window.wwMetaTrack) window.wwMetaTrack('InitiateCheckout', {content_name:'offer_'+VARIANT}); } catch(e){}
-                window.location.href = c.url;
-              } else {
-                // Checkout unavailable: show the thank-you rather than a dead end.
-                // The brief is already captured, so a human can still pick it up.
-                document.getElementById('formFields').style.display = 'none';
-                document.getElementById('ok').style.display = 'block';
-              }
-            })
-            .catch(function(){
-              document.getElementById('formFields').style.display = 'none';
-              document.getElementById('ok').style.display = 'block';
-            });
-          return;
-        }
-        if (false) {
-          document.getElementById('formFields').style.display = 'none';
-          document.getElementById('ok').style.display = 'block';
           // wwMetaTrack fires the pixel AND the server-side CAPI copy with a
           // shared eventID, so Meta deduplicates them. A bare fbq('track')
           // would have been browser-only and lost to iOS/ad blockers.
-          try { if (window.wwMetaTrack) window.wwMetaTrack('Lead', {content_name:'offer_'+VARIANT, content_category:'price_test'}); } catch(e){}
-        } else {
-          err.textContent = (j && j.error) ? j.error : 'Something went wrong. Please try again.';
-          go.disabled = false; go.textContent = <?= json_encode($V['cta']) ?>;
+          savedLeadId = j.id || 0;
+          try { if (window.wwMetaTrack) window.wwMetaTrack('Lead', {content_name:'offer_'+VARIANT, content_category:'price_test', value:CELL_VALUE, currency:'USD'}); } catch(e){}
+          startCheckout(savedLeadId, contact);
+          return;
         }
+        err.textContent = (j && j.error) ? j.error : 'Something went wrong. Please try again.';
+        err.classList.add('on');
+        go.disabled = false; go.textContent = CTA_LABEL;
       })
       .catch(function(){
         err.textContent = 'Network problem. Please try again.';
-        go.disabled = false; go.textContent = <?= json_encode($V['cta']) ?>;
+        err.classList.add('on');
+        go.disabled = false; go.textContent = CTA_LABEL;
       });
   });
+
+  function startCheckout(leadId, contact){
+    go.disabled = true; go.textContent = 'Taking you to checkout...';
+    fetch('/api/offer_checkout.php', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({lead_id:leadId, email:contact})
+    }).then(function(r){ return r.json().catch(function(){ return {ok:false}; }); })
+      .then(function(c){
+        if (c && c.ok && c.url) {
+          try { if (window.wwMetaTrack) window.wwMetaTrack('InitiateCheckout', {content_name:'offer_'+VARIANT, content_category:'price_test', value:CELL_VALUE, currency:'USD'}); } catch(e){}
+          window.location.href = c.url;
+          return;
+        }
+        checkoutFailed(c && c.error);
+      })
+      .catch(function(){ checkoutFailed(null); });
+  }
 })();
 </script>
 </body>

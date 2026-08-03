@@ -16,6 +16,13 @@
   CacheEnable off /preview/
   CacheEnable off /success.php
   CacheEnable off /success
+  # Measured, per-visitor pages behind live paid traffic. /o/ carries the price
+  # -test cell and the post-Stripe receipt; /try/ carries a preview token and the
+  # post-Stripe success view. Neither may ever be served from a shared cache.
+  CacheEnable off /o/
+  CacheEnable off /try/
+  CacheDisable public /o/
+  CacheDisable public /try/
 </IfModule>
 
 <IfModule mod_rewrite.c>
@@ -40,5 +47,11 @@
   RewriteRule ^cookies/?$ privacy.html#cookies [L,R=302]
 </IfModule>
 
-Header always set Cache-Control "public, max-age=86400, s-maxage=86400"
+# NOTE: as built (OpenLiteSpeed 1.9.0) mod_headers is not honoured from
+# .htaccess here - `curl -I https://trywebwiz.com/` returns no Cache-Control at
+# all - so the real no-store guarantee for /o/ and /try/ is the header() call in
+# their PHP. This exclusion exists so that if mod_headers is ever enabled it
+# cannot silently start declaring those two trees publicly cacheable for a day.
+SetEnvIf Request_URI "^/(o|try)(/|$)" WW_NO_PUBLIC_CACHE=1
+Header always set Cache-Control "public, max-age=86400, s-maxage=86400" env=!WW_NO_PUBLIC_CACHE
 Header always append Vary Accept-Encoding

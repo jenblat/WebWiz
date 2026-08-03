@@ -131,6 +131,61 @@ function ww_migrate(PDO $pdo): void {
     ] as $sql) { @$pdo->exec($sql); }
 }
 
+/**
+ * Ensure offer_leads exists and carries the columns the /o price test needs.
+ *
+ * Added 2026-08-03. offer_leads was created ad-hoc by /api/offer_lead.php and
+ * only cell C ever wrote to it, so the table had no way to represent a builder
+ * (cell a/b) lead at all: no token to dedupe on and no session id to close the
+ * loop against a Stripe payment. Without those, lead-per-view - the single
+ * metric the whole price test exists to produce - could not be computed for
+ * two of the three cells.
+ *
+ *   token             links a builder-cell lead to its jobs row, and is the
+ *                     dedupe key so one preview cannot produce two leads.
+ *   stripe_session_id lets webhook.php and the /o success page mark a lead
+ *                     purchased without needing the lead_id to survive the
+ *                     round trip through Stripe.
+ *   source            which surface wrote the row ('brief' or 'builder').
+ *
+ * Idempotent, and guarded by a static so it costs one PRAGMA per process.
+ */
+function ww_offer_leads_ensure(PDO $db): void {
+    static $done = false;
+    if ($done) return;
+    $done = true;
+    $db->exec("CREATE TABLE IF NOT EXISTS offer_leads (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        variant TEXT NOT NULL,
+        business TEXT NOT NULL,
+        about TEXT,
+        wants TEXT,
+        contact TEXT NOT NULL,
+        ip TEXT,
+        user_agent TEXT,
+        status TEXT NOT NULL DEFAULT 'new',
+        created_at TEXT NOT NULL
+    )");
+    $have = [];
+    try {
+        foreach ($db->query("PRAGMA table_info(offer_leads)") as $c) {
+            $have[(string)($c['name'] ?? '')] = true;
+        }
+    } catch (Throwable $e) { return; }
+    foreach ([
+        'token'             => "ALTER TABLE offer_leads ADD COLUMN token TEXT",
+        'stripe_session_id' => "ALTER TABLE offer_leads ADD COLUMN stripe_session_id TEXT",
+        'source'            => "ALTER TABLE offer_leads ADD COLUMN source TEXT",
+    ] as $col => $sql) {
+        if (!isset($have[$col])) { try { $db->exec($sql); } catch (Throwable $e) { /* raced */ } }
+    }
+    foreach ([
+        "CREATE INDEX IF NOT EXISTS idx_offer_leads_token ON offer_leads(token)",
+        "CREATE INDEX IF NOT EXISTS idx_offer_leads_session ON offer_leads(stripe_session_id)",
+        "CREATE INDEX IF NOT EXISTS idx_offer_leads_variant ON offer_leads(variant, status)",
+    ] as $sql) { try { $db->exec($sql); } catch (Throwable $e) {} }
+}
+
 function ww_h($s): string {
     return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8');
 }

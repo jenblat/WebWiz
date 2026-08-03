@@ -4,6 +4,16 @@
 // 2. /try/?website=...             → existing cold-email magic-link loading screen.
 // 3. /try/?t=<token>               → restore reveal view (cancel recovery from Stripe).
 // 4. /try/?success=1&t=<token>     → success view (post-Stripe completion).
+// FIX (2026-08-03): public/.htaccess declared `Cache-Control: public,
+// max-age=86400` site-wide plus LiteSpeed `CacheEnable public /`. This page is
+// per-visitor (token in the URL, offer cell, post-Stripe success view) and is
+// behind live paid traffic, so a shared cache handing one visitor another
+// visitor's reveal - or a cached ?success=1 page - is a real hazard, not a
+// theoretical one. Nothing here is publicly cacheable.
+header('Cache-Control: no-store, no-cache, must-revalidate, private, max-age=0');
+header('Pragma: no-cache');
+header('Expires: 0');
+
 $website = trim((string)($_GET['website'] ?? $_GET['url'] ?? ''));
 $name    = trim((string)($_GET['name'] ?? ''));
 $tparam  = trim((string)($_GET['t'] ?? ''));
@@ -214,7 +224,7 @@ $WW_OFFER_PRICING = [
         'save_big' => 'You save $4,900',
         'conv_cta' => 'Launch my site for $100 &rarr;',
         'lead'     => 'Wizzy gets you the first draft. Then a <strong>real human designer</strong> on our team finishes it properly. A custom design usually runs $5,000. Yours is a flat $100 to perfect and launch. Here&rsquo;s what that covers:',
-        'qa_price' => 'A designer would charge \\$3,000 to \\$5,000 to build this. At \\$100, how does that feel?',
+        'qa_price' => 'A designer would charge $3,000 to $5,000 to build this. At $100, how does that feel?',
     ],
     'b' => [
         'build_cents' => 0,
@@ -236,7 +246,7 @@ $WW_OFFER_PRICING = [
         // is exactly the shape of a chargeback.
         'pay_note' => 'The website is free. <strong>Getting started is $50</strong> &mdash; it covers your hosting and setup, then it&rsquo;s $50/month. Cancel anytime.',
         'lead'     => 'Wizzy gets you the first draft. Then a <strong>real human designer</strong> on our team finishes it properly. Building it costs you nothing &mdash; you pay $50/month to host it. Here&rsquo;s what that covers:',
-        'qa_price' => 'A designer would charge \\$3,000 to \\$5,000 to build this. At \\$50 a month with no build fee, how does that feel?',
+        'qa_price' => 'A designer would charge $3,000 to $5,000 to build this. At $50 a month with no build fee, how does that feel?',
     ],
 ];
 $ww_offer_key = '';
@@ -251,6 +261,14 @@ if (isset($row) && is_array($row) && !empty($row['offer_variant']) && isset($WW_
     $ww_offer_key = (string)$row['offer_variant'];
 }
 $OF = $ww_offer_key !== '' ? $WW_OFFER_PRICING[$ww_offer_key] : null;
+
+/* Amount due TODAY for this cell, and the cell suffix, used on EVERY Meta event
+ * on this page. Without these, /o/a/try/ and /o/b/try/ were reporting the $500
+ * default to Meta on the form-submit Lead and both ViewContents, so the ad
+ * algorithm was optimising two of the three price cells at the wrong value and
+ * could not tell them apart from the untouched $500 funnel. */
+$ww_offer_value = $OF ? (((int)($OF['build_cents'] ?? 0) > 0) ? (int)$OF['build_cents'] / 100 : 50) : 500;
+$ww_offer_sfx   = $ww_offer_key !== '' ? '_' . $ww_offer_key : '';
 
 /** Offer value if an offer is active, else the original $500 default. */
 function ww_of(?array $OF, string $k, string $default): string {
@@ -339,8 +357,13 @@ function ww_of(?array $OF, string $k, string $default): string {
     body[data-view="reveal"] header.topbar .brand-icon{width:28px;height:28px;}
     body[data-view="reveal"] .hdr-center{display:none!important;}
     body[data-view="reveal"] .device-toggle-floating{display:none!important;}
-    body[data-view="reveal"] .topbar-customize{padding:6px 10px;font-size:11px;}
-    body[data-view="reveal"] .topbar-buy{padding:6px 10px;font-size:11px;}
+    /* FIX (2026-08-03): these collapsed to ~100x30 CSS px at a 390px viewport.
+       30px is well under the 44x44 minimum in Apple's Human Interface
+       Guidelines, and this is the BUY button on a page we are paying for
+       traffic to - a missed tap here is a lost sale. Height is set with
+       min-height rather than padding so the label can stay readable. */
+    body[data-view="reveal"] .topbar-customize{min-height:44px;padding:0 12px;font-size:12px;display:inline-flex;align-items:center;justify-content:center;}
+    body[data-view="reveal"] .topbar-buy{min-height:44px;padding:0 14px;font-size:13px;display:inline-flex;align-items:center;justify-content:center;}
     /* Chat: bottom-sheet that takes the full width and bottom half of screen. */
     body[data-view="reveal"] .edit-panel{right:0!important;bottom:0!important;left:0!important;width:100vw!important;max-width:100vw!important;height:62vh!important;max-height:62vh!important;border-radius:18px 18px 0 0!important;border-bottom:none!important;box-shadow:0 -6px 0 var(--navy)!important;}
     .chat-fab{right:14px!important;bottom:14px!important;width:60px!important;height:60px!important;}
@@ -844,7 +867,7 @@ function ww_of(?array $OF, string $k, string $default): string {
         ['q'=>"First, what's the #1 job for your new site?", 'a'=>["Bring in more leads & calls","Sell products online","Take bookings or appointments","Just look more credible"]],
         ['q'=>"How do you get most of your customers today?", 'a'=>["Word of mouth & referrals","Social media","Paid ads","Honestly, not sure"]],
         ['q'=>"When do you want to be live?", 'a'=>["ASAP, this week","Within a month","Just exploring for now"]],
-        ['q'=>"A designer would charge \$3,000 to \$5,000 to build this. At \$500, how does that feel?", 'a'=>["Honestly, a steal","Sounds fair","Depends what I get","Still a lot for me"]],
+        ['q'=>ww_of($OF, 'qa_price', "A designer would charge \$3,000 to \$5,000 to build this. At \$500, how does that feel?"), 'a'=>["Honestly, a steal","Sounds fair","Depends what I get","Still a lot for me"]],
         ['q'=>"What's been holding back a new website?", 'a'=>["No time to deal with it","Too pricey until now","Didn't know where to start","The one I have is outdated"]],
         ['q'=>"Who is this site mainly for?", 'a'=>["Brand-new customers","Repeat customers","Partners or investors","Hiring & recruiting"]],
         ['q'=>"What would make you say yes today?", 'a'=>["Loving the design","Seeing it go live","A quick call to talk it through","Honestly, I'm ready now"]],
@@ -1227,6 +1250,10 @@ window.__TRY_INIT__ = {
   // Which price-test cell this visit belongs to ('' = the default $500 funnel).
   // Server-rendered so it survives a reload and matches whatever the job row says.
   var WW_OFFER = <?= json_encode($ww_offer_key) ?>;
+  var WW_CONV_CTA_LABEL = <?= json_encode(html_entity_decode(ww_of($OF, 'conv_cta', 'Make it real &rarr;'), ENT_QUOTES, 'UTF-8')) ?>;
+  // Amount actually due today for this cell, so Meta value/optimisation is not
+  // reported at the $500 default price on a $100 or $50 cell.
+  var WW_OFFER_VALUE = <?= json_encode($ww_offer_value) ?>;
 
   var loadingHead = document.getElementById('loadingHead');
 
@@ -1830,7 +1857,7 @@ window.__TRY_INIT__ = {
   function wwGoCheckout(){
     if (!state.token) { convErr.textContent = 'Lost track of your preview — refresh and try again.'; convErr.classList.add('on'); return; }
     track('make_it_real_clicked');
-    if(window.wwMetaTrack){try{window.wwMetaTrack('AddToCart',{content_name:'make_it_real',content_category:'website_build',value:500,currency:'USD'});}catch(e){}}
+    if(window.wwMetaTrack){try{window.wwMetaTrack('AddToCart',{content_name:'make_it_real'+(WW_OFFER?'_'+WW_OFFER:''),content_category:'website_build',value:WW_OFFER_VALUE,currency:'USD'});}catch(e){}}
     convCta.disabled = true; convCta.textContent = 'Spinning up checkout…';
     convErr.classList.remove('on');
     // Price-test cells check out through offer_checkout.php so the amount matches
@@ -1844,15 +1871,17 @@ window.__TRY_INIT__ = {
     .then(function(r){ return r.json().then(function(j){ return { ok:r.ok, body:j }; }); })
     .then(function(res){
       var b = res.body || {};
-      if (b.ok && b.checkout_url) { track('checkout_started', { session_id: b.session_id || null }); if(window.wwMetaTrack){try{window.wwMetaTrack('InitiateCheckout',{content_name:'try_checkout',content_category:'website_build',value:500,currency:'USD'});}catch(e){}} window.location.href = b.checkout_url; return; }
+      if (b.ok && b.checkout_url) { track('checkout_started', { session_id: b.session_id || null }); if(window.wwMetaTrack){try{window.wwMetaTrack('InitiateCheckout',{content_name:'try_checkout'+(WW_OFFER?'_'+WW_OFFER:''),content_category:'website_build',value:WW_OFFER_VALUE,currency:'USD'});}catch(e){}} window.location.href = b.checkout_url; return; }
+      body.setAttribute('data-conv', 'on');
       convErr.textContent = b.error || 'Could not start checkout. Try again?';
       convErr.classList.add('on');
-      convCta.disabled = false; convCta.textContent = 'Make it real →';
+      convCta.disabled = false; convCta.textContent = WW_CONV_CTA_LABEL;
     })
     .catch(function(e){
+      body.setAttribute('data-conv', 'on');
       convErr.textContent = 'Network error: ' + (e && e.message || 'unknown');
       convErr.classList.add('on');
-      convCta.disabled = false; convCta.textContent = 'Make it real →';
+      convCta.disabled = false; convCta.textContent = WW_CONV_CTA_LABEL;
     });
   }
 
@@ -2102,9 +2131,9 @@ window.__TRY_INIT__ = {
   function wwMetaInit(){
     if(!window.wwMetaTrack) return;
     if(INIT.view === 'form'){
-      window.wwMetaTrack('ViewContent', {content_name:'try_landing', content_category:'lead_gen'});
+      window.wwMetaTrack('ViewContent', {content_name:<?= json_encode('try_landing' . $ww_offer_sfx) ?>, content_category:'lead_gen', value:<?= json_encode($ww_offer_value) ?>, currency:'USD'});
     } else if(INIT.view === 'reveal'){
-      window.wwMetaTrack('ViewContent', {content_name:'try_reveal', content_category:'preview_view'});
+      window.wwMetaTrack('ViewContent', {content_name:<?= json_encode('try_reveal' . $ww_offer_sfx) ?>, content_category:'preview_view', value:<?= json_encode($ww_offer_value) ?>, currency:'USD'});
     }
     var tryForm = document.getElementById('tryForm');
     if(tryForm){
@@ -2112,7 +2141,7 @@ window.__TRY_INIT__ = {
         var website = (document.getElementById('website')||{}).value || '';
         var desc    = (document.getElementById('description')||{}).value || '';
         window.wwMetaTrack('Lead',
-          {content_name:'try_form_submit', content_category:'lead_gen', value:500, currency:'USD'},
+          {content_name:<?= json_encode('try_form_submit' . $ww_offer_sfx) ?>, content_category:'lead_gen', value:<?= json_encode($ww_offer_value) ?>, currency:'USD'},
           {}
         );
       }, {capture:true, once:true});

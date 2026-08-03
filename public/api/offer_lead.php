@@ -46,22 +46,14 @@ try {
 
     // Own table: these are not prospects (no generation, no token) and mixing
     // them into prospects would distort the /try funnel numbers.
-    $db->exec("CREATE TABLE IF NOT EXISTS offer_leads (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        variant TEXT NOT NULL,
-        business TEXT NOT NULL,
-        about TEXT,
-        wants TEXT,
-        contact TEXT NOT NULL,
-        ip TEXT,
-        user_agent TEXT,
-        status TEXT NOT NULL DEFAULT 'new',
-        created_at TEXT NOT NULL
-    )");
+    // The schema now lives in ww_offer_leads_ensure() because offer_checkout.php
+    // writes builder-cell (a/b) leads into the same table and the two callers
+    // must not disagree about its shape.
+    ww_offer_leads_ensure($db);
 
     $ins = $db->prepare("INSERT INTO offer_leads
-        (variant, business, about, wants, contact, ip, user_agent, status, created_at)
-        VALUES (?,?,?,?,?,?,?,'new',datetime('now'))");
+        (variant, business, about, wants, contact, ip, user_agent, status, created_at, source)
+        VALUES (?,?,?,?,?,?,?,'new',datetime('now'),'brief')");
 
     // Retry on SQLITE_BUSY rather than losing a paid-for lead to a lock.
     ww_db_write_retry(function () use ($ins, $variant, $business, $about, $wants, $contact) {
