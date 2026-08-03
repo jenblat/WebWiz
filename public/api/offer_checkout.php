@@ -41,6 +41,35 @@ function oc_fail(string $msg, int $code = 400): void {
     exit;
 }
 
+/**
+ * Fallback authority for a token whose jobs row is not in SQLite yet.
+ *
+ * magic.php persists the jobs row inside a BEGIN IMMEDIATE transaction and, if
+ * SQLite is busy for the whole retry budget, drops the identical metadata to
+ * data/pending_magic/<token>.json instead - which is only replayed on the NEXT
+ * generation request. A buyer who lands in that window has a real preview, a
+ * real token and money in hand, and used to be told the preview does not exist.
+ *
+ * This file is written server-side by magic.php from the gated
+ * ww_offer_variant_from_request(); it is NOT client input and carries exactly
+ * the value the jobs row would have carried, so pricing from it is the same
+ * authority, not a weaker one. Anything missing or malformed returns null and
+ * the caller still fails closed.
+ */
+function oc_job_from_pending(string $token): ?array {
+    if (!preg_match('~^[a-f0-9]{6,32}$~', $token)) return null;
+    $f = '/var/www/sites/trywebwiz/data/pending_magic/' . $token . '.json';
+    if (!is_file($f)) return null;
+    $p = json_decode((string)@file_get_contents($f), true);
+    if (!is_array($p) || (string)($p['token'] ?? '') !== $token) return null;
+    error_log('[offer_checkout] jobs row missing, pricing from pending_magic file: ' . $token);
+    return [
+        'offer_variant'  => $p['offer_variant'] ?? null,
+        'customer_email' => (string)($p['email'] ?? ''),
+        'business_name'  => (string)($p['biz'] ?? ''),
+    ];
+}
+
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') oc_fail('POST only', 405);
 
 $body = json_decode(file_get_contents('php://input') ?: '', true);
@@ -98,6 +127,12 @@ if ($token !== '') {
         $st = ww_db()->prepare("SELECT offer_variant, customer_email, business_name FROM jobs WHERE token = ? LIMIT 1");
         $st->execute([$token]);
         $job = $st->fetch(PDO::FETCH_ASSOC);
+        // The jobs row is written by magic.php before the reveal can open (see
+        // the MOVED persist block there), so a miss here is now rare. It is
+        // still possible when SQLite was busy for magic.php's whole retry budget
+        // and the metadata went to data/pending_magic/ instead. Read that rather
+        // than turning a real buyer away.
+        if (!$job) { $job = oc_job_from_pending($token); }
         if (!$job) {
             oc_fail('We could not find that preview. Please go back and generate your site again, '
                   . 'or email hello@trywebwiz.com and we will sort it out.', 404);

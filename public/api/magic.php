@@ -72,17 +72,17 @@ try { $db->exec('PRAGMA busy_timeout = 30000'); } catch (Throwable $e) {}
             $st = $db->prepare("INSERT INTO jobs (type, prospect_id, customer_email, business_name, scrape_data, status, scheduled_for, token, generation_mode, item_status, total_cost_cents, completed_at, qa_status) VALUES ('outbound', ?, ?, ?, ?, 'ready', datetime('now'), ?, ?, 'done', ?, datetime('now'), 'magic')");
             $st->execute([$pid, $p['email'] ?? '', $p['biz'] ?? '', ($p['scrape_data'] ?? null), $p['token'], ($p['generation_mode'] ?? 'magic'), (int)round(((float)($p['cost'] ?? 0)) * 100)]);
             $jid = (int)$db->lastInsertId();
-            // Stamp the price-test cell onto the job. The reveal is reached later
-            // by ?t=<token> alone, so without this a returning visitor would be
-            // priced from a URL they no longer have. Read from $_GET because it
-            // is a superglobal and this runs inside the persist helper.
-            // Prefer the payload: this helper also runs from the pending-file
-            // drainer, where there is no $_GET at all.
+            // Stamp the price-test cell onto the job, from the QUEUED PAYLOAD ONLY.
+            // The payload's offer_variant was produced by the gated
+            // ww_offer_variant_from_request() at the time that generation ran, so
+            // it is the correct authority and 't' in it already implies the
+            // secret was present.
+            // FIX 2026-08-03: this used to fall back to $_GET['offer'] of the
+            // request that happens to be draining the queue - a DIFFERENT
+            // visitor. A drain triggered from /o/a/try/ would stamp 'a' onto a
+            // backfilled job that was never part of cell A, and price it there.
             $__ww_off = $p['offer_variant'] ?? null;
-            if ($__ww_off === null && isset($_GET['offer']) && in_array($_GET['offer'], ['a','b'], true)) {
-                $__ww_off = (string)$_GET['offer'];
-            }
-            if ($__ww_off !== null && !in_array($__ww_off, ['a','b'], true)) { $__ww_off = null; }
+            if ($__ww_off !== null && !in_array($__ww_off, ['a','b','t'], true)) { $__ww_off = null; }
             if ($__ww_off !== null) {
                 try { $db->prepare("UPDATE jobs SET offer_variant=? WHERE id=?")->execute([$__ww_off, $jid]); }
                 catch (Throwable $e) { /* pricing falls back to default, never break generation */ }
@@ -863,6 +863,115 @@ try {
         }
     } catch (Throwable $e) { ml_debug('meta SiteGenerated failed: ' . $e->getMessage()); }
 
+    // ---- Persist metadata to the DB (MOVED 2026-08-03, sev-1 fix) ----
+    // This block used to sit AFTER the visual-QA phase and the notify-ready
+    // email, i.e. 13-60s after the `ready` marker that opens the reveal. In
+    // that window the preview was on screen with a working buy button but the
+    // jobs row did not exist yet, so /api/try_checkout.php answered
+    // "Preview not found." and /api/offer_checkout.php answered "We could not
+    // find that preview." to a customer holding a credit card. Observed live:
+    // token 60794f2ea9be4c40e7bc4613, ready 15:01:01, jobs row 15:02:02, two
+    // buy clicks at 15:01:27 and 15:01:51 both refused.
+    // Nothing between here and the old position modifies anything this block
+    // reads ($htmls only changes in the non-async QA regen, which replaces a
+    // variant rather than adding one), so moving it is behaviour-neutral apart
+    // from the row existing before the reveal can open.
+    // 3) Now try to persist metadata. The user has already gotten their preview,
+    //    so even if persist fails, they don't notice. We retry with growing
+    //    backoff. If we still can't write after several attempts, drop the
+    //    metadata to a pending JSON file for later sync.
+    $persist_payload = [
+        'token' => $token, 'email' => $email, 'name' => $name, 'biz' => $biz,
+        'website' => $website, 'cost' => $cost, 'htmls_count' => count($htmls),
+        'variants' => array_keys($htmls), 'ip' => $ip, 'created_at' => date('Y-m-d H:i:s'),
+        'generation_mode' => $gen_mode, 'description' => $description, 'describe' => $describe ? 1 : 0,
+        'scrape_data' => $scrape_data_json ?? null,
+        // Which /o price-test cell this generation came from. It MUST live in the
+        // payload, not be read from $_GET at persist time: when the DB is busy the
+        // whole payload is written to data/pending_magic/ and replayed later by
+        // drain_pending.php from cron, where there is no request and no $_GET. A
+        // generation that fell back that way was losing its offer and the visitor
+        // was then priced at $500 despite arriving from the $100 or free cell.
+        // a/b are the live builder cells and are open. 't' is the guarded $1
+        // live-payment test cell and is only honoured when the request also
+        // carries the secret in &k=, so a scraped or guessed ?offer=t can never
+        // mint a job row that later checks out at $1. See webwiz_lib.php.
+        'offer_variant' => ww_offer_variant_from_request(),
+    ];
+    $persist_ok = false;
+    $maxAttempts = 12; // up to ~20s of retries
+    $delay_us = 250000;
+    for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+        try {
+            $db->exec('PRAGMA busy_timeout = 30000');
+            $db->exec('BEGIN IMMEDIATE');
+            $st = $db->prepare("INSERT INTO prospects (email, name, business_name, current_url, source, description) VALUES (?, ?, ?, ?, 'magic', ?)");
+            $st->execute([$email, $name, $biz, ($describe ? null : $website), ($describe ? $description : null)]);
+            $pid = (int)$db->lastInsertId();
+            // Fold in the loading-screen Q&A answers if the visitor answered them.
+            // qa.json existing implies /api/qa.php already created the qa_answers column,
+            // so this is a plain UPDATE (no ALTER inside the transaction).
+            try {
+                $qaf = '/var/www/sites/trywebwiz/public/preview/' . $token . '/qa.json';
+                if (is_file($qaf)) {
+                    $qraw = json_decode((string)@file_get_contents($qaf), true);
+                    $qans = (is_array($qraw) && !empty($qraw['answers']) && is_array($qraw['answers'])) ? $qraw['answers'] : null;
+                    if ($qans) {
+                        $qu = $db->prepare('UPDATE prospects SET qa_answers = ? WHERE id = ?');
+                        $qu->execute([json_encode($qans, JSON_UNESCAPED_SLASHES), $pid]);
+                    }
+                }
+            } catch (Throwable $e) { ml_debug('qa attach failed: ' . $e->getMessage()); }
+            $st = $db->prepare("INSERT INTO jobs (type, prospect_id, customer_email, business_name, scrape_data, status, scheduled_for, token, generation_mode, item_status, total_cost_cents, completed_at, qa_status) VALUES ('outbound', ?, ?, ?, ?, 'ready', datetime('now'), ?, ?, 'done', ?, datetime('now'), 'magic')");
+            $st->execute([$pid, $email, $biz, ($scrape_data_json ?? null), $token, $gen_mode, (int)round($cost * 100)]);
+            $jid = (int)$db->lastInsertId();
+            // Stamp the price-test cell onto the job. The reveal is reached later
+            // by ?t=<token> alone, so without this a returning visitor would be
+            // priced from a URL they no longer have.
+            // FIX 2026-08-03: this read $p['offer_variant'], but $p only exists
+            // inside the pending-file drainer at the top of this file - here it
+            // was always undefined, so the gated value already computed into
+            // $persist_payload['offer_variant'] was dead code and the variant was
+            // really coming from a raw $_GET whitelist of ['a','b']. That dropped
+            // 't' on the floor, which is why /o/t/try/ generations minted a job
+            // row with a NULL offer_variant that offer_checkout.php then refused
+            // to price. Use the gated value; 't' still requires the secret
+            // because ww_offer_variant_from_request() only returns it with a
+            // valid ?k=, so a guessed ?offer=t can never mint a $1 job.
+            $__ww_off = $persist_payload['offer_variant'] ?? null;
+            if ($__ww_off !== null && !in_array($__ww_off, ['a','b','t'], true)) { $__ww_off = null; }
+            if ($__ww_off !== null) {
+                try { $db->prepare("UPDATE jobs SET offer_variant=? WHERE id=?")->execute([$__ww_off, $jid]); }
+                catch (Throwable $e) { /* pricing falls back to default, never break generation */ }
+            }
+            $st = $db->prepare("INSERT INTO previews (job_id, variant_n, html_path, qa_score, qa_pass, qa_issues) VALUES (?, ?, ?, NULL, NULL, NULL)");
+            foreach ($htmls as $i => $_) {
+                $st->execute([$jid, $i, '/preview/' . $token . '/v' . $i . '/index.html']);
+            }
+            $st = $db->prepare("INSERT INTO magic_hits (ip, token) VALUES (?, ?)");
+            $st->execute([$ip, $token]);
+            $db->exec('COMMIT');
+            $persist_ok = true;
+            ml_debug("persist OK attempt=$attempt pid=$pid jid=$jid");
+            break;
+        } catch (Throwable $e) {
+            try { $db->exec('ROLLBACK'); } catch (Throwable $ee) {}
+            $emsg = strtolower($e->getMessage());
+            ml_debug(sprintf('persist attempt %d FAIL: %s', $attempt, $e->getMessage()));
+            if (strpos($emsg, 'lock') === false && strpos($emsg, 'busy') === false) break;
+            if ($attempt < $maxAttempts) { usleep($delay_us); $delay_us = (int)min(3000000, $delay_us * 1.4); }
+        }
+    }
+
+    if (!$persist_ok) {
+        // Queue for later sync — DB-busy must NEVER fail the user.
+        $pendingDir = '/var/www/sites/trywebwiz/data/pending_magic';
+        if (!is_dir($pendingDir)) { @mkdir($pendingDir, 0755, true); }
+        $pendingFile = $pendingDir . '/' . $token . '.json';
+        file_put_contents($pendingFile, json_encode($persist_payload, JSON_PRETTY_PRINT));
+        ml_debug("PERSIST FALLBACK to file: $pendingFile");
+    }
+
     // ====== POST-RESPONSE BACKGROUND PHASE ======
     // User already sees their preview. From here we silently improve it.
     // Reset the wall-clock so the QA + upscale phase has fresh budget.
@@ -1015,97 +1124,6 @@ try {
         }
     } catch (Throwable $e) { ml_debug('notify-ready email failed: ' . $e->getMessage()); }
 
-    // 3) Now try to persist metadata. The user has already gotten their preview,
-    //    so even if persist fails, they don't notice. We retry with growing
-    //    backoff. If we still can't write after several attempts, drop the
-    //    metadata to a pending JSON file for later sync.
-    $persist_payload = [
-        'token' => $token, 'email' => $email, 'name' => $name, 'biz' => $biz,
-        'website' => $website, 'cost' => $cost, 'htmls_count' => count($htmls),
-        'variants' => array_keys($htmls), 'ip' => $ip, 'created_at' => date('Y-m-d H:i:s'),
-        'generation_mode' => $gen_mode, 'description' => $description, 'describe' => $describe ? 1 : 0,
-        'scrape_data' => $scrape_data_json ?? null,
-        // Which /o price-test cell this generation came from. It MUST live in the
-        // payload, not be read from $_GET at persist time: when the DB is busy the
-        // whole payload is written to data/pending_magic/ and replayed later by
-        // drain_pending.php from cron, where there is no request and no $_GET. A
-        // generation that fell back that way was losing its offer and the visitor
-        // was then priced at $500 despite arriving from the $100 or free cell.
-        // a/b are the live builder cells and are open. 't' is the guarded $1
-        // live-payment test cell and is only honoured when the request also
-        // carries the secret in &k=, so a scraped or guessed ?offer=t can never
-        // mint a job row that later checks out at $1. See webwiz_lib.php.
-        'offer_variant' => ww_offer_variant_from_request(),
-    ];
-    $persist_ok = false;
-    $maxAttempts = 12; // up to ~20s of retries
-    $delay_us = 250000;
-    for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
-        try {
-            $db->exec('PRAGMA busy_timeout = 30000');
-            $db->exec('BEGIN IMMEDIATE');
-            $st = $db->prepare("INSERT INTO prospects (email, name, business_name, current_url, source, description) VALUES (?, ?, ?, ?, 'magic', ?)");
-            $st->execute([$email, $name, $biz, ($describe ? null : $website), ($describe ? $description : null)]);
-            $pid = (int)$db->lastInsertId();
-            // Fold in the loading-screen Q&A answers if the visitor answered them.
-            // qa.json existing implies /api/qa.php already created the qa_answers column,
-            // so this is a plain UPDATE (no ALTER inside the transaction).
-            try {
-                $qaf = '/var/www/sites/trywebwiz/public/preview/' . $token . '/qa.json';
-                if (is_file($qaf)) {
-                    $qraw = json_decode((string)@file_get_contents($qaf), true);
-                    $qans = (is_array($qraw) && !empty($qraw['answers']) && is_array($qraw['answers'])) ? $qraw['answers'] : null;
-                    if ($qans) {
-                        $qu = $db->prepare('UPDATE prospects SET qa_answers = ? WHERE id = ?');
-                        $qu->execute([json_encode($qans, JSON_UNESCAPED_SLASHES), $pid]);
-                    }
-                }
-            } catch (Throwable $e) { ml_debug('qa attach failed: ' . $e->getMessage()); }
-            $st = $db->prepare("INSERT INTO jobs (type, prospect_id, customer_email, business_name, scrape_data, status, scheduled_for, token, generation_mode, item_status, total_cost_cents, completed_at, qa_status) VALUES ('outbound', ?, ?, ?, ?, 'ready', datetime('now'), ?, ?, 'done', ?, datetime('now'), 'magic')");
-            $st->execute([$pid, $email, $biz, ($scrape_data_json ?? null), $token, $gen_mode, (int)round($cost * 100)]);
-            $jid = (int)$db->lastInsertId();
-            // Stamp the price-test cell onto the job. The reveal is reached later
-            // by ?t=<token> alone, so without this a returning visitor would be
-            // priced from a URL they no longer have. Read from $_GET because it
-            // is a superglobal and this runs inside the persist helper.
-            // Prefer the payload: this helper also runs from the pending-file
-            // drainer, where there is no $_GET at all.
-            $__ww_off = $p['offer_variant'] ?? null;
-            if ($__ww_off === null && isset($_GET['offer']) && in_array($_GET['offer'], ['a','b'], true)) {
-                $__ww_off = (string)$_GET['offer'];
-            }
-            if ($__ww_off !== null && !in_array($__ww_off, ['a','b'], true)) { $__ww_off = null; }
-            if ($__ww_off !== null) {
-                try { $db->prepare("UPDATE jobs SET offer_variant=? WHERE id=?")->execute([$__ww_off, $jid]); }
-                catch (Throwable $e) { /* pricing falls back to default, never break generation */ }
-            }
-            $st = $db->prepare("INSERT INTO previews (job_id, variant_n, html_path, qa_score, qa_pass, qa_issues) VALUES (?, ?, ?, NULL, NULL, NULL)");
-            foreach ($htmls as $i => $_) {
-                $st->execute([$jid, $i, '/preview/' . $token . '/v' . $i . '/index.html']);
-            }
-            $st = $db->prepare("INSERT INTO magic_hits (ip, token) VALUES (?, ?)");
-            $st->execute([$ip, $token]);
-            $db->exec('COMMIT');
-            $persist_ok = true;
-            ml_debug("persist OK attempt=$attempt pid=$pid jid=$jid");
-            break;
-        } catch (Throwable $e) {
-            try { $db->exec('ROLLBACK'); } catch (Throwable $ee) {}
-            $emsg = strtolower($e->getMessage());
-            ml_debug(sprintf('persist attempt %d FAIL: %s', $attempt, $e->getMessage()));
-            if (strpos($emsg, 'lock') === false && strpos($emsg, 'busy') === false) break;
-            if ($attempt < $maxAttempts) { usleep($delay_us); $delay_us = (int)min(3000000, $delay_us * 1.4); }
-        }
-    }
-
-    if (!$persist_ok) {
-        // Queue for later sync — DB-busy must NEVER fail the user.
-        $pendingDir = '/var/www/sites/trywebwiz/data/pending_magic';
-        if (!is_dir($pendingDir)) { @mkdir($pendingDir, 0755, true); }
-        $pendingFile = $pendingDir . '/' . $token . '.json';
-        file_put_contents($pendingFile, json_encode($persist_payload, JSON_PRETTY_PRINT));
-        ml_debug("PERSIST FALLBACK to file: $pendingFile");
-    }
 
     // ---- Nurture-engine enrollment ----
     // If the user gave us an email, drop them into the nurture cadence (step 0,
