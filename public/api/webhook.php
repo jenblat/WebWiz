@@ -157,7 +157,11 @@ if ($type === 'checkout.session.completed') {
     // $500 try_checkout.php funnel - which is why content_name below used to go
     // out empty on every single price-test purchase.
     $ovariant = strtolower(trim((string)($obj['metadata']['offer_variant'] ?? '')));
-    if (!in_array($ovariant, ['a', 'b', 'c'], true)) $ovariant = '';
+    // 't' is the guarded $1 live-payment test cell. It is whitelisted here for
+    // the same reason a/b/c are: without it the test purchase would reach Meta
+    // and try_events with an empty variant and would prove nothing about how a
+    // real cell behaves. Everything it produces is filterable on variant='t'.
+    if (!in_array($ovariant, ['a', 'b', 'c', 't'], true)) $ovariant = '';
     $olead_id = (int)($obj['metadata']['lead_id'] ?? 0);
     $is_sub   = (string)($obj['mode'] ?? '') === 'subscription';
 
@@ -313,11 +317,15 @@ if ($type === 'checkout.session.completed') {
         // (session id + suffix) so it is NOT deduped against the Purchase, but
         // still deterministic, so a webhook retry cannot double-count it.
         if ($is_sub) {
+            // predicted_ltv was hardcoded to 11 more months at $50. On the $1
+            // test cell that would have reported a $551 lifetime value for a $1
+            // sale and fed Meta a number an order of magnitude wrong.
+            $monthly_est = ($ovariant === 't') ? 1 : 50;
             ww_meta_send_event(
                 'Subscribe',
                 ww_meta_event_id($sid . ':subscribe'),
                 $user_data,
-                array_merge($custom, ['predicted_ltv' => round(($value + 50 * 11), 2)]),
+                array_merge($custom, ['predicted_ltv' => round(($value + $monthly_est * 11), 2)]),
                 $src_url,
                 'website'
             );

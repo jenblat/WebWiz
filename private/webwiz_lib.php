@@ -186,6 +186,69 @@ function ww_offer_leads_ensure(PDO $db): void {
     ] as $sql) { try { $db->exec($sql); } catch (Throwable $e) {} }
 }
 
+/**
+ * ---------------------------------------------------------------------------
+ * GUARDED $1 LIVE-PAYMENT TEST CELL (variant 't'). Added 2026-08-03.
+ * ---------------------------------------------------------------------------
+ * The A/B/C price-test cells are behind live paid traffic, so we have never
+ * been able to push a REAL card through the funnel to prove what happens after
+ * `checkout.session.completed`. Variant 't' is a fourth cell that runs the
+ * exact same code - same /o/_offer.php, same /api/offer_checkout.php, same
+ * Stripe Checkout, same /api/webhook.php, same receipt - at $1.00 build +
+ * $1.00/month, so the whole chain can be exercised for the price of a coffee.
+ *
+ * It is NOT a bypass. Nothing is special-cased downstream; 't' is just another
+ * row in the offer tables. The ONLY special thing about it is who is allowed
+ * to select it, which is what this gate is for.
+ *
+ * SECURITY MODEL. A $1 price that a stranger can reach is a $1 price we will
+ * be held to. So every surface that can CHOOSE variant 't' demands the secret:
+ *
+ *   /o/t/                 404 without ?k=              (tokenless / brief cell)
+ *   /o/t/try/             404 without ?k=              (builder cell)
+ *   /try/?offer=t         ignored without ?k=          (bare query string)
+ *   /api/magic.php?offer=t  not persisted without &k=  (writes jobs.offer_variant)
+ *   /api/offer_checkout.php tokenless -> 't' only with a valid test_key in the
+ *                         POST body; otherwise a tokenless request still means
+ *                         cell C exactly as before.
+ *
+ * A checkout that arrives WITH a token is priced from jobs.offer_variant and
+ * needs no key, which is correct: that job row could only have been created
+ * through the gate above.
+ *
+ * Fails closed everywhere - missing secret, missing key or a bad key all mean
+ * "not the test cell", never "cheapest cell".
+ */
+function ww_offer_test_key_ok(?string $key): bool {
+    $key = (string)$key;
+    if ($key === '') return false;
+    try { $s = ww_secrets(); } catch (Throwable $e) { return false; }
+    $want = (string)($s['OFFER_TEST_KEY'] ?? '');
+    if ($want === '') return false;          // not configured => cell unreachable
+    return hash_equals($want, $key);
+}
+
+/** The test key itself, for building self-referential URLs. '' if unset. */
+function ww_offer_test_key(): string {
+    try { $s = ww_secrets(); } catch (Throwable $e) { return ''; }
+    return (string)($s['OFFER_TEST_KEY'] ?? '');
+}
+
+/**
+ * Which /o cell a generation request belongs to, for jobs.offer_variant.
+ *
+ * Used by magic.php at persist time. 'a' and 'b' are the live builder cells and
+ * are open, because their prices are the ones the ads actually sell. 't' is the
+ * $1 test cell and is only honoured with the secret, so a scraped ?offer=t can
+ * never mint a job row that later checks out at $1.
+ */
+function ww_offer_variant_from_request(): ?string {
+    $o = strtolower(trim((string)($_GET['offer'] ?? '')));
+    if ($o === 'a' || $o === 'b') return $o;
+    if ($o === 't' && ww_offer_test_key_ok((string)($_GET['k'] ?? ''))) return 't';
+    return null;
+}
+
 function ww_h($s): string {
     return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8');
 }

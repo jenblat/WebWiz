@@ -111,6 +111,40 @@ $VARIANTS = [
         // Same as B: free build, but the $50 is taken at checkout, not later.
         'pay_note'   => $PAY_NOTE,
     ],
+    // -----------------------------------------------------------------------
+    // T: the guarded $1 LIVE-PAYMENT TEST cell. NOT an offer and never shown to
+    // anyone - /o/t/index.php 404s without the secret in ?k=.
+    //
+    // It exists because the entire chain downstream of a real
+    // checkout.session.completed (webhook fulfilment, offer_leads.status,
+    // checkout_completed, the Purchase + Subscribe CAPI events, this receipt
+    // block, the confirmation email) has never once executed against a genuinely
+    // paid /o session. Proving it needs a real card, and a real card needs a
+    // price we are willing to actually pay - hence $1 + $1/month.
+    //
+    // This cell is the TOKENLESS half of the test (brief form, no job token),
+    // deliberately mirroring cell C, because webhook.php's tokenless branch is
+    // the one that used to record nothing at all. /o/t/try/ is the token half.
+    // 't' is a distinct key so every row, event and metric it produces is
+    // filtered out of A/B/C reporting with `variant <> 't'`.
+    // -----------------------------------------------------------------------
+    't' => [
+        'key'        => 't',
+        'builder'    => false,
+        'price_cents'=> 100,     // $1.00 one-time
+        'monthly'    => 100,     // $1.00/month, no trial
+        'kicker'     => 'Internal test page &mdash; not an offer',
+        'headline'   => '$1 live-payment <em>test</em>.',
+        'sub'        => 'This is an internal end-to-end payment test for the WebWiz team. It is not an offer, '
+                      . 'it is not for sale, and nothing here will be built. It charges $1.00 today and $1.00 a month '
+                      . 'so a real card can prove the payment chain works.',
+        'price_line' => '$1.00 + $1.00/mo',
+        'price_note' => 'internal test cell &mdash; tokenless (brief) path',
+        'cta'        => 'Run the $1 test checkout',
+        'badge'      => 'TEST CELL',
+        'pay_note'   => 'Internal test. <strong>$1.00 is charged now</strong>, then $1.00/month until cancelled. '
+                      . 'Cancel the subscription in Stripe as soon as the test is verified.',
+    ],
 ];
 
 $V = $VARIANTS[$WW_VARIANT] ?? $VARIANTS['a'];
@@ -552,6 +586,10 @@ if (function_exists('ww_meta_pixel_base_html')) { echo ww_meta_pixel_base_html()
   // carries it, so per-cell value is comparable in Events Manager.
   var CELL_VALUE = <?= json_encode(round(((int)$V['price_cents'] > 0 ? (int)$V['price_cents'] : (int)$V['monthly']) / 100, 2)) ?>;
   var POST_CHECKOUT = <?= $ww_success ? 'true' : 'false' ?>;
+  // Only the guarded $1 test cell carries a key. Every other cell sends '' and
+  // offer_checkout.php then treats a tokenless request as cell C exactly as
+  // before - this cannot re-price a live cell.
+  var WW_TEST_KEY = <?= json_encode(($V['key'] === 't' && function_exists('ww_offer_test_key')) ? ww_offer_test_key() : '') ?>;
 
   if (POST_CHECKOUT) {
     // Purchase, fired with the SAME deterministic event_id webhook.php derives
@@ -665,7 +703,7 @@ if (function_exists('ww_meta_pixel_base_html')) { echo ww_meta_pixel_base_html()
     go.disabled = true; go.textContent = 'Taking you to checkout...';
     fetch('/api/offer_checkout.php', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({lead_id:leadId, email:contact})
+      body: JSON.stringify({lead_id:leadId, email:contact, test_key:WW_TEST_KEY})
     }).then(function(r){ return r.json().catch(function(){ return {ok:false}; }); })
       .then(function(c){
         if (c && c.ok && c.url) {

@@ -1031,7 +1031,11 @@ try {
         // drain_pending.php from cron, where there is no request and no $_GET. A
         // generation that fell back that way was losing its offer and the visitor
         // was then priced at $500 despite arriving from the $100 or free cell.
-        'offer_variant' => (isset($_GET['offer']) && in_array($_GET['offer'], ['a','b'], true)) ? (string)$_GET['offer'] : null,
+        // a/b are the live builder cells and are open. 't' is the guarded $1
+        // live-payment test cell and is only honoured when the request also
+        // carries the secret in &k=, so a scraped or guessed ?offer=t can never
+        // mint a job row that later checks out at $1. See webwiz_lib.php.
+        'offer_variant' => ww_offer_variant_from_request(),
     ];
     $persist_ok = false;
     $maxAttempts = 12; // up to ~20s of retries

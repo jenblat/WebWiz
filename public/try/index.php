@@ -248,6 +248,30 @@ $WW_OFFER_PRICING = [
         'lead'     => 'Wizzy gets you the first draft. Then a <strong>real human designer</strong> on our team finishes it properly. Building it costs you nothing &mdash; you pay $50/month to host it. Here&rsquo;s what that covers:',
         'qa_price' => 'A designer would charge $3,000 to $5,000 to build this. At $50 a month with no build fee, how does that feel?',
     ],
+    // The guarded $1 live-payment TEST cell. Reached only via /o/t/try/?k=<secret>,
+    // which 404s without the key. Present here so the builder half of the test
+    // runs the real generator and mints a jobs row with offer_variant='t', which
+    // is what makes /api/offer_checkout.php price it at $1 from the job row -
+    // exactly the way cells a and b are priced. No special-casing downstream.
+    't' => [
+        'build_cents' => 100,
+        'title'    => '$1 live-payment test (internal) &middot; WebWiz',
+        'desc'     => 'Internal end-to-end payment test. Not an offer.',
+        'buy'      => 'Pay $1 (test)',
+        'anchor'   => '$1 test',
+        'save'     => 'TEST CELL',
+        'micro'    => 'Internal test &middot; $1.00 now, then $1.00/month.',
+        'chip1'    => '$1 test charge',
+        'chip2'    => 'Internal test cell',
+        'brief'    => 'Run the $1 test checkout',
+        'brief_js' => 'Run the $1 test checkout',
+        'big'      => '$1.00',
+        'save_big' => 'TEST CELL',
+        'conv_cta' => 'Pay $1 (test) &rarr;',
+        'pay_note' => 'Internal test. <strong>$1.00 is charged now</strong>, then $1.00/month until cancelled.',
+        'lead'     => 'This is an internal WebWiz payment test. It charges $1.00 today and $1.00/month so the team can prove the post-payment chain works end to end. It is not an offer.',
+        'qa_price' => 'Internal test cell. This checkout charges $1.',
+    ],
 ];
 $ww_offer_key = '';
 if (isset($WW_OFFER) && isset($WW_OFFER_PRICING[$WW_OFFER])) {
@@ -255,8 +279,22 @@ if (isset($WW_OFFER) && isset($WW_OFFER_PRICING[$WW_OFFER])) {
 } elseif (isset($_GET['offer']) && isset($WW_OFFER_PRICING[$_GET['offer']])) {
     $ww_offer_key = (string)$_GET['offer'];
 }
+// GATE the $1 test cell. Everything above accepts $_GET['offer'] freely, which
+// is right for the live a/b cells - their prices are the ones we advertise - but
+// would let anyone type /try/?offer=t and buy at $1. The wrapper at /o/t/try/
+// already 404s without the key; this closes the bare-query-string route too.
+// webwiz_lib is pulled in ONLY on this branch so the untouched $500 funnel page
+// keeps exactly the includes it had before.
+if ($ww_offer_key === 't') {
+    require_once '/var/www/sites/trywebwiz/private/webwiz_lib.php';
+    if (!ww_offer_test_key_ok((string)($_GET['k'] ?? ''))) { $ww_offer_key = ''; }
+}
+
 // If we arrived by token, the job remembers which offer it was created under.
 // That wins, so a returning visitor is always priced the way they were sold.
+// A job row can only say 't' if it was created through the gate above, so a
+// returning test visitor is priced at $1 without needing the key again - the
+// same rule cells a and b already follow.
 if (isset($row) && is_array($row) && !empty($row['offer_variant']) && isset($WW_OFFER_PRICING[$row['offer_variant']])) {
     $ww_offer_key = (string)$row['offer_variant'];
 }
@@ -1254,6 +1292,9 @@ window.__TRY_INIT__ = {
   // Amount actually due today for this cell, so Meta value/optimisation is not
   // reported at the $500 default price on a $100 or $50 cell.
   var WW_OFFER_VALUE = <?= json_encode($ww_offer_value) ?>;
+  // Secret for the guarded $1 test cell only; '' on every live cell. magic.php
+  // will not persist offer_variant='t' without it.
+  var WW_OFFER_KEY = <?= json_encode(($ww_offer_key === 't' && function_exists('ww_offer_test_key')) ? ww_offer_test_key() : '') ?>;
 
   var loadingHead = document.getElementById('loadingHead');
 
@@ -1548,7 +1589,8 @@ window.__TRY_INIT__ = {
     };
     // Carry the offer into generation so it lands on the job row and the reveal
     // prices correctly even if the visitor returns later by token alone.
-    fetch('/api/magic.php?async=1' + (WW_OFFER ? '&offer=' + encodeURIComponent(WW_OFFER) : ''), {
+    fetch('/api/magic.php?async=1' + (WW_OFFER ? '&offer=' + encodeURIComponent(WW_OFFER) : '')
+                                    + (WW_OFFER_KEY ? '&k=' + encodeURIComponent(WW_OFFER_KEY) : ''), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
       body: (function(){

@@ -14,6 +14,9 @@
  *                                 through the builder, same as a, but the
  *                                 build is free: the $50 taken today is
  *                                 month one.
+ *   t  $1 build + $1/month       - the guarded live-payment test cell. Same
+ *                                 code path as a/b/c in every respect; only
+ *                                 the amounts and the secret gate differ.
  *   c  $0 build + $50/month     - recurring line only, NO trial, same money as
  *                                 b. Reached through the brief form instead of
  *                                 the builder, so it never carries a token.
@@ -54,6 +57,12 @@ $OFFERS = [
     'a' => ['build' => 10000, 'monthly' => 5000, 'trial' => 30, 'label' => 'WebWiz website build'],
     'b' => ['build' => 0,     'monthly' => 5000, 'trial' => 0,  'label' => 'WebWiz hosting & care'],
     'c' => ['build' => 0,     'monthly' => 5000, 'trial' => 0,  'label' => 'WebWiz hosting & care'],
+    // t  $1 build + $1/month, no trial. The guarded live-payment test cell.
+    //    Not an offer: it exists so a real card can be pushed through this exact
+    //    file, Stripe, webhook.php and the receipt, which has never happened for
+    //    an /o cell. $1 monthly keeps a forgotten subscription harmless.
+    //    Selecting it requires the secret - see ww_offer_test_key_ok().
+    't' => ['build' => 100,   'monthly' => 100,  'trial' => 0,  'label' => 'WebWiz $1 live-payment test'],
 ];
 
 // ---------------------------------------------------------------------------
@@ -103,6 +112,20 @@ if ($token !== '') {
         error_log('[offer_checkout] token lookup: ' . $e->getMessage());
         oc_fail('Could not start checkout. Please try again.', 500);
     }
+}
+
+// ---------------------------------------------------------------------------
+// GUARDED $1 TEST CELL, tokenless entry (mirrors cell C).
+//
+// This is the only way a request with no token can be priced as anything other
+// than 'c'. It needs the shared secret in the POST body, so it is not reachable
+// by guessing and not reachable from any page a real customer can load. Note
+// the ordering: this can only ever run when $token === '', i.e. when $variant
+// is still the tokenless default - it can never re-price a tokenful request,
+// which is what the fail-closed block below then re-asserts.
+// ---------------------------------------------------------------------------
+if ($token === '' && ww_offer_test_key_ok((string)($body['test_key'] ?? ''))) {
+    $variant = 't';
 }
 
 // FAIL CLOSED ON PRICE. The tokenless default is 'c', the CHEAPEST cell. That
@@ -183,22 +206,31 @@ if ($STRIPE_SECRET === '') oc_fail('Stripe is not configured.', 500);
 
 $origin = 'https://trywebwiz.com';
 
+// Distinguishable in logs/stripe-events.jsonl, try_events and Stripe metadata,
+// so nothing this cell produces can be mistaken for real A/B/C ad traffic.
+$source_tag = ($variant === 't') ? 'offer_test_1dollar' : 'offer_price_test';
+
+// The /o/t/ pages are key-guarded, so Stripe's return URLs have to carry the key
+// or the buyer lands on a 404 instead of the receipt. Deliberately only for 't':
+// the live cells' return URLs are untouched.
+$test_qs = ($variant === 't') ? '&k=' . urlencode(ww_offer_test_key()) : '';
+
 $payload = [
     'mode'        => 'subscription',
     // Builder cells must come back to their preview, not the landing page -
     // returning someone to a sales page after they have paid, or losing their
     // generated site on cancel, would both be bad.
     'success_url' => $token !== ''
-        ? $origin . '/o/' . $variant . '/try/?success=1&t=' . urlencode($token) . '&sid={CHECKOUT_SESSION_ID}'
-        : $origin . '/o/' . $variant . '/?success=1&sid={CHECKOUT_SESSION_ID}',
+        ? $origin . '/o/' . $variant . '/try/?success=1&t=' . urlencode($token) . '&sid={CHECKOUT_SESSION_ID}' . $test_qs
+        : $origin . '/o/' . $variant . '/?success=1&sid={CHECKOUT_SESSION_ID}' . $test_qs,
     'cancel_url'  => $token !== ''
-        ? $origin . '/o/' . $variant . '/try/?t=' . urlencode($token)
-        : $origin . '/o/' . $variant . '/?cancelled=1',
+        ? $origin . '/o/' . $variant . '/try/?t=' . urlencode($token) . $test_qs
+        : $origin . '/o/' . $variant . '/?cancelled=1' . $test_qs,
     'allow_promotion_codes' => 'true',
     'subscription_data[metadata][offer_variant]' => $variant,
     'subscription_data[metadata][lead_id]'       => (string)$lead_id,
     'subscription_data[metadata][token]'         => $token,
-    'subscription_data[metadata][source]'        => 'offer_price_test',
+    'subscription_data[metadata][source]'        => $source_tag,
     'subscription_data[description]'             => 'WebWiz Hosting & Care',
     // Session-level copies too: webhook.php reads $obj['metadata']['token'] and
     // ['source'] off the checkout.session object to stop the nurture sequence
@@ -206,7 +238,7 @@ $payload = [
     'metadata[offer_variant]' => $variant,
     'metadata[lead_id]'       => (string)$lead_id,
     'metadata[token]'         => $token,
-    'metadata[source]'        => 'offer_price_test',
+    'metadata[source]'        => $source_tag,
 ];
 
 if ($email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL)) {

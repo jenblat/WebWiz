@@ -104,3 +104,71 @@ Calibrated live output (use for `mustContain`):
 - `/opt/seedsite/scripts/backup.sh` line ~20 contains a **plaintext PostgreSQL
   password**. Should move to the SeedSite secrets manager.
 - ~69G of existing local backups remain. Deleting them is Omar's call.
+
+## 2026-08-03: guarded $1 live-payment test cell (variant `t`)
+
+Nothing downstream of a REAL `checkout.session.completed` for an `/o` cell had
+ever executed. Webhook fulfilment, `offer_leads.status='purchased'`, the
+`checkout_completed` try_event, the Meta Purchase + Subscribe CAPI events, the
+paid branch of the receipt and the confirmation email were all unproven, and the
+only way to prove them is to push a real card through. So there is now a fourth
+cell, `t`, at **$1.00 one-time + $1.00/month, no trial** (i.e. **$2.00 due
+today**, then $1.00/mo).
+
+It is **not** a bypass. It runs the same `/o/_offer.php`, the same
+`/api/offer_checkout.php`, the same Stripe Checkout, the same `/api/webhook.php`
+and the same receipt as a/b/c. Only the amounts and the gate differ. A
+special-cased shortcut would have proven nothing.
+
+**Two entry points, because `webhook.php` handles them differently:**
+
+| URL | Mirrors | `metadata.token` |
+|---|---|---|
+| `/o/t/?k=<OFFER_TEST_KEY>`      | cell C (brief form) | empty — the tokenless branch |
+| `/o/t/try/?k=<OFFER_TEST_KEY>`  | cells A/B (builder) | real 24-hex job token |
+
+**`source` metadata is `offer_test_1dollar`** (live cells stay
+`offer_price_test`), so it is greppable in `logs/stripe-events.jsonl` and
+`try_events`. Everything it produces is filterable with `variant <> 't'` /
+`source <> 'offer_test_1dollar'` — the A/B/C price-test reporting is unaffected.
+
+**The gate.** `OFFER_TEST_KEY` in `secrets.php`, compared with `hash_equals()`
+in `ww_offer_test_key_ok()` (`private/webwiz_lib.php`). Every surface that can
+CHOOSE variant `t` demands it, and all of them **fail closed** — a missing key,
+a wrong key or an unconfigured secret all mean "not the test cell", never
+"cheapest cell":
+
+- `/o/t/` and `/o/t/try/` return a real **404** (not 403 — 403 confirms the path
+  is worth attacking).
+- `/try/?offer=t` is ignored without `&k=`; it falls back to the $500 funnel.
+- `/api/magic.php?offer=t` will not persist `jobs.offer_variant='t'` without
+  `&k=` (`ww_offer_variant_from_request()`).
+- `/api/offer_checkout.php` maps a **tokenless** request to `t` only when the
+  POST body carries a valid `test_key`; otherwise a tokenless request still
+  means cell C, exactly as before.
+
+A checkout that arrives **with** a token is priced from `jobs.offer_variant` and
+needs no key. That is correct, not a hole: the job row could only have been
+created through the gate above.
+
+`success_url` / `cancel_url` for variant `t` carry `&k=` so the buyer lands on
+the receipt instead of a 404. This means the key is stored on the Stripe session
+— acceptable for a disposable test key, and a reason to rotate/remove it when
+the test is done.
+
+**Delete `OFFER_TEST_KEY` from `secrets.php` and the whole cell becomes
+unreachable** without touching a line of code. That is the intended off switch.
+
+### Gotcha: `secrets.php` is `var_export`ed, so comments in it do not survive
+
+`/opt/seedsite/app/services/secrets-file.js` reads the file with
+`require`, merges, and re-serialises with `var_export()`. Any hand-written
+comment inside it is therefore destroyed by the next secrets-manager write (and
+was destroyed by the 2026-08-03 edit that added `OFFER_TEST_KEY`). Document
+secrets **here**, not in `secrets.php`.
+
+For the record, so it is not rediscovered as a bug:
+**`META_TEST_EVENT_CODE` is intentionally empty.** It held a 9-character code
+until the 2026-08-03 "production CAPI" change emptied it. Empty means events go
+to production ad-optimisation data instead of the Test Events tab
+(`ww_meta_test_code()` in `public/api/_meta.php`). Do not "fix" it.
