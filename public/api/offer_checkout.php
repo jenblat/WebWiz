@@ -35,7 +35,27 @@ header('Cache-Control: no-store');
 
 require_once '/var/www/sites/trywebwiz/private/webwiz_lib.php';
 
-function oc_fail(string $msg, int $code = 400): void {
+/**
+ * Refuse the checkout.
+ *
+ * $alert is the difference between "the visitor typed nothing in the box" and
+ * "a buyer with money in their hand was turned away". Pass a context array for
+ * the second kind ONLY: it raises a Sentry event tagged with the token, the
+ * variant and the reason, so the next dead end on this path pages us instead of
+ * being found by hand days later (which is exactly what happened on 2026-08-03).
+ *
+ * Ordinary user-side validation - wrong method, malformed JSON - passes nothing
+ * and stays silent, because alerting on it would bury the real signal.
+ */
+function oc_fail(string $msg, int $code = 400, array $alert = []): void {
+    if ($alert) {
+        $alert += ['component' => 'offer_checkout', 'http_status' => $code];
+        ww_sentry_alert(
+            'offer_checkout refused: ' . (string)($alert['reason'] ?? 'unknown'),
+            $alert,
+            $code >= 500 ? 'error' : 'warning'
+        );
+    }
     http_response_code($code);
     echo json_encode(['ok' => false, 'error' => $msg]);
     exit;
@@ -134,18 +154,30 @@ if ($token !== '') {
         // than turning a real buyer away.
         if (!$job) { $job = oc_job_from_pending($token); }
         if (!$job) {
+            // THE 2026-08-03 sev-1. Kept alerting even though the persist race
+            // that caused it is fixed: if it ever comes back it is a buyer we
+            // just refused, and we want to hear about the first one, not the
+            // fiftieth.
             oc_fail('We could not find that preview. Please go back and generate your site again, '
-                  . 'or email hello@trywebwiz.com and we will sort it out.', 404);
+                  . 'or email hello@trywebwiz.com and we will sort it out.', 404,
+                  ['reason' => 'job_row_missing', 'preview_ref' => $token,
+                   'pending_file' => is_file('/var/www/sites/trywebwiz/data/pending_magic/' . $token . '.json')]);
         }
-        if (empty($job['offer_variant']))                        oc_fail(OC_ERR_NO_PRICE, 409);
+        if (empty($job['offer_variant'])) {
+            oc_fail(OC_ERR_NO_PRICE, 409, ['reason' => 'offer_variant_empty', 'preview_ref' => $token]);
+        }
         $variant = strtolower(trim((string)$job['offer_variant']));
-        if (!isset($OFFERS[$variant]))                           oc_fail(OC_ERR_NO_PRICE, 409);
+        if (!isset($OFFERS[$variant])) {
+            oc_fail(OC_ERR_NO_PRICE, 409,
+                ['reason' => 'offer_variant_unknown', 'preview_ref' => $token, 'variant' => $variant]);
+        }
         $from_job = true;
         $job_biz  = trim((string)($job['business_name'] ?? ''));
         if ($email === '' && !empty($job['customer_email'])) $email = (string)$job['customer_email'];
     } catch (Throwable $e) {
         error_log('[offer_checkout] token lookup: ' . $e->getMessage());
-        oc_fail('Could not start checkout. Please try again.', 500);
+        oc_fail('Could not start checkout. Please try again.', 500,
+            ['reason' => 'jobs_lookup_failed', 'preview_ref' => $token, 'error' => $e->getMessage()]);
     }
 }
 
@@ -171,7 +203,7 @@ if ($token === '' && ww_offer_test_key_ok((string)($body['test_key'] ?? ''))) {
 // braces: never let a tokenful request end up on the cheap default.
 if ($token !== '' && !$from_job) {
     error_log('[offer_checkout] refusing tokenful checkout that did not resolve from jobs: ' . $token);
-    oc_fail(OC_ERR_NO_PRICE, 409);
+    oc_fail(OC_ERR_NO_PRICE, 409, ['reason' => 'tokenful_unresolved', 'preview_ref' => $token]);
 }
 
 $O = $OFFERS[$variant];
@@ -230,14 +262,21 @@ if ($token !== '' && $lead_id <= 0) {
         }
     } catch (Throwable $e) {
         // A lead we failed to record is a measurement problem. Blocking the sale
-        // over it would be a revenue problem, which is worse.
+        // over it would be a revenue problem, which is worse - so warn, do not fail.
         error_log('[offer_checkout] builder lead write failed: ' . $e->getMessage());
+        ww_sentry_alert('offer_checkout could not record the builder lead', [
+            'component' => 'offer_checkout', 'reason' => 'builder_lead_write_failed',
+            'preview_ref' => $token, 'variant' => $variant, 'error' => $e->getMessage(),
+        ], 'warning', $e);
     }
 }
 
 $secrets = function_exists('ww_secrets') ? ww_secrets() : [];
 $STRIPE_SECRET = (string)($secrets['STRIPE_SECRET_KEY'] ?? '');
-if ($STRIPE_SECRET === '') oc_fail('Stripe is not configured.', 500);
+if ($STRIPE_SECRET === '') {
+    oc_fail('Stripe is not configured.', 500,
+        ['reason' => 'stripe_key_missing', 'variant' => $variant, 'preview_ref' => $token]);
+}
 
 $origin = 'https://trywebwiz.com';
 
@@ -317,7 +356,14 @@ curl_close($ch);
 $json = json_decode((string)$resp, true);
 if ($http !== 200 || empty($json['url'])) {
     error_log('[offer_checkout] stripe http=' . $http . ' resp=' . substr((string)$resp, 0, 400));
-    oc_fail('Could not start checkout. Please try again.', 502);
+    oc_fail('Could not start checkout. Please try again.', 502, [
+        'reason'        => 'stripe_session_failed',
+        'preview_ref'   => $token,
+        'variant'       => $variant,
+        'stripe_http'   => $http,
+        'stripe_error'  => (string)($json['error']['message'] ?? ''),
+        'stripe_code'   => (string)($json['error']['code'] ?? ''),
+    ]);
 }
 
 // Record that this lead reached checkout, so the funnel can be read per variant.

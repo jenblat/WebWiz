@@ -7,6 +7,10 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/_meta.php';
 require_once __DIR__ . '/_email_templates.php';
+// Loaded up front (it was previously pulled in lazily, inside three different
+// functions) so ww_sentry_alert() and ww_db() are available to every path in
+// this file, including the ones that run before the first handler.
+require_once __DIR__ . '/../../private/webwiz_lib.php';
 
 $secrets = require __DIR__ . '/../../secrets.php';
 $WEBHOOK_SECRET = $secrets['STRIPE_WEBHOOK_SECRET'] ?? '';
@@ -27,6 +31,11 @@ function ww_admin_recipients(string $fallback): array {
         $rows = $st ? $st->fetchAll(PDO::FETCH_ASSOC) : [];
     } catch (Throwable $e) {
         error_log('[webwiz webhook] admin lookup failed: ' . $e->getMessage());
+        if (function_exists('ww_sentry_alert')) {
+            ww_sentry_alert('Stripe webhook could not read the admin recipient list', [
+                'component' => 'webhook', 'reason' => 'admin_lookup_failed', 'error' => $e->getMessage(),
+            ], 'warning', $e);
+        }
         $rows = [];
     }
     if (!$rows) return [['email' => $fallback, 'name' => 'WebWiz Team']];
@@ -63,9 +72,22 @@ function stripe_verify(string $payload, string $sig_header, string $secret, int 
 if (!$ok) {
     error_log('[webwiz webhook] signature failed: ' . $err);
     if ($WEBHOOK_SECRET !== '') {
+        // Only alert when something actually claimed to be Stripe. Random
+        // internet scanners POST here constantly with no signature header at
+        // all; paging on those would be pure noise.
+        if ($sig_header !== '') {
+            ww_sentry_alert('Stripe webhook signature verification failed', [
+                'component' => 'webhook', 'reason' => 'signature_invalid', 'detail' => $err,
+            ], 'warning');
+        }
         http_response_code(400);
         exit('Bad signature.');
     }
+    // No secret configured: we are about to act on an UNVERIFIED event. That is
+    // a live security and correctness hole, not a warning.
+    ww_sentry_alert('Stripe webhook is processing events with no signing secret configured', [
+        'component' => 'webhook', 'reason' => 'webhook_secret_missing', 'detail' => $err,
+    ], 'error');
 }
 
 $event = json_decode($raw, true);
@@ -81,6 +103,86 @@ $log_dir = __DIR__ . '/../../logs';
     json_encode(['ts' => gmdate('c'), 'type' => $event['type'] ?? '', 'id' => $event['id'] ?? '', 'object' => $event['data']['object']['id'] ?? null]) . "\n",
     FILE_APPEND | LOCK_EX
 );
+
+// ---------------------------------------------------------------------------
+// IDEMPOTENCY. Added 2026-08-05.
+//
+// Stripe guarantees AT LEAST ONCE delivery and retries anything that is not a
+// 2xx. This file had no dedupe at all, so a redelivery re-ran every side effect
+// - a second customer email, a second admin email, a second Meta CAPI Purchase.
+// Observed live: evt_1U0NjqI9eJumTmB7RBWyzQ7E (customer.subscription.deleted)
+// arrived twice one second apart on 2026-08-03 and sent two identical
+// cancellation emails to the same person.
+//
+// Deliberately NOT a plain "seen it, skip it": the row is claimed on arrival but
+// only marked completed at the very end. If a delivery dies halfway - a PHP
+// fatal between taking the money and sending the receipt - Stripe's retry MUST
+// still be processed, so an incomplete claim lets the event through (and says
+// so). Only a fully completed event is skipped.
+//
+// Fails OPEN in every error case. A duplicate email is annoying; a dropped
+// checkout.session.completed is a paid customer who never hears from us.
+// ---------------------------------------------------------------------------
+function ww_webhook_claim(string $event_id, string $type): string {
+    if ($event_id === '') return 'fresh';
+    try {
+        $db = ww_db();
+        $db->exec("CREATE TABLE IF NOT EXISTS stripe_events_seen (
+            event_id     TEXT PRIMARY KEY,
+            type         TEXT,
+            received_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            completed_at TEXT
+        )");
+        $ins = $db->prepare("INSERT OR IGNORE INTO stripe_events_seen (event_id, type) VALUES (?, ?)");
+        ww_db_write_retry(function () use ($ins, $event_id, $type) { return $ins->execute([$event_id, $type]); });
+        if ($ins->rowCount() > 0) return 'fresh';
+
+        $st = $db->prepare("SELECT completed_at FROM stripe_events_seen WHERE event_id = ? LIMIT 1");
+        $st->execute([$event_id]);
+        $done = $st->fetchColumn();
+        return ($done !== false && $done !== null && (string)$done !== '') ? 'duplicate' : 'retry_incomplete';
+    } catch (Throwable $e) {
+        error_log('[webwiz webhook] idempotency claim failed: ' . $e->getMessage());
+        ww_sentry_alert('Stripe webhook idempotency check failed; processing anyway', [
+            'component' => 'webhook', 'reason' => 'idempotency_check_failed',
+            'event_id' => $event_id, 'event_type' => $type, 'error' => $e->getMessage(),
+        ], 'warning', $e);
+        return 'fresh';
+    }
+}
+
+function ww_webhook_complete(string $event_id): void {
+    if ($event_id === '') return;
+    try {
+        $db = ww_db();
+        $up = $db->prepare("UPDATE stripe_events_seen SET completed_at = datetime('now') WHERE event_id = ?");
+        ww_db_write_retry(function () use ($up, $event_id) { return $up->execute([$event_id]); });
+    } catch (Throwable $e) {
+        error_log('[webwiz webhook] idempotency complete failed: ' . $e->getMessage());
+    }
+}
+
+$WW_EVENT_ID   = (string)($event['id'] ?? '');
+$WW_EVENT_TYPE = (string)($event['type'] ?? '');
+$WW_CLAIM      = ww_webhook_claim($WW_EVENT_ID, $WW_EVENT_TYPE);
+
+if ($WW_CLAIM === 'duplicate') {
+    error_log('[webwiz webhook] duplicate event skipped: ' . $WW_EVENT_ID . ' (' . $WW_EVENT_TYPE . ')');
+    ww_sentry_alert('Stripe redelivered an event we had already completed; skipped', [
+        'component' => 'webhook', 'reason' => 'duplicate_event_skipped',
+        'event_id' => $WW_EVENT_ID, 'event_type' => $WW_EVENT_TYPE,
+    ], 'info');
+    http_response_code(200);
+    exit('ok (duplicate)');
+}
+if ($WW_CLAIM === 'retry_incomplete') {
+    // We claimed this event before and never finished it. Something killed the
+    // previous run mid-flight. Reprocess - but say so, loudly.
+    ww_sentry_alert('Stripe retried an event whose previous delivery never completed; reprocessing', [
+        'component' => 'webhook', 'reason' => 'retry_after_incomplete_delivery',
+        'event_id' => $WW_EVENT_ID, 'event_type' => $WW_EVENT_TYPE,
+    ], 'error');
+}
 
 // ---------- Brevo sender ----------
 function brevo_send(string $key, array $from, array $to, ?array $reply_to, string $subject, string $html, string $text = ''): bool {
@@ -102,7 +204,18 @@ function brevo_send(string $key, array $from, array $to, ?array $reply_to, strin
     $http = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
     if ($http >= 300) {
+        // Silent until 2026-08-05: we take the payment, Brevo rejects the
+        // receipt, and the customer hears nothing. Nobody was watching the log.
         error_log('[webwiz brevo] http=' . $http . ' resp=' . substr((string)$r, 0, 500));
+        if (function_exists('ww_sentry_alert')) {
+            ww_sentry_alert('Stripe webhook could not send a transactional email', [
+                'component'   => 'webhook',
+                'reason'      => 'brevo_send_failed',
+                'brevo_http'  => $http,
+                'subject'     => $subject,
+                'recipients'  => count($to_list),
+            ], 'error');
+        }
         return false;
     }
     return true;
@@ -172,6 +285,15 @@ if ($type === 'checkout.session.completed') {
         'amount'        => dollars($amount),
     ];
 
+    if (!$email) {
+        // A paid order we cannot acknowledge. Previously this branch just did
+        // nothing at all.
+        ww_sentry_alert('Paid checkout completed with no customer email; no receipt could be sent', [
+            'component' => 'webhook', 'reason' => 'checkout_without_email',
+            'event_id' => $WW_EVENT_ID, 'stripe_session' => $sid, 'variant' => $ovariant, 'amount' => $amount,
+        ], 'error');
+    }
+
     if ($email) {
         $tpl = ww_email_order_received($vars);
         brevo_send($BREVO_KEY,
@@ -214,7 +336,13 @@ if ($type === 'checkout.session.completed') {
             ww_nurture_set_status(ww_db(), $cid, 'purchased');
             error_log('[webhook] nurture status=purchased for contact_id=' . $cid);
         }
-    } catch (Throwable $e) { error_log('[webhook] nurture purchased update failed: ' . $e->getMessage()); }
+    } catch (Throwable $e) {
+        error_log('[webhook] nurture purchased update failed: ' . $e->getMessage());
+        ww_sentry_alert('Stripe webhook could not stop the nurture sequence for a purchaser', [
+            'component' => 'webhook', 'reason' => 'nurture_purchased_update_failed',
+            'event_id' => $WW_EVENT_ID, 'stripe_session' => $sid, 'error' => $e->getMessage(),
+        ], 'warning', $e);
+    }
 
     // Funnel analytics
     //
@@ -240,7 +368,13 @@ if ($type === 'checkout.session.completed') {
         ], JSON_UNESCAPED_SLASHES);
         ww_db()->prepare("INSERT INTO try_events (event, token, session_id, payload) VALUES ('checkout_completed', ?, ?, ?)")
                ->execute([$tok_col, (string)$sid, $pl]);
-    } catch (Throwable $e) { error_log('[webhook] try-event insert failed: ' . $e->getMessage()); }
+    } catch (Throwable $e) {
+        error_log('[webhook] try-event insert failed: ' . $e->getMessage());
+        ww_sentry_alert('Stripe webhook could not record checkout_completed; the sale is missing from the funnel', [
+            'component' => 'webhook', 'reason' => 'checkout_completed_event_insert_failed',
+            'event_id' => $WW_EVENT_ID, 'stripe_session' => $sid, 'variant' => $ovariant, 'error' => $e->getMessage(),
+        ], 'error', $e);
+    }
 
     // ----- FIX 2026-08-03: close the loop on the offer lead -----
     // Nothing anywhere set offer_leads.status='purchased', so every lead sat at
@@ -268,7 +402,14 @@ if ($type === 'checkout.session.completed') {
             });
             error_log('[webhook] offer_leads purchased rows=' . $n . ' variant=' . ($ovariant ?: '-') . ' lead_id=' . $olead_id);
         }
-    } catch (Throwable $e) { error_log('[webhook] offer lead close failed: ' . $e->getMessage()); }
+    } catch (Throwable $e) {
+        error_log('[webhook] offer lead close failed: ' . $e->getMessage());
+        ww_sentry_alert('Stripe webhook could not mark the offer lead purchased', [
+            'component' => 'webhook', 'reason' => 'offer_lead_close_failed',
+            'event_id' => $WW_EVENT_ID, 'stripe_session' => $sid, 'variant' => $ovariant,
+            'lead_id' => $olead_id, 'error' => $e->getMessage(),
+        ], 'warning', $e);
+    }
 
     // ----- Meta CAPI: Purchase (+ Subscribe for recurring plans) -----
     //
@@ -330,7 +471,13 @@ if ($type === 'checkout.session.completed') {
                 'website'
             );
         }
-    } catch (Throwable $e) { error_log('[webhook] meta capi Purchase failed: ' . $e->getMessage()); }
+    } catch (Throwable $e) {
+        error_log('[webhook] meta capi Purchase failed: ' . $e->getMessage());
+        ww_sentry_alert('Stripe webhook could not send the Meta CAPI Purchase; the ad account will under-report this sale', [
+            'component' => 'webhook', 'reason' => 'meta_capi_purchase_failed',
+            'event_id' => $WW_EVENT_ID, 'stripe_session' => $sid, 'variant' => $ovariant, 'error' => $e->getMessage(),
+        ], 'error', $e);
+    }
 }
 
 elseif ($type === 'invoice.payment_failed') {
@@ -407,6 +554,10 @@ elseif ($type === 'customer.subscription.deleted') {
         );
     }
 }
+
+// Only now is the event genuinely done. A crash anywhere above leaves the claim
+// row incomplete, so Stripe's retry is reprocessed instead of silently dropped.
+ww_webhook_complete($WW_EVENT_ID);
 
 http_response_code(200);
 echo 'ok';

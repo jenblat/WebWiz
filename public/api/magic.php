@@ -970,6 +970,19 @@ try {
         $pendingFile = $pendingDir . '/' . $token . '.json';
         file_put_contents($pendingFile, json_encode($persist_payload, JSON_PRETTY_PRINT));
         ml_debug("PERSIST FALLBACK to file: $pendingFile");
+        // The visitor keeps their preview (correct - the file on disk is the
+        // product), but until the drainer runs there is no jobs row, so the buy
+        // button is priced from the pending file rather than the database. That
+        // is a degraded state on the revenue path and we want to see it.
+        if (function_exists('ww_sentry_alert')) {
+            ww_sentry_alert('magic.php could not persist the jobs row; fell back to pending_magic', [
+                'component' => 'magic',
+                'reason'    => 'persist_fallback_to_disk',
+                'preview_ref' => (string)$token,
+                'variant'   => (string)($persist_payload['offer_variant'] ?? ''),
+                'attempts'  => (int)($attempt ?? 0),
+            ], 'warning');
+        }
     }
 
     // ====== POST-RESPONSE BACKGROUND PHASE ======
@@ -1169,5 +1182,24 @@ try {
             @ww_send_email(['email' => $__to, 'name' => 'WebWiz Ops'], 'WebWiz ALERT - generation failed', $__html);
         }
     } catch (Throwable $__ae) { ml_debug('alert email failed: ' . $__ae->getMessage()); }
+
+    // Sentry. The ops email above is throttled to one per ten minutes, so a
+    // burst of failures looks exactly like a single failure; Sentry counts and
+    // groups every one of them, and carries the stack trace the email never had.
+    // Unthrottled on purpose: this is the generator dying with a visitor watching.
+    if (function_exists('ww_sentry_alert')) {
+        ww_sentry_alert('WebWiz generation hard-failed', [
+            'component'  => 'magic',
+            'reason'     => 'generation_failed',
+            'preview_ref' => (string)($token ?? ''),
+            'business'   => (string)($company ?? ''),
+            'website'    => (string)($website ?? ''),
+            'mode'       => (string)($_GET['generation_mode'] ?? ''),
+            'variant'    => (string)(ww_offer_variant_from_request() ?? ''),
+            'async'      => !empty($async),
+            'error'      => mb_substr($emsg, 0, 300),
+        ], 'error', $e);
+    }
+
     ml_fail('Generation failed: ' . $emsg, 500);
 }

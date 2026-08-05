@@ -336,6 +336,80 @@ function ww_sentry_init(): void {
 ww_sentry_init();
 
 /**
+ * ---------------------------------------------------------------------------
+ * ww_sentry_alert() - report a GENUINE failure that returns JSON instead of
+ * throwing. Added 2026-08-05.
+ * ---------------------------------------------------------------------------
+ * Why this exists: on 2026-08-03 a race in magic.php meant the buy button on a
+ * fresh preview answered "We could not find that preview" for up to 61s. Both
+ * builder price-test cells were on that path with live Meta spend behind them.
+ * It produced ZERO Sentry events, because every checkout endpoint reports
+ * failure by echoing {"ok":false} and calling exit() - never by throwing - and
+ * Sentry only sees uncaught throwables and PHP fatals. The dead end was found
+ * by hand, days later.
+ *
+ * Use this for failures the BUSINESS cares about: a buyer turned away, a
+ * payment we could not start, an email we could not send, a webhook we could
+ * not process. Do NOT use it for ordinary user-side validation (empty field,
+ * bad email, rate limit) - that is not a bug, and paging on it trains everyone
+ * to ignore the alerts.
+ *
+ * Fingerprint is (component, reason) so distinct dead ends stay distinct
+ * issues; a regression on one path therefore cannot hide inside another.
+ * Everything is wrapped: monitoring must never break the request it watches.
+ */
+function ww_sentry_alert(string $message, array $context = [], string $level = 'error', ?Throwable $ex = null): void {
+    try {
+        if (!function_exists('Sentry\\withScope') || !function_exists('Sentry\\captureMessage')) return;
+
+        switch ($level) {
+            case 'fatal':   $sev = \Sentry\Severity::fatal();   break;
+            case 'warning': $sev = \Sentry\Severity::warning(); break;
+            case 'info':    $sev = \Sentry\Severity::info();    break;
+            default:        $sev = \Sentry\Severity::error();   break;
+        }
+
+        $component = (string)($context['component'] ?? 'webwiz');
+        $reason    = (string)($context['reason']    ?? $message);
+
+        // Request identity is useful on every one of these and is cheap. No PII:
+        // no email, no card, no name - token and variant only.
+        $context += [
+            'path'       => (string)($_SERVER['REQUEST_URI']    ?? ''),
+            'method'     => (string)($_SERVER['REQUEST_METHOD'] ?? 'CLI'),
+            'release'    => defined('WW_RELEASE') ? WW_RELEASE : '',
+            'at'         => gmdate('c'),
+        ];
+
+        \Sentry\withScope(function (\Sentry\State\Scope $scope) use ($message, $context, $sev, $ex, $component, $reason) {
+            $scope->setLevel($sev);
+            $scope->setTag('component', $component);
+            $scope->setTag('reason',    $reason);
+            foreach (['variant', 'source', 'http_status', 'event_type'] as $t) {
+                if (isset($context[$t]) && $context[$t] !== '' && $context[$t] !== null) {
+                    $scope->setTag($t, (string)$context[$t]);
+                }
+            }
+            $scope->setContext('webwiz', $context + ['message' => $message]);
+            $scope->setFingerprint(['webwiz', $component, $reason]);
+            if ($ex instanceof Throwable) {
+                \Sentry\captureException($ex);
+            } else {
+                \Sentry\captureMessage($message, $sev);
+            }
+        });
+
+        // These endpoints exit() immediately after alerting, and PHP-FPM/lsapi
+        // will not run the async transport on a process that is exiting, so the
+        // event has to be pushed synchronously or it is simply lost.
+        \Sentry\flush(2);
+    } catch (\Throwable $t) {
+        // Never let monitoring take the site down. This is the whole reason the
+        // original ww_sentry_init() is guarded the same way.
+    }
+}
+
+/**
  * Run a DB write, retrying on SQLITE_BUSY ("database is locked", error 5).
  *
  * PRAGMA busy_timeout already makes a writer WAIT for a lock, but it does NOT
