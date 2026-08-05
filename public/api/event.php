@@ -23,6 +23,19 @@ const ALLOWED_EVENTS = [
     'make_it_real_clicked',
     'checkout_started',
     // 'checkout_completed' fires server-side from webhook.php
+
+    // /o price-test funnel (added 2026-08-05). The Aug 2-5 cells recorded only
+    // offer_view and the eventual submit, so a 0/125 conversion could not be
+    // attributed to any step. These make each step of the landing page visible.
+    // All carry session_id = the per-visit id stamped on the offer_view row.
+    'offer_cta_viewed',
+    'offer_cta_clicked',
+    'offer_scroll_25',
+    'offer_scroll_50',
+    'offer_scroll_75',
+    'offer_scroll_100',
+    'offer_form_focus',
+    'offer_form_abandon',
 ];
 
 $raw = file_get_contents('php://input') ?: '';

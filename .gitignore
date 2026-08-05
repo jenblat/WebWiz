@@ -7,7 +7,16 @@ logs/
 *.sqlite3
 *.db
 pending_magic/
-public/preview/
+# public/preview/ is generated sites - thousands of dirs, never committed.
+# The two exceptions are small, hand-curated assets that a COMMITTED page
+# (/o/_offer.php) now depends on, so a clean checkout must contain them:
+#   showcase/*      - the static landing-page thumbnails that replaced the
+#                     three live <iframe>s on 2026-08-05 (regenerate with
+#                     private/qa-tools/showcase-thumbs.sh)
+#   wizzy-wave.webp - 1.8KB header logo that replaced a 146KB GIF
+public/preview/*
+!public/preview/showcase/
+!public/preview/wizzy-wave.webp
 public/data/imgcache/
 public/showcase_cache/
 *.bak

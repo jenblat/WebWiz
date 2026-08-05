@@ -160,6 +160,7 @@ $V = $VARIANTS[$WW_VARIANT] ?? $VARIANTS['a'];
 // form open and no receipt, which reads as "the payment did not work" and is
 // how refund requests and chargebacks start.
 // ---------------------------------------------------------------------------
+$ww_vid = bin2hex(random_bytes(8));   // per-visit funnel id (see below)
 $ww_success   = (string)($_GET['success']   ?? '') === '1';
 $ww_cancelled = (string)($_GET['cancelled'] ?? '') === '1';
 $ww_sid = '';
@@ -256,8 +257,9 @@ try {
     $db = ww_db();
     // try_events has no 'detail' column - the variant goes in payload, matching
     // how hero_view and the rest of the /try funnel events are recorded.
-    $db->prepare("INSERT INTO try_events (event, payload, ip, user_agent) VALUES ('offer_view', ?, ?, ?)")
+    $db->prepare("INSERT INTO try_events (event, session_id, payload, ip, user_agent) VALUES ('offer_view', ?, ?, ?, ?)")
        ->execute([
+           $ww_vid,
            json_encode(['variant' => $V['key'], 'from' => $_SERVER['HTTP_REFERER'] ?? null], JSON_UNESCAPED_SLASHES),
            substr((string)($_SERVER['REMOTE_ADDR'] ?? ''), 0, 45),
            substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 300),
@@ -322,17 +324,26 @@ if (function_exists('ww_meta_pixel_base_html')) { echo ww_meta_pixel_base_html()
   section{padding:44px 0}
   .band{background:#fffdf8;border-top:2px solid var(--navy);border-bottom:2px solid var(--navy)}
 
-  /* Showcase: live previews in scaled iframes. Real sites, clickable. */
+  /* Showcase: STATIC screenshots, not live iframes.
+     Until 2026-08-05 each tile embedded a real <iframe> of the generated site.
+     Three iframes x (1 HTML + 6-8 <img src="/api/genimg.php">) meant every single
+     landing-page view fired 23 extra requests, 20 of them PHP, and pulled
+     4.07 MB - 91% of total page weight - to paint three 210px thumbnails.
+     Against PHP_LSAPI_CHILDREN=10 that was a self-inflicted denial of service
+     (19,121 "Reached max children" on 2026-08-04 alone). Now: 3 lazy WebP files,
+     ~76 KB total. Regenerate with private/qa-tools/showcase-thumbs.sh. */
   .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
   .tile{background:#fff;border:2px solid var(--navy);border-radius:16px;overflow:hidden;box-shadow:5px 5px 0 var(--navy);text-decoration:none;color:inherit;display:block}
   /* display:block matters - these are spans (a valid child of <a>), and height
      is ignored on inline elements, which collapses the tile to a sliver. */
   .shot{display:block;position:relative;height:210px;overflow:hidden;background:#eee;border-bottom:2px solid var(--navy)}
-  .shot iframe{position:absolute;top:0;left:0;width:1280px;height:900px;border:0;transform:scale(.276);transform-origin:top left;pointer-events:none}
+  /* Intrinsic width/height on the <img> plus a fixed .shot height means the tile
+     reserves its box before the image arrives - no layout shift, CLS stays 0. */
+  .shot img{display:block;width:100%;height:100%;object-fit:cover;object-position:top center;border:0}
   .tmeta{display:block;padding:11px 14px}
   .tname{display:block;font-family:var(--display);font-weight:800;font-size:15px}
   .ttrade{display:block;font-size:12.5px;color:var(--muted)}
-  @media(max-width:820px){.grid{grid-template-columns:1fr}.shot{height:230px}.shot iframe{transform:scale(.42)}}
+  @media(max-width:820px){.grid{grid-template-columns:1fr}.shot{height:230px}}
 
   .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;counter-reset:s}
   .step{background:var(--cream);border:2px solid var(--navy);border-radius:16px;padding:20px}
@@ -385,7 +396,7 @@ if (function_exists('ww_meta_pixel_base_html')) { echo ww_meta_pixel_base_html()
 
 <header>
   <div class="wrap hbar">
-    <span class="logo"><img src="/preview/wizzy-wave.gif" alt="">WebWiz</span>
+    <span class="logo"><img src="/preview/wizzy-wave.webp" width="32" height="32" alt="" fetchpriority="high">WebWiz</span>
     <span class="hbadge"><?= $V['badge'] ?></span>
   </div>
 </header>
@@ -465,11 +476,17 @@ if (function_exists('ww_meta_pixel_base_html')) { echo ww_meta_pixel_base_html()
     <h2>Real sites we've built</h2>
     <p class="h2sub">Not mockups. These are live pages we made for local businesses. Tap any of them to look around.</p>
     <div class="grid">
-      <?php foreach ($SHOWCASE as $s): ?>
+      <?php foreach ($SHOWCASE as $i => $s): $first = ($i === 0); ?>
       <a class="tile" href="/preview/<?= htmlspecialchars($s['token'], ENT_QUOTES) ?>/v1/index.html" target="_blank" rel="noopener">
         <span class="shot">
-          <iframe src="/preview/<?= htmlspecialchars($s['token'], ENT_QUOTES) ?>/v1/index.html"
-                  loading="lazy" tabindex="-1" scrolling="no" title="<?= htmlspecialchars($s['name'], ENT_QUOTES) ?>"></iframe>
+          <picture>
+            <source type="image/webp" srcset="/preview/showcase/<?= htmlspecialchars($s['token'], ENT_QUOTES) ?>.webp">
+            <img src="/preview/showcase/<?= htmlspecialchars($s['token'], ENT_QUOTES) ?>.jpg"
+                 width="760" height="534"
+                 <?= $first ? 'fetchpriority="high" decoding="async"' : 'loading="lazy" decoding="async"' ?>
+                 sizes="(max-width:820px) 100vw, 340px"
+                 alt="<?= htmlspecialchars($s['name'] . ' - ' . $s['trade'] . ' website built by WebWiz', ENT_QUOTES) ?>">
+          </picture>
         </span>
         <span class="tmeta">
           <span class="tname"><?= htmlspecialchars($s['name']) ?></span><br>
@@ -630,6 +647,94 @@ if (function_exists('ww_meta_pixel_base_html')) { echo ww_meta_pixel_base_html()
       try { if (window.wwMetaTrack) window.wwMetaTrack('InitiateCheckout', {content_name:'offer_'+VARIANT+'_builder', content_category:'price_test', value:CELL_VALUE, currency:'USD'}); } catch(e){}
     });
   });
+
+  // ---------------------------------------------------------------------
+  // FUNNEL INSTRUMENTATION (2026-08-05).
+  // Aug 2-5: 381 views, 2 generations, 0 briefs - and we could not say WHERE
+  // people left, because the only things logged were "page viewed" and "form
+  // submitted". Everything between those two was dark. These events light it up.
+  //
+  // Deliberately cheap: no library, no third-party, one shared sendBeacon,
+  // every milestone fires at most once, and all of it is inside try/catch so a
+  // analytics failure can never break the page.
+  // ---------------------------------------------------------------------
+  var VID  = <?= json_encode($ww_vid) ?>;
+  var sent = {};
+  function ev(name, extra, key){
+    var k = key || name;               // dedupe key: defaults to the event name
+    if (sent[k]) return;               // once per visit, per milestone
+    sent[k] = 1;
+    try {
+      var body = JSON.stringify({event:name, session_id:VID,
+        payload: Object.assign({variant:VARIANT}, extra||{})});
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon('/api/event.php', new Blob([body], {type:'application/json'}));
+      } else {
+        fetch('/api/event.php', {method:'POST', headers:{'Content-Type':'application/json'},
+                                 body:body, keepalive:true}).catch(function(){});
+      }
+    } catch(e){}
+  }
+
+  // 1. CTA VIEWED - the hero CTA actually entered the viewport.
+  var heroCta = document.querySelector('.hero .cta');
+  if (heroCta) {
+    if (window.IntersectionObserver) {
+      var io = new IntersectionObserver(function(es){
+        es.forEach(function(e){ if (e.isIntersecting) { ev('offer_cta_viewed'); io.disconnect(); } });
+      }, {threshold:0.5});
+      io.observe(heroCta);
+    } else { ev('offer_cta_viewed'); }
+  }
+
+  // 2. CTA CLICKED - every CTA on the page, hero or repeat, builder or jump.
+  document.querySelectorAll('.cta').forEach(function(el){
+    var where = el.closest('.hero') ? 'hero' : 'repeat';
+    var kind  = el.hasAttribute('data-builder') ? 'builder'
+              : el.hasAttribute('data-jump')    ? 'jump' : 'submit';
+    el.addEventListener('click', function(){
+      // Deduped per CTA, not per page: we need to know WHICH button gets tapped.
+      ev('offer_cta_clicked', {where: where, kind: kind},
+         'offer_cta_clicked:' + where + ':' + kind);
+    }, {passive:true});
+  });
+
+  // 3. SCROLL DEPTH - 25/50/75/100% of the document.
+  var marks = [25,50,75,100], hit = {};
+  function onScroll(){
+    var st = window.pageYOffset || document.documentElement.scrollTop;
+    var h  = document.documentElement.scrollHeight - window.innerHeight;
+    var pct = h > 0 ? Math.round(st / h * 100) : 100;
+    marks.forEach(function(m){
+      if (pct >= m && !hit[m]) { hit[m] = 1; ev('offer_scroll_' + m, {pct: pct}); }
+    });
+    if (hit[100]) window.removeEventListener('scroll', onScroll);
+  }
+  window.addEventListener('scroll', onScroll, {passive:true});
+  onScroll();   // a short page may already be 100% scrolled
+
+  // 4/5. FORM FOCUS + ABANDON. Only cells without the builder have a form.
+  var briefForm = document.getElementById('offerForm');
+  var touched = false, submitted = false;
+  if (briefForm) {
+    briefForm.querySelectorAll('input,textarea').forEach(function(el){
+      el.addEventListener('focus', function(){
+        touched = true;
+        ev('offer_form_focus', {field: el.id || el.name || '?'});
+      }, {passive:true, once:true});
+    });
+    briefForm.addEventListener('submit', function(){ submitted = true; });
+    // "Abandon" = they typed something and left without ever submitting.
+    // pagehide (not unload) is the only one iOS/in-app webviews fire reliably.
+    window.addEventListener('pagehide', function(){
+      if (!touched || submitted) return;
+      var filled = 0;
+      briefForm.querySelectorAll('input,textarea').forEach(function(el){
+        if ((el.value||'').trim() !== '') filled++;
+      });
+      ev('offer_form_abandon', {fields_filled: filled, max_scroll: Object.keys(hit).length ? Math.max.apply(null, Object.keys(hit).map(Number)) : 0});
+    });
+  }
 
   var form = document.getElementById('offerForm');
   var err  = document.getElementById('err');
