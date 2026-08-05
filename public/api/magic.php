@@ -372,7 +372,23 @@ if (!$is_admin_bypass) {
 if (!$is_admin_bypass) {
     $perIp = (int)ml_sget($db, 'magic_rl_per_ip_hour', '3');
     $daily = (int)ml_sget($db, 'magic_rl_daily_cap', '100');
-    if ($perIp > 0) { $c = $db->prepare("SELECT COUNT(*) FROM magic_hits WHERE ip=? AND created_at > datetime('now','-1 hour')"); $c->execute([$ip]); if ((int)$c->fetchColumn() >= $perIp) ml_fail('You have reached the limit for now. Please try again a bit later.', 429); }
+    // ROOT CAUSE of Sentry WEBWIZ-G, fixed 2026-08-05. $c is effectively a global
+    // here (PHP if-blocks do not create scope), so this statement stayed alive -
+    // and unfinalized - for the entire request. An unfinalized SELECT pins a WAL
+    // read snapshot on the connection, which turned the persist block's
+    // BEGIN IMMEDIATE, 30-60s later, into a read->write upgrade. SQLite answers
+    // those with SQLITE_BUSY instantly, bypassing busy_timeout, and keeps
+    // answering that way forever because the snapshot is never released - so all
+    // 12 persist attempts failed in ~0ms each and every generation fell through
+    // to pending_magic. Draining the cursor releases the snapshot.
+    if ($perIp > 0) {
+        $c = $db->prepare("SELECT COUNT(*) FROM magic_hits WHERE ip=? AND created_at > datetime('now','-1 hour')");
+        $c->execute([$ip]);
+        $ip_hits = (int)$c->fetchColumn();
+        $c->closeCursor();
+        unset($c);
+        if ($ip_hits >= $perIp) ml_fail('You have reached the limit for now. Please try again a bit later.', 429);
+    }
     if ($daily > 0) { if ((int)$db->query("SELECT COUNT(*) FROM magic_hits WHERE created_at > datetime('now','start of day')")->fetchColumn() >= $daily) ml_fail('We have hit today\'s capacity for instant previews. Please try again tomorrow.', 429); }
 }
 
@@ -903,11 +919,19 @@ try {
     $delay_us = 250000;
     for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
         try {
-            $db->exec('PRAGMA busy_timeout = 30000');
-            $db->exec('BEGIN IMMEDIATE');
-            $st = $db->prepare("INSERT INTO prospects (email, name, business_name, current_url, source, description) VALUES (?, ?, ?, ?, 'magic', ?)");
+            // Persist on a DEDICATED handle. By this point the request handle has
+            // run hundreds of queries, and a single one of them leaving a cursor
+            // open pins a WAL read snapshot that makes BEGIN IMMEDIATE fail with
+            // an instant, unrecoverable SQLITE_BUSY (that was WEBWIZ-G - 12
+            // attempts, ~0ms each, a 100% fallback rate). A handle opened here
+            // has no snapshot, so BEGIN IMMEDIATE either takes the write lock or
+            // waits out busy_timeout properly under genuine contention. Reopened
+            // per attempt so a poisoned handle is never retried.
+            $pdb = ww_db_fresh();
+            $pdb->exec('BEGIN IMMEDIATE');
+            $st = $pdb->prepare("INSERT INTO prospects (email, name, business_name, current_url, source, description) VALUES (?, ?, ?, ?, 'magic', ?)");
             $st->execute([$email, $name, $biz, ($describe ? null : $website), ($describe ? $description : null)]);
-            $pid = (int)$db->lastInsertId();
+            $pid = (int)$pdb->lastInsertId();
             // Fold in the loading-screen Q&A answers if the visitor answered them.
             // qa.json existing implies /api/qa.php already created the qa_answers column,
             // so this is a plain UPDATE (no ALTER inside the transaction).
@@ -917,14 +941,14 @@ try {
                     $qraw = json_decode((string)@file_get_contents($qaf), true);
                     $qans = (is_array($qraw) && !empty($qraw['answers']) && is_array($qraw['answers'])) ? $qraw['answers'] : null;
                     if ($qans) {
-                        $qu = $db->prepare('UPDATE prospects SET qa_answers = ? WHERE id = ?');
+                        $qu = $pdb->prepare('UPDATE prospects SET qa_answers = ? WHERE id = ?');
                         $qu->execute([json_encode($qans, JSON_UNESCAPED_SLASHES), $pid]);
                     }
                 }
             } catch (Throwable $e) { ml_debug('qa attach failed: ' . $e->getMessage()); }
-            $st = $db->prepare("INSERT INTO jobs (type, prospect_id, customer_email, business_name, scrape_data, status, scheduled_for, token, generation_mode, item_status, total_cost_cents, completed_at, qa_status) VALUES ('outbound', ?, ?, ?, ?, 'ready', datetime('now'), ?, ?, 'done', ?, datetime('now'), 'magic')");
+            $st = $pdb->prepare("INSERT INTO jobs (type, prospect_id, customer_email, business_name, scrape_data, status, scheduled_for, token, generation_mode, item_status, total_cost_cents, completed_at, qa_status) VALUES ('outbound', ?, ?, ?, ?, 'ready', datetime('now'), ?, ?, 'done', ?, datetime('now'), 'magic')");
             $st->execute([$pid, $email, $biz, ($scrape_data_json ?? null), $token, $gen_mode, (int)round($cost * 100)]);
-            $jid = (int)$db->lastInsertId();
+            $jid = (int)$pdb->lastInsertId();
             // Stamp the price-test cell onto the job. The reveal is reached later
             // by ?t=<token> alone, so without this a returning visitor would be
             // priced from a URL they no longer have.
@@ -941,21 +965,23 @@ try {
             $__ww_off = $persist_payload['offer_variant'] ?? null;
             if ($__ww_off !== null && !in_array($__ww_off, ['a','b','t'], true)) { $__ww_off = null; }
             if ($__ww_off !== null) {
-                try { $db->prepare("UPDATE jobs SET offer_variant=? WHERE id=?")->execute([$__ww_off, $jid]); }
+                try { $pdb->prepare("UPDATE jobs SET offer_variant=? WHERE id=?")->execute([$__ww_off, $jid]); }
                 catch (Throwable $e) { /* pricing falls back to default, never break generation */ }
             }
-            $st = $db->prepare("INSERT INTO previews (job_id, variant_n, html_path, qa_score, qa_pass, qa_issues) VALUES (?, ?, ?, NULL, NULL, NULL)");
+            $st = $pdb->prepare("INSERT INTO previews (job_id, variant_n, html_path, qa_score, qa_pass, qa_issues) VALUES (?, ?, ?, NULL, NULL, NULL)");
             foreach ($htmls as $i => $_) {
                 $st->execute([$jid, $i, '/preview/' . $token . '/v' . $i . '/index.html']);
             }
-            $st = $db->prepare("INSERT INTO magic_hits (ip, token) VALUES (?, ?)");
+            $st = $pdb->prepare("INSERT INTO magic_hits (ip, token) VALUES (?, ?)");
             $st->execute([$ip, $token]);
-            $db->exec('COMMIT');
+            $pdb->exec('COMMIT');
+            $pdb = null;
             $persist_ok = true;
             ml_debug("persist OK attempt=$attempt pid=$pid jid=$jid");
             break;
         } catch (Throwable $e) {
-            try { $db->exec('ROLLBACK'); } catch (Throwable $ee) {}
+            try { if (isset($pdb) && $pdb) $pdb->exec('ROLLBACK'); } catch (Throwable $ee) {}
+            $pdb = null;
             $emsg = strtolower($e->getMessage());
             ml_debug(sprintf('persist attempt %d FAIL: %s', $attempt, $e->getMessage()));
             if (strpos($emsg, 'lock') === false && strpos($emsg, 'busy') === false) break;

@@ -42,13 +42,44 @@ function ww_db(): PDO {
     $pdo = new PDO('sqlite:' . $path);
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $pdo->exec('PRAGMA journal_mode = WAL');
-    $pdo->exec('PRAGMA busy_timeout = 10000'); // 2s — fail fast; sustained contention >2s means a bug, not a wait
+    $pdo->exec('PRAGMA busy_timeout = 10000'); // 10s. The comment here used to say 2s; it never matched the value.
     // NORMAL fsync is durable enough under WAL and is ~2-3x faster than FULL
     // for writes. Reduces the per-tx hold time so concurrent magic-link
     // generations don't pile up on the writer.
     $pdo->exec('PRAGMA synchronous = NORMAL');
     $pdo->exec('PRAGMA foreign_keys = ON');
     ww_migrate($pdo);
+    return $pdo;
+}
+
+/**
+ * A NEW, private PDO handle - deliberately NOT the shared static one ww_db()
+ * hands out.
+ *
+ * Why this exists (Sentry WEBWIZ-G, 2026-08-05): an executed-but-unfinalized
+ * SELECT pins a WAL read snapshot on its connection. Any later BEGIN IMMEDIATE
+ * on that same connection is then a read->write UPGRADE, and SQLite fails those
+ * with SQLITE_BUSY *immediately* - it does not consult busy_timeout, and no
+ * amount of retrying can clear it, because the snapshot is only released when
+ * the offending statement is finalized. One leaked cursor anywhere earlier in
+ * the request therefore poisons every subsequent write on that handle.
+ *
+ * A long request path cannot practically guarantee that no cursor is left open
+ * (magic.php is ~1200 lines), so revenue-critical writes take a clean handle
+ * instead of hoping. On a fresh handle BEGIN IMMEDIATE behaves correctly: it
+ * takes the write lock, or genuinely waits out busy_timeout under real
+ * contention.
+ *
+ * Schema migration is intentionally NOT run here - ww_db() already did it for
+ * this request, and running ALTERs on a second handle would only add lock
+ * pressure.
+ */
+function ww_db_fresh(): PDO {
+    $pdo = new PDO('sqlite:/var/www/sites/trywebwiz/data/webwiz.db');
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $pdo->exec('PRAGMA busy_timeout = 30000');
+    $pdo->exec('PRAGMA synchronous = NORMAL');
+    $pdo->exec('PRAGMA foreign_keys = ON');
     return $pdo;
 }
 
