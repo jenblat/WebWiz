@@ -91,12 +91,15 @@ function anthropic_chat(string $model, array $messages, ?string $system = null, 
     $price = ANTHROPIC_PRICING[$model] ?? ANTHROPIC_PRICING['claude-sonnet-4-6'];
     $cost = ($pt / 1_000_000) * $price['in'] + ($ct / 1_000_000) * $price['out'];
 
-    // Log to api_calls
+    // Log to api_calls. Wrapped in ww_db_write_retry because the art-direction brief added
+    // a 4th concurrent-ish call per job, and this INSERT was losing the race against the
+    // variant writes ("database is locked") often enough to drop cost rows.
     try {
-        $stmt = ww_db()->prepare(
-            "INSERT INTO api_calls (job_id, provider, model, prompt_tokens, completion_tokens, cost_usd, key_label) VALUES (?, 'anthropic', ?, ?, ?, ?, ?)"
-        );
-        $stmt->execute([$job_id, $model, $pt, $ct, $cost, $key_label]);
+        ww_db_write_retry(function () use ($job_id, $model, $pt, $ct, $cost, $key_label) {
+            ww_db()->prepare(
+                "INSERT INTO api_calls (job_id, provider, model, prompt_tokens, completion_tokens, cost_usd, key_label) VALUES (?, 'anthropic', ?, ?, ?, ?, ?)"
+            )->execute([$job_id, $model, $pt, $ct, $cost, $key_label]);
+        });
     } catch (Throwable $e) {
         error_log('[anthropic] log failed: ' . $e->getMessage());
     }

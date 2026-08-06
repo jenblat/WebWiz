@@ -11,6 +11,7 @@ require_once '/var/www/sites/trywebwiz/private/lib/scrape.php';
 require_once '/var/www/sites/trywebwiz/private/lib/qa.php';
 require_once '/var/www/sites/trywebwiz/private/lib/replicate.php';
 require_once '/var/www/sites/trywebwiz/private/lib/batch.php';
+require_once '/var/www/sites/trywebwiz/private/lib/design.php';
 
 set_time_limit(0);
 
@@ -79,14 +80,29 @@ function process_job(PDO $db, array $row): void {
         $model  = $row['model'] ?: 'claude-sonnet-4-6';
         $system = build_system_prompt($industry, count($usable));
 
+        // Client-specific art direction, written once per job and shared by all 3 variants.
+        // The DNA below then makes each variant look different; the brief makes all three
+        // look like THIS business. Failure here is non-fatal - the build proceeds without it.
+        $total_cost = 0.0;
+        $brief = ww_art_direction_brief($scrape, $biz, $industry, $job_id);
+        $total_cost += (float)($brief['_cost_usd'] ?? 0);
+        echo "[worker]  art direction brief: " . ($brief
+            ? count($brief['sections'] ?? []) . " sections, " . count($brief['palette'] ?? []) . " palette entries"
+            : "unavailable (proceeding without)") . "\n";
+
+        // Deterministic per-job design DNA. Seeded from the token so regeneration is stable,
+        // and guaranteed to differ across the 3 variants on every axis.
+        $seed = (string)$row['token'];
+        $dna  = [];
         $reqs = [];
         for ($v = 1; $v <= 3; $v++) {
-            $reqs[$v] = ['system' => $system, 'messages' => [['role' => 'user', 'content' => build_user_prompt($scrape, $biz, $industry, $v)]]];
+            $dna[$v]  = ww_design_dna($seed, $v);
+            $reqs[$v] = ['system' => $system, 'messages' => [['role' => 'user', 'content' => build_user_prompt($scrape, $biz, $industry, $v, $dna[$v], $brief)]]];
+            echo "[worker]   v{$v} type: {$dna[$v]['type']['display']} / {$dna[$v]['type']['body']}\n";
         }
         echo "[worker]  generating 3 variants in parallel -> {$model}\n";
-        $res = anthropic_multi($model, $reqs, 14000, 0.7, $job_id, ['</html>']);
+        $res = anthropic_multi($model, $reqs, 14000, 1.0, $job_id, ['</html>']);
 
-        $total_cost = 0.0;
         $htmls = [];
         $retry = [];
         foreach ($reqs as $v => $_) {
@@ -101,11 +117,11 @@ function process_job(PDO $db, array $row): void {
             $rreqs = [];
             foreach ($retry as $v => $reason) {
                 $rreqs[$v] = ['system' => $system, 'messages' => [['role' => 'user',
-                    'content' => build_user_prompt($scrape, $biz, $industry, $v) .
-                        "\n\nIMPORTANT - your previous attempt failed quality gate: {$reason}. Keep it SHORT and COMPLETE: end with </html>, include an <h1>, a <footer>, 3+ <section> tags, and 4+ distinct /api/img.php images. Drop the FAQ if needed to finish."]]];
+                    'content' => build_user_prompt($scrape, $biz, $industry, $v, $dna[$v], $brief) .
+                        "\n\nIMPORTANT - your previous attempt failed the quality gate: {$reason}. Keep the SAME assigned art direction, but make it SHORTER and COMPLETE: end with </html>, include an <h1>, a <footer>, 4+ <section>/<article> elements, and 4+ distinct /api/img.php images. Cut the least essential section if needed to finish."]]];
             }
             echo "[worker]  retrying " . count($rreqs) . " variant(s) in parallel\n";
-            $rres = anthropic_multi($model, $rreqs, 14000, 0.5, $job_id, ['</html>']);
+            $rres = anthropic_multi($model, $rreqs, 14000, 0.9, $job_id, ['</html>']);
             foreach ($rreqs as $v => $_) {
                 $total_cost += (float)($rres[$v]['cost_usd'] ?? 0);
                 $cand = finalize_html($rres[$v]['text'] ?? '');
@@ -158,10 +174,10 @@ function process_job(PDO $db, array $row): void {
                 $rreqs = [];
                 foreach ($fails as $v => $issues) {
                     $fb = ww_qa_feedback($issues);
-                    $rreqs[$v] = ['system'=>$system, 'messages'=>[['role'=>'user','content'=>build_user_prompt($scrape, $biz, $industry, $v) . "\n\n" . $fb]]];
+                    $rreqs[$v] = ['system'=>$system, 'messages'=>[['role'=>'user','content'=>build_user_prompt($scrape, $biz, $industry, $v, $dna[$v], $brief) . "\n\n" . $fb]]];
                 }
                 echo "[worker]  QA regenerating " . count($rreqs) . " variant(s)\n";
-                $rres = anthropic_multi($model, $rreqs, 14000, 0.6, $job_id, ['</html>']);
+                $rres = anthropic_multi($model, $rreqs, 14000, 0.9, $job_id, ['</html>']);
                 foreach ($rreqs as $v => $_) {
                     $total_cost += (float)($rres[$v]['cost_usd'] ?? 0);
                     $cand = finalize_html($rres[$v]['text'] ?? '');
@@ -221,7 +237,13 @@ function finalize_html(string $text): ?string {
     // permanently invisible (the "empty section" / blank-box defect). Inject a guaranteed
     // reveal so no content is ever stuck hidden. The observer still gives the staggered
     // effect for users who scroll within the first ~1.1s; this only rescues the rest.
-    $failsafe = "\n<script>/*ww-reveal-failsafe*/(function(){function r(){try{var e=document.querySelectorAll('.fade-up,.fade-in,.reveal,[data-reveal],.animate,.scroll-reveal');for(var i=0;i<e.length;i++){e[i].classList.add('visible','active','in-view','show');e[i].style.opacity='1';e[i].style.transform='none';e[i].style.visibility='visible';}}catch(x){}}var d=false;function g(){if(d)return;d=true;r();}window.addEventListener('load',function(){setTimeout(g,1100);});document.addEventListener('DOMContentLoaded',function(){setTimeout(g,2200);});setTimeout(g,3500);})();</script>\n";
+    // Identifiers are randomised per build. The previous version emitted a byte-identical
+    // script (including a /*ww-reveal-failsafe*/ marker) into every page, so any two WebWiz
+    // sites could be matched to each other by a single grep. Behaviour is unchanged.
+    $id = fn() => substr(str_shuffle('abcdefghijkmnopqrstuvwxyz'), 0, random_int(2, 4));
+    [$fr, $fg, $ve, $vi, $vd, $vx] = [$id(), $id(), $id(), $id(), $id(), $id()];
+    $t1 = random_int(1000, 1250); $t2 = random_int(2100, 2400); $t3 = random_int(3300, 3700);
+    $failsafe = "\n<script>(function(){function {$fr}(){try{var {$ve}=document.querySelectorAll('.fade-up,.fade-in,.reveal,[data-reveal],.animate,.scroll-reveal');for(var {$vi}=0;{$vi}<{$ve}.length;{$vi}++){{$ve}[{$vi}].classList.add('visible','active','in-view','show');{$ve}[{$vi}].style.opacity='1';{$ve}[{$vi}].style.transform='none';{$ve}[{$vi}].style.visibility='visible';}}catch({$vx}){}}var {$vd}=false;function {$fg}(){if({$vd})return;{$vd}=true;{$fr}();}window.addEventListener('load',function(){setTimeout({$fg},{$t1});});document.addEventListener('DOMContentLoaded',function(){setTimeout({$fg},{$t2});});setTimeout({$fg},{$t3});})();</script>\n";
     if (stripos($cand, '</body>') !== false) {
         $cand = preg_replace('/<\/body>/i', $failsafe . '</body>', $cand, 1);
     } else {
@@ -241,8 +263,11 @@ function quality_gate(string $html): array {
     $distinct = array_unique(array_merge($ma[1] ?? [], $mb[1] ?? []));
     if (count($distinct) < 4) return ['ok' => false, 'reason' => 'only ' . count($distinct) . ' distinct images (need 4+)'];
     if (!preg_match('/<footer[\s>]/i', $html)) return ['ok' => false, 'reason' => 'missing <footer>'];
-    $sections = preg_match_all('/<section[\s>]/i', $html);
-    if ($sections < 3) return ['ok' => false, 'reason' => "only {$sections} <section> tags (need 3+)"];
+    // Count <article> as well as <section>. The old gate counted <section> only, which
+    // quietly taught every build to emit the same nav -> N x section -> footer skeleton
+    // (400/400 shipped pages used it, none used <article>/<main>).
+    $sections = preg_match_all('/<(?:section|article)[\s>]/i', $html);
+    if ($sections < 4) return ['ok' => false, 'reason' => "only {$sections} content sections (need 4+ <section>/<article>)"];
     return ['ok' => true, 'reason' => ''];
 }
 
@@ -307,36 +332,33 @@ HEADER
 - CTA TEXT MUST MATCH THE BUSINESS. NEVER "Sign In"/"Log In" unless the source clearly has an authenticated product.
   Inference: Agency -> "Book a Call"/"Get a Quote"; Restaurant -> "Reserve a Table"/"Order Online"; Ecommerce -> "Shop Now"; SaaS -> "Get Started"/"Try Free"; Law/medical -> "Get a Consultation"/"Book Appointment".
 
-VISUAL DENSITY (at least 3): gradient mesh/blob behind hero; marquee strip (CSS @keyframes); card grid hover-lift; decorative SVG accents; SVG/clip-path section dividers.
-
-TYPOGRAPHY (only from this list)
-- Body sans: Inter, Manrope, Plus Jakarta Sans, Sora, Space Grotesk, IBM Plex Sans, Geist, DM Sans
-- Display sans: Manrope, Sora, Space Grotesk, Geist, Inter, Anton
-- Display serif (when suited): Playfair Display, Fraunces, Instrument Serif, DM Serif Display, Lora
+TYPOGRAPHY
+- The user message ASSIGNS you exactly two Google Fonts for this build. Load and use only those two. Do not substitute, do not add a third family, and do not fall back to a generic favourite - your named body font must be first in every font-family stack.
 - FORBIDDEN: Bagel Fat One, Lilita One, Modak, Concert One, Bowlby, Fredoka One, Boogaloo, novelty/kid-like.
-- System fallback: font-family:'Manrope',system-ui,-apple-system,sans-serif. Headlines tracked tight: letter-spacing:-0.025em.
+- Choose tracking to suit the assigned faces. Do NOT apply the same tight negative letter-spacing to every headline by reflex.
 
 DESIGN STANDARDS
-- Contemporary, confident, magazine-quality. 3-5 brand colors. High contrast. Generous whitespace, sections 80-120px vertical padding.
+- Contemporary, confident, magazine-quality. High contrast. Fully responsive at 375px. 2 primary CTAs above the fold.
 - COLOR CONTRAST (critical): any accent used as TEXT, numbers, small labels, wordmarks or thin UI on a DARK (navy/black/deep) background MUST be light and high-contrast - white, cream, or a bright gold. NEVER put a dark accent (dark red, maroon, burgundy, brown, navy) as TEXT on a dark background; that is unreadable. Reserve dark/saturated accents for solid-fill buttons/badges with white text, or as text on LIGHT backgrounds. Stat numbers and section labels sitting on a dark band must read clearly.
-- Sections (adapt to industry): hero, trust strip/stats, services/work showcase (with images), about/story (people/place imagery framed correctly), social proof, CTA band, footer. Keep it tight enough to finish.
-- 2 primary CTAs above the fold. Fully responsive at 375px.
+- STRUCTURE IS YOURS TO DECIDE. There is no house skeleton. Use real landmarks - <header>, <main>, <article>, <aside>, <footer> - not an undifferentiated stack of <section> tags. Section count, order and vertical rhythm come from the assigned art direction and the client brief, not from habit.
+
+THIS MUST NOT LOOK MASS-PRODUCED
+The single worst outcome is a page that could be swapped onto another company's website without anyone noticing. Specifically banned because they are the standard tells of a generated site:
+- Copy: "Ready to Get Started", "Ready to Transform...", "What Our Clients Say", "Trusted By", "Everything You Need", "Why Choose Us", "Let's Build Something Together", "Elevate Your...", "Take Your X to the Next Level", or any headline that would fit any other company unchanged. Headlines must name something only this business could say.
+- Layout: the default hero -> 3-icon-feature-row -> stats strip -> testimonial carousel -> full-width CTA band sequence.
+- Decoration by reflex: a blurred radial-gradient blob behind the hero, a generic logo marquee, uniform drop-shadowed rounded cards in a 3-up grid. Use these ONLY if the assigned ornament language actually calls for them.
+- Filler stats you cannot source. Never invent "500+ Projects" or "20 Years" unless that number appears in the source data.
 
 FORBIDDEN
 - Chatbots, popups, cookie banners. Fake testimonials. Lorem Ipsum. External JS frameworks. Links to URLs not in source data. "Sign In" on non-SaaS sites. Any opacity:0 reveal without CSS-only animation. Empty sections. Cropped faces/bodies. Reusing an image URL.
 
-QUALITY GATE (auto-checked): an <h1>, a <footer>, 3+ <section> tags, 4+ DISTINCT /api/img.php?u= image URLs.
+QUALITY GATE (auto-checked): an <h1>, a <footer>, 4+ <section>/<article> elements, 4+ DISTINCT /api/img.php?u= image URLs.
 
 Industry: {$industry}
 TXT;
 }
 
-function build_user_prompt(array $scrape, string $biz, string $industry, int $variant_n): string {
-    $directions = [
-        1 => 'Direction 1: BOLD EDITORIAL. Large display typography, generous whitespace, asymmetric grid, animated underlines, scroll-driven counters, film-grain texture, magazine-style full-bleed LANDSCAPE image bands.',
-        2 => 'Direction 2: MODERN MAXIMALIST. Layered cards with depth shadows, vibrant gradient accents, magnetic hover on CTAs, animated SVG decorations in the hero, sticky scroll-progress indicator, photo collage in the work section.',
-        3 => 'Direction 3: REFINED MINIMAL. Restrained color, museum-quality spacing, slow fades, hairline dividers, full-bleed LANDSCAPE hero with parallax, oversized footer with brand statement, editorial photo gallery.',
-    ];
+function build_user_prompt(array $scrape, string $biz, string $industry, int $variant_n, array $dna = [], array $brief = []): string {
     $imgs = $scrape['images'] ?? [];
     $photo_imgs  = array_values(array_filter($imgs, fn($i) => empty($i['is_logo']) && empty($i['is_thumb']) && empty($i['is_team_card']) && empty($i['is_cutout']) && empty($i['is_portrait'])));
     $cutout_imgs = array_values(array_filter($imgs, fn($i) => (!empty($i['is_cutout']) || !empty($i['is_portrait'])) && empty($i['is_logo'])));
@@ -359,13 +381,14 @@ function build_user_prompt(array $scrape, string $biz, string $industry, int $va
         ],
         'videos' => $scrape['videos'] ?? [], 'nav_links' => $scrape['nav_links'] ?? [], 'extra_pages' => $scrape['extra_pages'] ?? [],
     ];
-    $direction = $directions[$variant_n] ?? $directions[1];
+    $direction = $dna ? ww_dna_prompt_block($dna) : '';
+    $brief_block = ww_brief_prompt_block($brief);
     $scrape_json = json_encode($scrape_summary, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
     return <<<TXT
 Build a single-page website for **{$biz}** using the source data below. This is variant {$variant_n} of 3.
 
 {$direction}
-
+{$brief_block}
 SOURCE DATA:
 
 {$scrape_json}
@@ -380,18 +403,19 @@ IMAGE PICKING GUIDE
 
 REQUIREMENTS
 - Complete HTML with embedded <style> and <script>. Finish the document - end with </html>.
-- Logo in nav: prefer logo_url; else business-name wordmark.
-- Hero: a LANDSCAPE photo from images.photo (cover). If images.photo is empty, build a CSS gradient/SVG hero - do NOT stretch a cutout person across the hero.
-- Work/services showcase: 3 cards, each with its own distinct image.
-- About/story/team: at least 1 photo, framed per rules (people = contain, never cropped).
+- Follow the SECTION PLAN above if one was given: those sections, that order, those headlines. If no plan was given, decide the structure yourself from the source data - never fall back to the stock hero/features/stats/testimonials/CTA sequence.
+- The hero composition is dictated by the assigned LAYOUT ARCHETYPE above, not by a default. Only put a photo in the hero if that archetype calls for one; if it does, use a LANDSCAPE image from images.photo, and never stretch a cutout person across it.
+- Logo in nav: prefer logo_url; else business-name wordmark set in the assigned display face.
+- Every section marked "needs a real image" must get its own distinct real image. Sections marked otherwise should be type-, rule- or colour-led - do not manufacture image slots you cannot fill.
+- Write the body copy in the assigned COPY VOICE, using specifics drawn from the source paragraphs. No interchangeable marketing filler, no invented numbers.
 - Footer with real business name, copyright, and "Designed by WebWiz" link to https://trywebwiz.com.
-- 2 primary CTAs above the fold.
+- 2 primary CTAs above the fold, worded for this business.
 - Target ~5000 tokens. Completeness beats length.
 
 IMAGE TAG FORMAT - copy exactly:
 <img src="/api/img.php?u=<urlencoded-URL>&l=<urlencoded-label>" alt="...">  (NO loading="lazy")
 
-QUALITY GATE: <h1>, <footer>, 3+ <section>, 4+ DISTINCT /api/img.php URLs, no empty sections, no cropped people, no broken images.
+QUALITY GATE: <h1>, <footer>, 4+ <section>/<article> elements, 4+ DISTINCT /api/img.php URLs, no empty sections, no cropped people, no broken images.
 
 REMEMBER: output ONLY the HTML document. First character `<`, last character `>`. No commentary. END WITH </html>.
 TXT;
