@@ -203,11 +203,30 @@ theoretically: a POST to wizzy.php and edit.php both 500'd with
 `/usr/local/lsws/logs/error.log`, while `/api/version.php` (which does not
 require it) stayed 200.
 
-**After editing anything under `private/` as root, restore ownership:**
+**After editing site files as root, run:**
 
 ```
-chown www-data:www-data private/lib/*.php private/*.php && chmod 644 private/lib/anthropic.php
+/opt/seedsite/scripts/fix-webwiz-perms.sh          # fix
+/opt/seedsite/scripts/fix-webwiz-perms.sh --check  # report only, exit 1 on drift
 ```
+
+It restores `www-data:www-data` across `private/ public/ data/ logs/` and
+**changes ownership only — it never chmods.** Ownership is sufficient (www-data
+reads a 640 file fine once it owns it) and a blanket `chmod 644` would loosen
+files that are tight on purpose, e.g. `private/webwiz_lib.php` at 640.
+
+The subtree list is an allowlist, not "the site minus exclusions". Scanning all
+of `$SITE` matched **664** paths, nearly all `.git` internals and old `backups/`.
+Deliberately untouched: `.git` (root-owned because commits are made as root;
+git does not care who owns the objects), `.claude` (agent worktrees), `backups/`,
+and the 0-byte `./webwiz.db` stray from 2026-08-02 — the live database is
+`data/webwiz.db` and is already www-data.
+
+The script lives in the **SeedSite** repo, not this one, alongside `backup.sh`
+and the other ops scripts. `.claude/settings.json` here allowlists it so an agent
+can run it without a permission prompt; that file is the only thing under
+`.claude/` that is committed (see `.gitignore` — `.claude/worktrees/` holds full
+checkouts of this repo and must never be committed).
 
 Note `health_check.php` did **not** catch this — it checks that an
 `anthropic_key` setting exists, not that the library backing it is loadable.

@@ -18,6 +18,11 @@ public/preview/*
 !public/preview/showcase/
 !public/preview/wizzy-wave.webp
 public/data/imgcache/
+# Claude Code: share the permission allowlist, never commit agent worktrees.
+# .claude/worktrees/ holds full checkouts of this repo - committing it would
+# nest the repo inside itself.
+.claude/*
+!.claude/settings.json
 public/showcase_cache/
 *.bak
 *.bak.*

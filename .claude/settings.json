@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/opt/seedsite/scripts/fix-webwiz-perms.sh)",
+      "Bash(/opt/seedsite/scripts/fix-webwiz-perms.sh *)",
+      "Bash(/opt/seedsite/scripts/fix-webwiz-perms.sh:*)"
+    ]
+  }
+}
