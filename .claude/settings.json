@@ -3,7 +3,9 @@
     "allow": [
       "Bash(/opt/seedsite/scripts/fix-webwiz-perms.sh)",
       "Bash(/opt/seedsite/scripts/fix-webwiz-perms.sh *)",
-      "Bash(/opt/seedsite/scripts/fix-webwiz-perms.sh:*)"
+      "Bash(/opt/seedsite/scripts/fix-webwiz-perms.sh:*)",
+      "Bash(pm2 list)",
+      "mcp__99af3106-b248-4302-9810-287a6f56afac__search_files"
     ]
   }
 }
