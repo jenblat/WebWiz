@@ -100,7 +100,57 @@ Calibrated live output (use for `mustContain`):
 `{"db":"ok","rw":true,"at":"2026-07-31 18:51:15"}` / HTTP 200; 503 `{"db":"down","rw":false}` on failure.
 **Still to do: add this URL to SeedTester's target list on droplet 524473510.**
 
+## 2026-08-06: generated sites were all the same site
+
+Measured across 400 shipped `preview/*/v1/index.html`: **398 loaded Manrope**,
+302 loaded Fraunces, **400/400** had the identical `<nav>` → N×`<section>` →
+`<footer>` skeleton (zero used `<main>`/`<header>`/`<article>`), 301 had exactly
+6 or 7 sections, and ~90 used a "Ready to…" CTA heading.
+
+Cause was prompt architecture, not the model: every one of the 955 sites came
+from ONE static system prompt plus one of **three** hardcoded direction strings.
+Nothing about the specific business ever reached a design decision.
+
+**`private/lib/design.php`** (new) adds two layers:
+
+1. `ww_design_dna($seed,$variant)` **assigns** one concrete value per orthogonal
+   axis — type pairing (28 curated display/body pairs), layout archetype (12),
+   colour strategy (10), ornament (10), shape (5), rhythm (4). Assigned, not
+   offered: *offering a menu is precisely what collapsed to Manrope.* Seeded
+   from `jobs.token` so regeneration is stable; each axis pool is
+   deterministically shuffled so the 3 variants of a job are distinct by
+   construction. Simulated over 400 jobs the top body font is now 4.5%.
+2. `ww_art_direction_brief()` — one pre-pass per job (~$0.018, ~10s) returning a
+   palette **derived from the scraped brand colours**, a copy voice, a signature
+   visual detail and a section plan with real headlines. **Non-fatal**: a failed
+   brief returns `[]` and the build proceeds on the DNA-only path.
+
+Removed from `build_system_prompt()`: the `System fallback:
+font-family:'Manrope'` line, the prescribed hero/stats/services/about/social-
+proof/CTA section list, and the "VISUAL DENSITY (at least 3)" checklist that
+*mandated* the gradient-blob hero. Added an explicit ban on the generated-site
+tells (interchangeable headlines, the stock section sequence, invented stats).
+
+- `quality_gate()` now counts `<article>` too and requires 4+. The old
+  `<section>`-only count was itself teaching the uniform skeleton.
+- Sampling temperature 0.7 → **1.0** now that the prompt supplies the variation.
+- `finalize_html()` **randomises the reveal-failsafe identifiers.** It used to
+  emit a byte-identical script (with a `/*ww-reveal-failsafe*/` marker) into all
+  955 pages — any two WebWiz sites could be matched with one grep.
+- `anthropic.php` wraps the `api_calls` INSERT in `ww_db_write_retry()`; the
+  brief adds a 4th call per job and that log write was losing the SQLITE_BUSY
+  race (WEBWIZ-4/5).
+
+Verified against real scrapes (jobs 999, 1060): both passed the gate first try
+and production visual QA (82/100, no critical issues), emitted `<header>`/
+`<main>`, zero gradient blobs, no banned phrases. **Cost is now ~4 Anthropic
+calls per job instead of 3** — still far under the $1.50 `job_max_cost_usd` cap.
+
 ## Known issues not fixed
+- Worker log shows `sh: 1: cd: can't cd to .../private/qa-tools` for every
+  showcase capture, so `ww_generate_missing_showcases()` never succeeds and
+  retries the same jobs forever. `private/` is 750/www-data and the worker cron
+  is documented as running `sudo -u nobody`. Unrelated to generation quality.
 - `/opt/seedsite/scripts/backup.sh` line ~20 contains a **plaintext PostgreSQL
   password**. Should move to the SeedSite secrets manager.
 - ~69G of existing local backups remain. Deleting them is Omar's call.
