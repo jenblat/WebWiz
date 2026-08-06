@@ -225,15 +225,37 @@ function ww_capture_showcase_smc(string $token): bool {
     return (bool)@file_put_contents($out, $bin);
 }
 
-/** Fallback: local headless Chrome via private/qa-tools/showcase.js. */
+/**
+ * Fallback: local headless Chrome via private/qa-tools/showcase.js.
+ *
+ * Invoked by absolute path, NOT via `cd` into qa-tools. The old `cd ... && node
+ * showcase.js` form failed silently-but-noisily for every job: `cd` writes to
+ * the shell's own stderr (the `2>&1` only ever applied to node), so worker.log
+ * filled with bare `sh: 1: cd: can't cd to .../private/qa-tools` lines while
+ * this function just returned false with no explanation. The cd bought nothing
+ * — showcase.js requires only node built-ins, no node_modules resolution — and
+ * private/ is 750 www-data, so any caller not running as www-data cannot
+ * traverse it. ww_render_screenshots() above already uses the absolute form.
+ */
 function ww_capture_showcase_local(string $token): bool {
     $base = '/var/www/sites/trywebwiz/public/preview/' . $token;
     if (!is_dir($base . '/v1')) return false;
-    $url = 'file:///var/www/sites/trywebwiz/public/preview/' . $token . '/v1/index.html';
-    $out = $base . '/showcase.jpg';
-    $cmd = 'export HOME=/tmp/crhome; mkdir -p /tmp/crhome; cd /var/www/sites/trywebwiz/private/qa-tools && timeout 35 node showcase.js ' . escapeshellarg($url) . ' ' . escapeshellarg($out) . ' 2>&1';
+    $script = '/var/www/sites/trywebwiz/private/qa-tools/showcase.js';
+    if (!is_readable($script)) {
+        // Almost always "wrong user": private/ is 750 www-data.
+        echo "[showcase] local capture unavailable: cannot read {$script} as uid " . getmyuid() . "\n";
+        return false;
+    }
+    $url  = 'file:///var/www/sites/trywebwiz/public/preview/' . $token . '/v1/index.html';
+    $out  = $base . '/showcase.jpg';
+    $node = trim((string)@shell_exec('command -v node')) ?: '/usr/bin/node';
+    $cmd  = 'timeout 35 ' . escapeshellarg($node) . ' ' . escapeshellarg($script) . ' '
+          . escapeshellarg($url) . ' ' . escapeshellarg($out) . ' 2>&1';
+    $o = []; $rc = 0;
     @exec($cmd, $o, $rc);
-    return is_file($out) && filesize($out) > 1500;
+    $ok = is_file($out) && filesize($out) > 1500;
+    if (!$ok) echo "[showcase] local capture rc={$rc}: " . substr(trim(implode(' ', $o)), 0, 200) . "\n";
+    return $ok;
 }
 
 function ww_capture_showcase(string $token): bool {
