@@ -466,7 +466,13 @@ function ww_of(?array $OF, string $k, string $default): string {
   .loading-mascot{width:196px;height:196px;margin:0 auto 4px;display:flex;align-items:center;justify-content:center;background:var(--wizbg);border:3px solid var(--navy);border-radius:50%;overflow:hidden;box-shadow:8px 8px 0 var(--yellow);}
   .loading-mascot img{width:100%;height:100%;object-fit:contain;}
   @keyframes bob{0%,100%{transform:translateY(0);}50%{transform:translateY(-8px);}}
-  .loading-h2{font-family:var(--display);font-weight:900;font-size:clamp(23px,4.4vw,38px);letter-spacing:-0.02em;line-height:1.12;color:var(--navy);margin:12px auto 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:min(92vw,880px);}
+  /* This is DELIBERATELY wider (880px) than its 600px .loading-wrap parent so a long
+     business name stays on one line. That means `margin:auto` CANNOT centre it: when a
+     block is wider than its containing block the margins are over-constrained, so CSS
+     drops margin-left to 0 and the whole headline hangs off to the RIGHT (it sat ~140px
+     right of the mascot, progress bar and card). left:50% + translateX(-50%) centres on
+     the parent's centre regardless of which of the two is wider. */
+  .loading-h2{font-family:var(--display);font-weight:900;font-size:clamp(23px,4.4vw,38px);letter-spacing:-0.02em;line-height:1.12;color:var(--navy);margin:12px 0 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:min(92vw,880px);position:relative;left:50%;transform:translateX(-50%);}
     /* Long business names are allowed to wrap on narrow screens rather than truncate. */
     @media (max-width:560px){.loading-h2{white-space:normal;overflow:visible;}}
   .loading-sub{font-size:16px;color:rgba(18,24,74,0.7);margin:8px 0 0;}
