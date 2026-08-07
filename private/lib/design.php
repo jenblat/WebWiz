@@ -214,6 +214,16 @@ RULES
 - headline: write the real headline text, specific to this business. Never "Ready to Get
   Started", "What Our Clients Say", "Trusted By", "Everything You Need", "Why Choose Us",
   or any interchangeable phrasing that would fit any company.
+- headlines must NOT be abstract virtue nouns. "Uncompromising Integrity", "Unwavering
+  Commitment", "Relentless Excellence", "Built on Trust", "Our Core Values" are banned:
+  they are the house style of generated marketing and say nothing. Write the claim itself
+  in plain words, so a competitor could not use the same line. Weak: "Uncompromising
+  Integrity". Strong: "You see the same numbers the lender sees".
+- NO EM DASHES OR EN DASHES anywhere in any string you return (no "—", no "–", no " -- ").
+  Use commas or full stops. This is the most recognisable AI tell in written copy.
+- No anaphora triads ("Every decision, every communication, every report"), no
+  "not just X, but Y", and none of: elevate, empower, unlock, seamless, robust, leverage,
+  curated, bespoke, journey, "transform your", "next level".
 - signature_detail must be concrete and buildable (a specific treatment, motif or device),
   not an adjective.
 TXT;

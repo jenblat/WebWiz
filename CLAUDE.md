@@ -232,6 +232,36 @@ SDK's handler reports them. The real gap was never fatals, it was **swallowed** 
   (its catch is genuinely non-fatal, qa.json is source of truth), `version.php`,
   `_session.php`, `_email_templates.php`.
 
+### 2026-08-07: copy tells (the em dash, and its friends)
+
+**298 of 300 shipped pages contained an em or en dash.** It is the most recognisable
+"written by AI" signal in body text, and a prompt instruction alone does not hold.
+
+- **`ww_dedash_copy()`** in `worker.php` is the deterministic backstop, called from
+  `ww_polish_html()` so it runs on every shipped page. **Text nodes only:**
+  `<script>`/`<style>` are stashed out first and attributes are never touched, so it
+  cannot corrupt markup, CSS, JS or URLs.
+- It substitutes a **comma, not a full stop**. A comma can never leave a sentence
+  fragment; worst case is a mild comma splice, which reads as normal informal copy. Two
+  special cases: a leading dash (testimonial attribution, "— Jane") is **dropped**, and
+  a dash between digits (9–5, 2020–2024) becomes a **hyphen**.
+- Validated on 200 real generated pages: 1561 dashes to 66, **zero structural drift**
+  (tag counts and script/style bodies byte-identical). All 66 survivors are in
+  attributes (`alt`, the `?l=` proxy label) where nothing is visible and rewriting would
+  risk breaking the URL / cache key.
+- Prompt-side rules added to `build_system_prompt()` ("WRITE LIKE A PERSON") and to the
+  brief in `design.php`: no dashes, no abstract virtue headings ("Uncompromising
+  Integrity", "Built on Trust"), no anaphora triads ("Every decision, every
+  communication..."), no "not just X but Y", a banned-vocabulary list (elevate, empower,
+  unlock, seamless, leverage, curated, bespoke, journey, "next level"...), and vary
+  sentence length.
+- **`batch.php` was shipping RAW model output** — it never called `ww_polish_html()`, so
+  CSV-upload sites missed the current-year copyright, the UTM backlink and the dash
+  strip. Now polished like the other two paths. (jobs has no URL column; the client site
+  comes off the prospect row, with the scrape as fallback.)
+- **Existing previews were deliberately NOT backfilled** (owner's call, 2026-08-07). All
+  ~958 preview dirs stay live at `/try/?t=<token>` with their original copy.
+
 ## Known issues not fixed
 - Worker log shows `sh: 1: cd: can't cd to .../private/qa-tools` for every
   showcase capture, so `ww_generate_missing_showcases()` never succeeds and

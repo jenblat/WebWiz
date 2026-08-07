@@ -280,11 +280,62 @@ function extract_html(string $text): ?string {
 }
 
 /**
+ * Strip em/en dashes from VISIBLE COPY. The em dash is the single most recognisable
+ * "written by AI" tell in body text, and telling the model not to use one is not
+ * reliable enough on its own — this is the deterministic backstop that runs on every
+ * shipped page.
+ *
+ * Only text nodes are touched. <script> and <style> are cut out first (a dash inside
+ * CSS content:"—" or a JS string must survive), and attributes are left alone, so this
+ * can never corrupt markup, selectors or URLs.
+ *
+ * Replacement is a COMMA, not a period. A comma can never turn the second half into a
+ * sentence fragment; the worst case is a mild comma splice, which reads as ordinary
+ * informal marketing copy. A period would read better for two independent clauses and
+ * badly for everything else, and we cannot tell which is which without parsing.
+ */
+function ww_dedash_copy(string $html): string {
+    // Protect script/style blocks by swapping them for placeholders.
+    $stash = [];
+    $html = preg_replace_callback('~<(script|style)\b[^>]*>.*?</\1>~is', function ($m) use (&$stash) {
+        $k = "\x01WWSTASH" . count($stash) . "\x02";
+        $stash[$k] = $m[0];
+        return $k;
+    }, $html);
+
+    $html = preg_replace_callback('~>([^<]+)<~', function ($m) {
+        $t = $m[1];
+        if (strpos($t, '&') !== false) {
+            $t = str_ireplace(['&mdash;', '&ndash;', '&#8212;', '&#8211;', '&#x2014;', '&#x2013;'], '—', $t);
+        }
+        if (strpos($t, '—') === false && strpos($t, '–') === false && strpos($t, '--') === false) return $m[0];
+
+        // Testimonial/quote attribution ("— Jane Smith"): drop the dash, never comma it.
+        $t = preg_replace('~^(\s*)[—–]\s*~u', '$1', $t);
+        // Numeric ranges (9–5, 2020–2024) read as a plain hyphen.
+        $t = preg_replace('~(\d)\s*[—–]\s*(\d)~u', '$1-$2', $t);
+        // Everything else: dash acting as punctuation, spaced or not, incl. ASCII "--".
+        $t = preg_replace('~\s*(?:—|–|--)\s*~u', ', ', $t);
+        // Tidy the seams the substitution can create.
+        $t = preg_replace('~\s+,~u', ',', $t);
+        $t = preg_replace('~,\s*,~u', ',', $t);
+        $t = preg_replace('~,\s*([.!?;:])~u', '$1', $t);
+        $t = preg_replace('~([.!?;:])\s*,~u', '$1', $t);
+        $t = preg_replace('~,\s*$~u', '', $t);
+        return '>' . $t . '<';
+    }, $html);
+
+    return $stash ? strtr($html, $stash) : $html;
+}
+
+/**
  * Post-generation polish applied to every shipped variant:
  *  - force the footer copyright year to the CURRENT year (never a stale/hardcoded one)
  *  - add UTM tracking to the "Designed by WebWiz" backlink so WebWiz can attribute traffic.
+ *  - strip em/en dashes from visible copy (see ww_dedash_copy)
  */
 function ww_polish_html(string $html, string $clientUrl = ''): string {
+    $html = ww_dedash_copy($html);
     $year = date('Y');
     $html = preg_replace('/(©|&copy;|Copyright)\s*20\d{2}/iu', '${1} ' . $year, $html);
     $u = (strpos($clientUrl, '://') === false && $clientUrl !== '') ? 'https://' . $clientUrl : $clientUrl;
@@ -348,6 +399,16 @@ The single worst outcome is a page that could be swapped onto another company's 
 - Layout: the default hero -> 3-icon-feature-row -> stats strip -> testimonial carousel -> full-width CTA band sequence.
 - Decoration by reflex: a blurred radial-gradient blob behind the hero, a generic logo marquee, uniform drop-shadowed rounded cards in a 3-up grid. Use these ONLY if the assigned ornament language actually calls for them.
 - Filler stats you cannot source. Never invent "500+ Projects" or "20 Years" unless that number appears in the source data.
+
+WRITE LIKE A PERSON, NOT LIKE A MODEL
+Prose gives away a generated page faster than the layout does. These are hard rules:
+- NO EM DASHES OR EN DASHES. Not one, anywhere in visible copy. No "—", no "–", no " -- ". Use a comma, a full stop, or brackets. This is the single most recognisable tell there is, and it is checked.
+- No abstract virtue headings. "Uncompromising Integrity", "Unwavering Commitment", "Relentless Excellence", "Built on Trust", "Our Core Values" say nothing. Name the actual thing the business does or promises: "We send the same report to you and the lender", "Owners see the maintenance invoices".
+- No anaphora triads. "Every decision, every communication, every report..." and "From X to Y to Z..." are pure model cadence. Say it once, concretely.
+- No "not just X, but Y" / "we don't just X, we Y" / "it's more than X, it's Y".
+- Banned vocabulary: elevate, empower, unlock, seamless, robust, leverage, delve, realm, landscape, tapestry, testament, journey, curated, bespoke, holistic, synergy, "transform your", "take your X to the next level", "in today's fast-paced world", "at the end of the day".
+- Vary sentence length. A three-word sentence next to a twenty-word one reads human; every sentence landing at 12-18 words reads generated.
+- Prefer concrete nouns and real specifics from the source data (place names, services, numbers, hours, neighbourhoods) over adjectives. One true detail beats three confident adjectives.
 
 FORBIDDEN
 - Chatbots, popups, cookie banners. Fake testimonials. Lorem Ipsum. External JS frameworks. Links to URLs not in source data. "Sign In" on non-SaaS sites. Any opacity:0 reveal without CSS-only animation. Empty sections. Cropped faces/bodies. Reusing an image URL.

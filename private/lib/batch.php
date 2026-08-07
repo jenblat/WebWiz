@@ -173,6 +173,13 @@ function ww_poll_batches(PDO $db): void {
             ksort($htmls);
             foreach ($htmls as $v => $html) {
                 $html = ww_apply_upscale($html, $jid);
+                // This path shipped RAW model output: it never called ww_polish_html(), so
+                // CSV-upload sites missed the current-year copyright fix, the UTM backlink
+                // and (now) the em-dash strip that both other paths apply.
+                // jobs has no URL column; the client site lives on the prospect row (same
+                // source worker.php uses), with the scrape as a fallback. Passing anything
+                // else here would put a mangled utm_source on the backlink.
+                $html = ww_polish_html($html, (string)($pros['current_url'] ?? $scrape['url'] ?? ''));
                 $htmls[$v] = $html;
                 $dir = $public_dir . '/v' . $v;
                 if (!is_dir($dir)) @mkdir($dir, 0755, true);
