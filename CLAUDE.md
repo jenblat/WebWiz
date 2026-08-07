@@ -146,6 +146,46 @@ and production visual QA (82/100, no critical issues), emitted `<header>`/
 `<main>`, zero gradient blobs, no banned phrases. **Cost is now ~4 Anthropic
 calls per job instead of 3** — still far under the $1.50 `job_max_cost_usd` cap.
 
+## 2026-08-07: the de-templating had missed the live funnel
+
+**`build_user_prompt()`'s `$dna`/`$brief` params default to `[]`, so a caller that
+omits them gets an EMPTY art direction and no error.** Only `private/worker.php`
+was updated on 08-06. The two callers that actually serve traffic were not, so
+the live path lost the old house style *and* gained no replacement.
+
+> **The worker queue is NOT the live path.** `worker.log` says "no jobs" every
+> minute and `gen_started` is 0 in every health window. `/try/` posts to
+> **`/api/magic.php?async=1`**, which generates INLINE in the background
+> (`fastcgi_finish_request()` + `set_time_limit(240)`) and never touches the
+> queue. CSV uploads go through `private/lib/batch.php`. Change generation
+> behaviour in **all three** or it does not ship.
+
+- `magic.php` now computes a brief + per-variant DNA seeded from the token, and
+  its temperature matches worker.php (1.0 main / 0.9 retries).
+- `batch.php` gets **DNA only, no brief** — that loop covers every row of an
+  upload inside the worker's 270s budget and the brief is a blocking ~10s call.
+- Measured on the real endpoint: token back in 0.11s, build done in **168s**,
+  output Yeseva One / Rubik with `<header>`/`<main>`. Healthy budget: 168s vs a
+  240s `set_time_limit` and a ~5min client poll ceiling.
+
+### Sentry: three silent customer-visible failures now report
+- **`edit.php` had none at all.** Its `ee_alert()` sends an email throttled to
+  **one per 10 minutes globally**, so an editor outage = one mail and nothing to
+  trend — while the UI told the user "we've been alerted". Now also
+  `ww_sentry_alert()`. `reason` must stay a **bounded classifier**:
+  `ww_sentry_alert()` fingerprints on `(component, reason)`, so passing a raw
+  message shatters it into one issue per event.
+- **`gen_status.php` answered `building` forever** when generation died without
+  writing a failure marker — the infinite spinner. Now fails + reports once past
+  **420s** (not 300s: healthy is ~168s but retries + QA can exceed the 300s the
+  client polls for), deduped with a `stalled` marker file.
+- **`checkout.php`** (legacy $500 route) 500/502'd with `error_log` only.
+  `try_checkout.php` / `offer_checkout.php` already reported; this one did not.
+- Both new reporters `require` `webwiz_lib.php` **lazily, inside the failure
+  branch**, so the 3s poll loop and the money path keep their bootstrap.
+- Still uninstrumented (unswept): `brief.php`, `upload.php`, `wizzy.php`,
+  `genimg.php`, `event.php`, `qa.php`, `track.php`, `places_search.php`, others.
+
 ## Known issues not fixed
 - Worker log shows `sh: 1: cd: can't cd to .../private/qa-tools` for every
   showcase capture, so `ww_generate_missing_showcases()` never succeeds and
