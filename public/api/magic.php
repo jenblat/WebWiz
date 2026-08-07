@@ -780,22 +780,36 @@ try {
                     . "and specifics (years in business, neighborhoods, signature offerings) in the hero and copy.";
     }
 
+    // Per-variant design DNA + one client art-direction brief (private/lib/design.php).
+    // THIS PATH IS THE LIVE /try/ FUNNEL - it does not go through the worker queue, so it
+    // needs its own DNA/brief exactly like private/worker.php. build_user_prompt() defaults
+    // $dna and $brief to [], which means omitting them silently produces an EMPTY art
+    // direction, and the model falls straight back to its house style (Manrope/Fraunces).
+    $ww_brief = ww_art_direction_brief($scrape, $biz, $industry, null);
+    $ww_brief_cost = (float)($ww_brief['_cost_usd'] ?? 0);
+    ml_debug('art direction brief: ' . ($ww_brief
+        ? count($ww_brief['sections'] ?? []) . ' sections, ' . count($ww_brief['palette'] ?? []) . ' palette'
+        : 'unavailable (proceeding without)'));
+
     $reqs = [];
+    $ww_dna = [];
     for ($i = 1; $i <= $v; $i++) {
-        $user_content = build_user_prompt($scrape, $biz, $industry, $i) . $desc_block;
+        $ww_dna[$i] = ww_design_dna((string)$token, $i);
+        $user_content = build_user_prompt($scrape, $biz, $industry, $i, $ww_dna[$i], $ww_brief) . $desc_block;
         $reqs[$i] = ['system' => $system, 'messages' => [['role' => 'user', 'content' => $user_content]]];
+        ml_debug("v{$i} type: {$ww_dna[$i]['type']['display']} / {$ww_dna[$i]['type']['body']}");
     }
 
     ml_debug('anthropic begin');
     $tA = microtime(true);
-    $res = anthropic_multi('claude-sonnet-4-6', $reqs, 14000, 0.7, null, ['</html>']);
+    $res = anthropic_multi('claude-sonnet-4-6', $reqs, 14000, 1.0, null, ['</html>']);
     $gen_dt = microtime(true)-$tA;
     ml_debug(sprintf('anthropic done %.2fs', $gen_dt));
     ml_time('PHASE_2_sonnet_gen', $gen_dt, ['variants' => $v, 'industry' => $detected_industry_slug]);
     // Track the user content of the first variant for later QA regen
     $first_user_content = $reqs[1]['messages'][0]['content'] ?? '';
 
-    $htmls = []; $cost = 0.0; $rejected = [];
+    $htmls = []; $cost = $ww_brief_cost; $rejected = [];
     foreach ($reqs as $i => $_) {
         $cost += (float)($res[$i]['cost_usd'] ?? 0);
         $cand = finalize_html($res[$i]['text'] ?? '');
@@ -825,7 +839,7 @@ try {
         // Retry once -- most empty results are a transient API timeout/rate-limit.
         ml_debug('no usable site on first pass -- retrying generation once');
         try {
-            $res2 = anthropic_multi('claude-sonnet-4-6', $reqs, 14000, 0.7, null, ['</html>']);
+            $res2 = anthropic_multi('claude-sonnet-4-6', $reqs, 14000, 0.9, null, ['</html>']);
             foreach ($res2 as $ri => $_) {
                 $cost += (float)($res2[$ri]['cost_usd'] ?? 0);
                 $rc = finalize_html($res2[$ri]['text'] ?? '');
@@ -1088,7 +1102,7 @@ try {
                 $tRegen = microtime(true);
                 $fb = ww_qa_feedback($verdict['issues'] ?? []);
                 $rreqs = [1 => ['system' => $system, 'messages' => [['role' => 'user', 'content' => $first_user_content . "\n\n" . $fb]]]];
-                $rres = anthropic_multi('claude-sonnet-4-6', $rreqs, 14000, 0.5, null, ['</html>']);
+                $rres = anthropic_multi('claude-sonnet-4-6', $rreqs, 14000, 0.9, null, ['</html>']);
                 $rcand = finalize_html($rres[1]['text'] ?? '');
                 if ($rcand && quality_gate($rcand)['ok']) {
                     file_put_contents($dir . '/v1/index.html', ww_polish_html($rcand, $website));

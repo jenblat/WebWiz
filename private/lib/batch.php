@@ -67,7 +67,15 @@ function ww_build_batches(PDO $db): void {
         $usable = array_values(array_filter($scrape['images'] ?? [], fn($i) => empty($i['is_logo']) && empty($i['is_thumb']) && empty($i['is_team_card'])));
         $system = build_system_prompt($industry, count($usable));
         for ($v = 1; $v <= 3; $v++) {
-            $requests[ww_cid($jid, $v, 1)] = ['system'=>$system, 'messages'=>[['role'=>'user','content'=>build_user_prompt($scrape, $biz, $industry, $v)]]];
+            // Design DNA only, no art-direction brief: this loop runs over EVERY row of a
+            // CSV upload inside the worker's 270s budget, and the brief is a blocking API
+            // call (~10s each), so briefing 100 prospects here would blow the budget.
+            // ww_design_dna() is pure local computation, so batch uploads still get the
+            // varied type/layout/colour that kills the monoculture. Omitting the argument
+            // entirely is NOT an option - $dna defaults to [] and the art direction silently
+            // comes out empty, which is how this path shipped the old house style.
+            $dna = ww_design_dna((string)$row['token'], $v);
+            $requests[ww_cid($jid, $v, 1)] = ['system'=>$system, 'messages'=>[['role'=>'user','content'=>build_user_prompt($scrape, $biz, $industry, $v, $dna)]]];
         }
     }
     ww_blog("upload #$uid: submitting ".count($requests)." requests (".count($scraped)." sites)");
@@ -132,9 +140,11 @@ function ww_poll_batches(PDO $db): void {
 
             if ($failed && $maxRound < 2) {
                 foreach (array_keys($failed) as $v) {
+                    // Same DNA as round 1 (deterministic from the token), so the retry keeps
+                    // the variant's assigned art direction instead of reverting to no direction.
                     $rebatch[ww_cid($jid, $v, 2)] = ['system'=>$system, 'messages'=>[['role'=>'user',
-                        'content'=>build_user_prompt($scrape, $biz, $industry, $v) .
-                        "\n\nYour previous attempt failed the quality gate. Output ONLY a complete HTML document: include <h1>, <footer>, 3+ <section> tags and 4+ /api/img.php images, and END with </html>."]]];
+                        'content'=>build_user_prompt($scrape, $biz, $industry, $v, ww_design_dna((string)$row['token'], $v)) .
+                        "\n\nYour previous attempt failed the quality gate. Output ONLY a complete HTML document: include <h1>, <footer>, 4+ <section>/<article> elements and 4+ /api/img.php images, and END with </html>."]]];
                 }
             }
             $finalize[] = ['row'=>$row, 'htmls'=>$htmls, 'cost'=>$cost];
