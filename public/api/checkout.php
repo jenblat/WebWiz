@@ -4,11 +4,32 @@
 
 declare(strict_types=1);
 
+/**
+ * Report a checkout dead end to Sentry.
+ *
+ * Every failure below previously went to error_log() only, so a visitor who clicked buy
+ * and got a 502 left no trace anywhere we look. Sibling routes (try_checkout.php,
+ * offer_checkout.php) already report; this legacy $500 route was the one that did not.
+ *
+ * webwiz_lib.php is required LAZILY, inside the failure branches only: this is the money
+ * path, and monitoring must not add a dependency - or a new failure mode - to a checkout
+ * that is currently working.
+ */
+function ww_checkout_alert(string $reason, array $ctx = [], string $level = 'fatal'): void {
+    try {
+        require_once '/var/www/sites/trywebwiz/private/webwiz_lib.php';
+        if (function_exists('ww_sentry_alert')) {
+            ww_sentry_alert('WebWiz checkout dead end', ['component' => 'checkout', 'reason' => $reason] + $ctx, $level);
+        }
+    } catch (Throwable $e) { /* never let monitoring break checkout */ }
+}
+
 // ---------- Load secrets ----------
 $secrets_path = __DIR__ . '/../../secrets.php'; // /var/www/sites/trywebwiz/secrets.php
 if (!file_exists($secrets_path)) {
     http_response_code(500);
     error_log('[webwiz checkout] secrets.php missing at ' . $secrets_path);
+    ww_checkout_alert('checkout_secrets_missing', ['path' => $secrets_path]);
     exit('Server misconfigured. Email hello@trywebwiz.com.');
 }
 $secrets = require $secrets_path;
@@ -165,6 +186,7 @@ curl_close($ch);
 
 if ($resp === false) {
     error_log('[webwiz checkout] curl error: ' . $err);
+    ww_checkout_alert('checkout_stripe_unreachable', ['curl_error' => substr($err, 0, 200)]);
     http_response_code(502);
     exit('Could not reach payment processor. Email hello@trywebwiz.com.');
 }
@@ -172,6 +194,11 @@ if ($resp === false) {
 $data = json_decode($resp, true);
 if ($http_code >= 400 || empty($data['url'])) {
     error_log('[webwiz checkout] stripe ' . $http_code . ' resp: ' . substr($resp, 0, 2000));
+    ww_checkout_alert('checkout_stripe_rejected', [
+        'http_status'   => $http_code,
+        'stripe_error'  => substr((string)($data['error']['message'] ?? ''), 0, 200),
+        'stripe_code'   => (string)($data['error']['code'] ?? ''),
+    ], 'error');
     http_response_code(502);
     header('Content-Type: text/html; charset=utf-8');
     echo '<!doctype html><meta charset=utf-8><title>Payment error</title>';
