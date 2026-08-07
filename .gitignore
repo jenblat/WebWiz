@@ -41,3 +41,9 @@ private/RELEASE
 
 # Local pre-change backups (may contain a copy of secrets.php). NEVER commit.
 backups/
+
+# Claude Code agent worktrees: a full nested checkout (808 files / 15M when this
+# was added). Never served, and one `git add -A` away from being committed.
+# .claude/settings.json IS tracked on purpose - it carries the shared permission
+# allow-list, including fix-webwiz-perms.sh (see gotcha 0 in CLAUDE.md).
+.claude/worktrees/

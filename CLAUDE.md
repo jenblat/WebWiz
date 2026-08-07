@@ -15,13 +15,25 @@ Repo `github.com/jenblat/WebWiz`, branch `main`. Shared lib `private/webwiz_lib.
    checker cannot report it because `health_check.php` dies on line 9 requiring the very
    file that broke (its try/catch starts *after* the require). It took the site down for
    ~6 minutes on 2026-08-07.
-   **After ANY edit under `private/` or `public/`, run:**
+   **There is already a script for this. Use it — do not hand-roll a chown:**
    ```
-   find private public -type f ! -user www-data -print0 | xargs -0 -r chown www-data:www-data
-   chmod 640 private/webwiz_lib.php
+   /opt/seedsite/scripts/fix-webwiz-perms.sh
    ```
+   (`--check` reports drift and exits 1, for cron.) It is **ownership-only and never
+   chmods**, which is correct: www-data reads a 640 file fine once it owns it, and
+   blanket-chmodding would loosen files that are tight on purpose. It covers
+   `private public data logs` and deliberately skips `.git`, `.claude` and `backups/`.
+   It is already in `.claude/settings.json` allow-list, so it runs without a prompt.
+
+   This has now caused **two** outages: 2026-08-06 (`private/lib/anthropic.php`, which
+   took `/api/wizzy.php`, `/api/edit.php`, `/api/upload.php` and `worker.php` down) and
+   2026-08-07 (`private/webwiz_lib.php`, ~6 min, whole site).
+
    Verify with `curl -s https://trywebwiz.com/api/db_ping.php` → must be
    `{"db":"ok","rw":true,...}` and HTTP 200, and `/api/version.php` → HTTP 200.
+
+   **Note `git` also runs as root here**, so ownership drifts after a commit too, not
+   just after an edit. Run the script last, after pushing.
 
 1. **`git status` silently reports nothing** until you run
    `git config --global --add safe.directory` for **both** `/var/www/sites/trywebwiz`
