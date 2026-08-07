@@ -6,6 +6,20 @@ declare(strict_types=1);
 
 define('WW_META_PIXEL_ID', '1974530180093513');
 
+
+/**
+ * Lazy Sentry reporter. This is a library included by request paths that may not have loaded webwiz_lib.
+ * webwiz_lib is required only inside a failure branch, and ww_report() throttles to one
+ * event per reason per 300s so a broken upstream cannot flood Sentry or stall
+ * requests on its synchronous flush().
+ */
+function meta_report(string $reason, string $msg, array $ctx = [], string $level = 'error'): void {
+    try {
+        require_once '/var/www/sites/trywebwiz/private/webwiz_lib.php';
+        if (function_exists('ww_report')) ww_report('meta', $reason, $msg, $ctx, $level, null, 300);
+    } catch (Throwable $e) { /* monitoring must never break the response */ }
+}
+
 function ww_meta_secret(string $k): string {
     static $cache = null;
     if ($cache === null) {
@@ -66,6 +80,8 @@ function ww_meta_send_event(
 ): bool {
     $token = ww_meta_token();
     if ($token === '') {
+        meta_report('meta_capi_token_missing', 'WebWiz Meta CAPI token not configured',
+            ['event_type' => $event_name], 'error');
         error_log('[meta capi] skipped ' . $event_name . ': META_CAPI_ACCESS_TOKEN not set in secrets.php');
         return false;
     }
@@ -113,6 +129,10 @@ function ww_meta_send_event(
     );
 
     if ($http >= 300 || $resp === false) {
+        // Silent CAPI failure = ad optimisation and attribution quietly degrade with no
+        // visible symptom anywhere in the product. Exactly the class this sweep is for.
+        meta_report('meta_capi_rejected', 'WebWiz Meta CAPI event rejected',
+            ['event_type' => $event_name, 'http_status' => $http], 'error');
         error_log('[meta capi] ' . $event_name . ' http=' . $http . ' resp=' . substr((string)$resp, 0, 400));
         return false;
     }

@@ -10,6 +10,20 @@
 
 declare(strict_types=1);
 
+
+/**
+ * Lazy Sentry reporter. This file has no webwiz_lib bootstrap: it is hit per generated image.
+ * webwiz_lib is required only inside a failure branch, and ww_report() throttles to one
+ * event per reason per 300s so a broken upstream cannot flood Sentry or stall
+ * requests on its synchronous flush().
+ */
+function genimg_report(string $reason, string $msg, array $ctx = [], string $level = 'error'): void {
+    try {
+        require_once '/var/www/sites/trywebwiz/private/webwiz_lib.php';
+        if (function_exists('ww_report')) ww_report('genimg', $reason, $msg, $ctx, $level, null, 300);
+    } catch (Throwable $e) { /* monitoring must never break the response */ }
+}
+
 const GENIMG_CACHE_DIR = '/var/www/sites/trywebwiz/data/imgcache';
 const GENIMG_MODEL     = 'imagen-4.0-fast-generate-001';
 const GENIMG_TIMEOUT   = 25; // seconds — Imagen Fast usually returns in 3-6s
@@ -83,6 +97,7 @@ $hits[] = time();
 $secrets = require '/var/www/sites/trywebwiz/secrets.php';
 $gemini_key = (string)($secrets['GEMINI_API_KEY'] ?? '');
 if ($gemini_key === '') {
+    genimg_report('genimg_key_missing', 'WebWiz image generation key not configured', [], 'error');
     error_log('[genimg] GEMINI_API_KEY missing');
     genimg_placeholder($label ?: $prompt);
 }
@@ -118,6 +133,8 @@ $elapsed = round(microtime(true) - $t0, 2);
 );
 
 if ($resp === false || $http >= 300) {
+    genimg_report('genimg_upstream_error', 'WebWiz image generation upstream failed',
+        ['http_status' => $http], 'error');
     error_log('[genimg] http=' . $http . ' resp=' . substr((string)$resp, 0, 300));
     genimg_placeholder($label ?: $prompt);
 }
@@ -125,12 +142,15 @@ if ($resp === false || $http >= 300) {
 $j = json_decode((string)$resp, true);
 $b64 = $j['predictions'][0]['bytesBase64Encoded'] ?? '';
 if (!is_string($b64) || $b64 === '') {
+    genimg_report('genimg_no_image_in_response', 'WebWiz image generation returned no image', [], 'error');
     error_log('[genimg] no image in response: ' . substr((string)$resp, 0, 300));
     genimg_placeholder($label ?: $prompt);
 }
 
 $bytes = base64_decode($b64, true);
 if (!is_string($bytes) || strlen($bytes) < 2000) {
+    genimg_report('genimg_image_too_small', 'WebWiz image generation returned a truncated image',
+        ['bytes' => is_string($bytes) ? strlen($bytes) : 0], 'warning');
     error_log('[genimg] decoded image too small');
     genimg_placeholder($label ?: $prompt);
 }

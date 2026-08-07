@@ -348,17 +348,17 @@ function ww_sentry_init(): void {
             'send_default_pii'   => false,
         ]);
 
-        // Report fatals that PHP would otherwise only write to the error log.
-        register_shutdown_function(static function (): void {
-            $e = error_get_last();
-            if ($e !== null && in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
-                \Sentry\captureMessage(
-                    sprintf('PHP fatal: %s in %s:%d', $e['message'], $e['file'], $e['line']),
-                    \Sentry\Severity::fatal()
-                );
-                \Sentry\flush(2);
-            }
-        });
+        // NO custom shutdown fatal handler here. \Sentry\init() already installs the SDK's
+        // own ErrorHandler, which reports fatals AND uncaught exceptions with a real stack
+        // trace. A hand-rolled register_shutdown_function() on top of it did not add
+        // coverage - it duplicated it: one uncaught exception produced TWO issues, a
+        // Sentry\Exception\FatalErrorException (with the trace) and a bare "PHP fatal: ..."
+        // captureMessage (without one). That doubled the event count for every fatal, burned
+        // quota, and split one incident across two issues during triage.
+        //
+        // Verified 2026-08-07: a single uncaught RuntimeException raised both WEBWIZ-9 and
+        // WEBWIZ-Z. If you are tempted to re-add a shutdown hook, confirm first that the SDK
+        // is not already covering the case.
     } catch (\Throwable $t) {
         // Never let monitoring take the site down.
     }
@@ -437,6 +437,55 @@ function ww_sentry_alert(string $message, array $context = [], string $level = '
     } catch (\Throwable $t) {
         // Never let monitoring take the site down. This is the whole reason the
         // original ww_sentry_init() is guarded the same way.
+    }
+}
+
+/**
+ * Throttled front door to ww_sentry_alert(). Use this for ROUTINE reporting; call
+ * ww_sentry_alert() directly only where every single occurrence must be sent.
+ *
+ * Why the throttle is not optional. ww_sentry_alert() ends in a synchronous
+ * \Sentry\flush(2) — a blocking network round trip, up to 2s, on the request being
+ * watched. Endpoints like img.php and track.php serve every image and every email open
+ * on the site, so a broken upstream would mean (a) tens of thousands of events burning
+ * the Sentry quota and (b) every one of those requests stalling on a flush. Monitoring
+ * would become the outage. One event per (component, reason) per window fixes both.
+ *
+ * Nothing is lost by suppressing: Sentry groups on the same (component, reason)
+ * fingerprint anyway, so repeats only ever incremented a counter. That counter is
+ * preserved here and sent as `suppressed_since_last` on the next event that goes out,
+ * which is strictly more informative than the raw flood.
+ *
+ * Pass $throttle_s = 0 on money paths, where every individual occurrence matters.
+ */
+function ww_report(
+    string $component,
+    string $reason,
+    string $message,
+    array $ctx = [],
+    string $level = 'error',
+    ?Throwable $ex = null,
+    int $throttle_s = 300
+): void {
+    try {
+        if ($throttle_s > 0) {
+            $key   = preg_replace('/[^A-Za-z0-9_]+/', '_', $component . '__' . $reason);
+            $file  = sys_get_temp_dir() . '/ww_rep_' . substr($key, 0, 80);
+            $now   = time();
+            $state = @json_decode((string)@file_get_contents($file), true);
+            if (is_array($state) && ($now - (int)($state['t'] ?? 0)) < $throttle_s) {
+                // Inside the window: count it and stay silent.
+                $state['n'] = (int)($state['n'] ?? 0) + 1;
+                @file_put_contents($file, json_encode($state), LOCK_EX);
+                return;
+            }
+            $suppressed = is_array($state) ? (int)($state['n'] ?? 0) : 0;
+            @file_put_contents($file, json_encode(['t' => $now, 'n' => 0]), LOCK_EX);
+            if ($suppressed > 0) $ctx['suppressed_since_last'] = $suppressed;
+        }
+        ww_sentry_alert($message, ['component' => $component, 'reason' => $reason] + $ctx, $level, $ex);
+    } catch (\Throwable $t) {
+        // Monitoring must never break the request it watches.
     }
 }
 

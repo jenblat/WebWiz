@@ -33,6 +33,13 @@ if ($ok) {
     }
 }
 
+if (!$ok) {
+    // Someone clicked unsubscribe and it did not work - bad signature, or a contact row that
+    // no longer exists. Throttled because scanners and bots hit these links constantly.
+    ww_report('unsubscribe', 'unsubscribe_rejected', 'WebWiz unsubscribe link failed to verify',
+        ['contact_id' => $cid, 'have_sig' => $sig !== '' ? 1 : 0], 'warning');
+}
+
 http_response_code($ok ? 200 : 400);
 header('Content-Type: text/html; charset=utf-8');
 ?>

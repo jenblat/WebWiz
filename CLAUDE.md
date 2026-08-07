@@ -6,6 +6,23 @@ Repo `github.com/jenblat/WebWiz`, branch `main`. Shared lib `private/webwiz_lib.
 
 ## Gotchas that will waste your time
 
+0. **EDITING A FILE AS root CAN TAKE THE SITE DOWN.** Tools that write as root leave the
+   file `root:root`. Most files are 644 so they still serve — but
+   **`private/webwiz_lib.php` is mode 640**, so the moment it becomes root-owned,
+   www-data cannot read it and **every endpoint that requires it 500s**. That is
+   effectively the whole site.
+   It is silent: nothing in the repo changes, `git status` is clean, and the health
+   checker cannot report it because `health_check.php` dies on line 9 requiring the very
+   file that broke (its try/catch starts *after* the require). It took the site down for
+   ~6 minutes on 2026-08-07.
+   **After ANY edit under `private/` or `public/`, run:**
+   ```
+   find private public -type f ! -user www-data -print0 | xargs -0 -r chown www-data:www-data
+   chmod 640 private/webwiz_lib.php
+   ```
+   Verify with `curl -s https://trywebwiz.com/api/db_ping.php` → must be
+   `{"db":"ok","rw":true,...}` and HTTP 200, and `/api/version.php` → HTTP 200.
+
 1. **`git status` silently reports nothing** until you run
    `git config --global --add safe.directory` for **both** `/var/www/sites/trywebwiz`
    **and** `/mnt/sites-data/sites/trywebwiz`. The volume is owned by a numeric uid
@@ -185,6 +202,35 @@ the live path lost the old house style *and* gained no replacement.
   branch**, so the 3s poll loop and the money path keep their bootstrap.
 - Still uninstrumented (unswept): `brief.php`, `upload.php`, `wizzy.php`,
   `genimg.php`, `event.php`, `qa.php`, `track.php`, `places_search.php`, others.
+
+### 2026-08-07 (later): full Sentry sweep of the API surface
+
+**Uncaught exceptions were ALREADY covered** in any file requiring `webwiz_lib.php` — the
+SDK's handler reports them. The real gap was never fatals, it was **swallowed** errors:
+`catch (Throwable $e) {}` and `error_log()`-only branches. Those are what got instrumented.
+
+- **Removed a duplicate fatal handler.** `ww_sentry_init()` had its own
+  `register_shutdown_function()` on top of the one `\Sentry\init()` installs, so every
+  fatal produced **two** issues (one with a stack trace, one without). Halves fatal event
+  volume; coverage verified unchanged.
+- **New `ww_report()`** in `webwiz_lib.php` is the throttled front door — use it for
+  routine reporting; call `ww_sentry_alert()` directly only when every occurrence must
+  send. **The throttle is not optional:** `ww_sentry_alert()` ends in a synchronous
+  `\Sentry\flush(2)`, so on `img.php` (every image on every page) a broken upstream would
+  both burn quota and stall requests — monitoring would become the outage. Suppressed
+  repeats are counted into `suppressed_since_last`, and Sentry groups them anyway.
+  Pass `$throttle_s = 0` on money paths (used for brief/offer_lead).
+- `reason` **must be a bounded classifier** — fingerprint is `(component, reason)`, so raw
+  messages shatter one incident into thousands of issues.
+- Instrumented: `brief`, `offer_lead`, `upload`, `drain_pending`, `wizzy`, `event`,
+  `places_search`, `unsubscribe`, `img`, `genimg`, `_meta` (CAPI), plus the earlier
+  `edit`, `gen_status`, `checkout`.
+- `img.php` / `genimg.php` / `_meta.php` have **no `webwiz_lib` on the hot path by
+  design** — they use a local `*_report()` shim that requires the lib only inside a
+  failure branch.
+- Deliberately skipped: `capi.php` (400s are malformed client beacons = noise), `qa.php`
+  (its catch is genuinely non-fatal, qa.json is source of truth), `version.php`,
+  `_session.php`, `_email_templates.php`.
 
 ## Known issues not fixed
 - Worker log shows `sh: 1: cd: can't cd to .../private/qa-tools` for every

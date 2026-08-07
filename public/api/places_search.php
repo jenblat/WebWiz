@@ -26,6 +26,7 @@ $secrets = ww_secrets();
 $key = $secrets['GOOGLE_PLACES_API_KEY'] ?? '';
 if (!$key) {
     http_response_code(503);
+    ww_report('places', 'places_key_missing', 'WebWiz Google Places key not configured', [], 'error');
     exit(json_encode(['error' => 'GOOGLE_PLACES_API_KEY not configured in secrets.php']));
 }
 
@@ -60,6 +61,8 @@ curl_close($ch);
 
 if ($raw === false || $http >= 400) {
     http_response_code(502);
+    ww_report('places', 'places_upstream_error', 'WebWiz Google Places lookup failed',
+        ['http_status' => $http], 'error');
     $err = ['error' => 'Google Places error', 'http' => $http];
     if (is_string($raw) && $raw !== '') {
         $j = json_decode($raw, true);

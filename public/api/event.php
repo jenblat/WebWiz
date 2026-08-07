@@ -63,5 +63,9 @@ try {
     $st->execute([$event, $token ?: null, $session ?: null, $payload, $ip ?: null, $ua ?: null]);
 } catch (Throwable $e) {
     error_log('[try-event] insert failed: ' . $e->getMessage());
+    // Throttled: this is the funnel analytics firehose. A DB problem here would otherwise
+    // emit an event per visitor action and bury everything else in the project.
+    ww_report('event', 'try_event_insert_failed', 'WebWiz funnel analytics insert failed',
+        [], 'warning', $e);
 }
 echo json_encode(['ok' => true]);

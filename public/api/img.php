@@ -7,6 +7,21 @@ $label = trim((string)($_GET['l'] ?? ''));
 const IMG_CACHE_DIR = '/var/www/sites/trywebwiz/data/imgcache';
 const IMG_MAX_W     = 2880;
 
+
+/**
+ * Lazy Sentry reporter. This file has NO webwiz_lib bootstrap on its hot path and that is
+ * deliberate - it is hit for every image on every generated page, so loading the lib (DB
+ * connection + secrets) per request would be a real cost. webwiz_lib is therefore required
+ * only inside a failure branch, and ww_report() throttles to one event per reason per
+ * 900s so a broken upstream cannot flood Sentry or stall requests on its flush().
+ */
+function img_report(string $reason, string $msg, array $ctx = [], string $level = 'error'): void {
+    try {
+        require_once '/var/www/sites/trywebwiz/private/webwiz_lib.php';
+        if (function_exists('ww_report')) ww_report('img', $reason, $msg, $ctx, $level, null, 900);
+    } catch (Throwable $e) { /* monitoring must never break the response */ }
+}
+
 function svg_placeholder(string $label = ''): void {
     $palette = [['#FFF8E7','#12184A'],['#F8EFD3','#12184A'],['#3FCFA8','#12184A'],['#F7C84A','#12184A']];
     $p = $palette[abs(crc32($label)) % count($palette)];
@@ -74,6 +89,15 @@ $http = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 curl_close($ch);
 
 if ($body === false || $http >= 400 || !preg_match('~^image/~i', $content_type) || strlen($body) < 200) {
+    // The visitor now gets the branded placeholder instead of a photo. That is precisely the
+    // "empty_image_box" defect the visual QA rubric treats as an automatic client rejection -
+    // and it happens at SERVE time, long after QA passed the page, so nothing else catches it.
+    img_report('img_upstream_failed', 'WebWiz image proxy fell back to placeholder', [
+        'http_status'  => $http,
+        'content_type' => substr($content_type, 0, 60),
+        'bytes'        => is_string($body) ? strlen($body) : 0,
+        'host'         => (string)parse_url($url, PHP_URL_HOST),
+    ], 'warning');
     svg_placeholder($label);
 }
 

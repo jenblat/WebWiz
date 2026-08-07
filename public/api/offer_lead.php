@@ -92,11 +92,17 @@ try {
                   . '<p style="color:#666;font-size:12px">Lead #' . $lead_id . ' &middot; no site was generated, this needs a human to build it.</p>';
             ww_send_email(['email' => $to, 'name' => 'WebWiz Ops'], 'New offer lead: ' . $business . ' (' . $variant . ')', $html);
         }
-    } catch (Throwable $e) { /* swallow */ }
+    } catch (Throwable $e) {
+        // Lead is stored; the team just has not been told. Same failure shape as brief.php.
+        ww_report('offer_lead', 'offer_lead_notify_email_failed',
+            'WebWiz offer lead saved but ops email failed', ['lead_id' => $lead_id], 'error', $e, 0);
+    }
 
     echo json_encode(['ok' => true, 'id' => $lead_id]);
 
 } catch (Throwable $e) {
     error_log('[offer_lead] ' . $e->getMessage());
+    ww_report('offer_lead', 'offer_lead_save_failed', 'WebWiz offer lead could not be saved',
+        [], 'error', $e, 0);
     ol_fail('Could not save that. Please try again.', 500);
 }

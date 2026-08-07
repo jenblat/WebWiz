@@ -74,6 +74,9 @@ try {
     $brief_id = (int)$db->lastInsertId();
 } catch (Throwable $e) {
     error_log('[brief] save failed: ' . $e->getMessage());
+    // Throttle 0: this is a visitor asking for a human designer. Every lost one matters.
+    ww_report('brief', 'brief_save_failed', 'WebWiz design brief could not be saved',
+        ['token' => $token], 'error', $e, 0);
     echo json_encode(['ok'=>false,'error'=>'Could not save that. Try again?']); exit;
 }
 
@@ -97,6 +100,11 @@ try {
               . '<p style="color:#666;font-size:12px">Saved before payment, so follow up even if they do not check out.</p>';
         ww_send_email(['email'=>$to,'name'=>'WebWiz Ops'], 'WebWiz - new design brief', $html);
     }
-} catch (Throwable $e) {}
+} catch (Throwable $e) {
+    // The brief IS saved at this point, but nobody has been told about it. Silence here
+    // means a hot lead sits in the table unread, which is indistinguishable from no lead.
+    ww_report('brief', 'brief_notify_email_failed', 'WebWiz design brief saved but ops email failed',
+        ['token' => $token, 'brief_id' => $brief_id], 'error', $e, 0);
+}
 
 echo json_encode(['ok'=>true,'brief_id'=>$brief_id]);
