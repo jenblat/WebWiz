@@ -15,11 +15,22 @@ $dir   = '/var/www/sites/trywebwiz/public/preview/' . $t;
 $index = $dir . '/v1/index.html';
 
 $idx_ok = is_file($index) && (int)@filesize($index) > 500;
-// Pre-warm finished marker (async writes this once images are cached).
+// Written once the page has passed visual QA (and pre-warm) — the reveal gate.
 $warmed = is_file($dir . '/ready');
+// Visual QA is still running, or it rejected the page and a repair/handoff is in
+// flight. Either way the page on disk is NOT cleared for the visitor yet.
+$qa_running = is_file($dir . '/qa');
+$held       = is_file($dir . '/held');
 // Safety net: if the marker never lands (rare failure), still go ready once the
 // preview file has been on disk long enough that pre-warm has certainly run/died.
-$settled = $idx_ok && (time() - (int)@filemtime($index) > 25);
+//
+// This net used to be unconditional, and it silently outranked the reveal gate:
+// index.html is written ~30s before QA finishes, so a page that visual QA was
+// about to reject went ready anyway at the 25s mark. Any fix that only moved the
+// `ready` marker later would have appeared to work and changed nothing. It is now
+// suppressed while QA is actually in flight; gen_status' own 420s stall detector
+// below is the real protection against a background process that has died.
+$settled = $idx_ok && !$qa_running && !$held && (time() - (int)@filemtime($index) > 25);
 
 if ($idx_ok && ($warmed || $settled)) {
     echo json_encode(['status' => 'ready', 'preview_url' => '/preview/' . $t . '/v1/index.html', 'url' => '/preview/' . $t . '/']);
@@ -46,6 +57,16 @@ if (is_file($sf)) {
 // 420s, not 300s: a healthy build measured ~168s, and gate retries plus the visual-QA
 // round can legitimately push past the 300s the client polls for. This is the "certainly
 // dead" line, not the "slower than usual" line.
+// HELD: visual QA rejected this page and magic.php deliberately did not open the
+// reveal. This is not a stall and must not be reported as one - the background
+// process is alive and either repairing or handing off to the notify-ready email.
+// Keep answering "building" so the client's own 300s ceiling shows its existing
+// "drop your email and we'll send it the moment it's ready" card.
+if ($held) {
+    echo json_encode(['status' => 'building', 'stage' => 'finishing']);
+    exit;
+}
+
 $started = is_file($sf) ? (int)@filemtime($sf) : (is_dir($dir) ? (int)@filemtime($dir) : 0);
 if ($started > 0 && (time() - $started) > 420) {
     $flag = $dir . '/stalled';

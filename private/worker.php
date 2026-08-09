@@ -421,11 +421,19 @@ TXT;
 
 function build_user_prompt(array $scrape, string $biz, string $industry, int $variant_n, array $dna = [], array $brief = []): string {
     $imgs = $scrape['images'] ?? [];
-    $photo_imgs  = array_values(array_filter($imgs, fn($i) => empty($i['is_logo']) && empty($i['is_thumb']) && empty($i['is_team_card']) && empty($i['is_cutout']) && empty($i['is_portrait'])));
-    $cutout_imgs = array_values(array_filter($imgs, fn($i) => (!empty($i['is_cutout']) || !empty($i['is_portrait'])) && empty($i['is_logo'])));
-    $team_card_imgs = array_values(array_filter($imgs, fn($i) => !empty($i['is_team_card'])));
+    // is_tiny is set by ww_filter_live_images() from the image's REAL measured
+    // pixel size. It must be excluded from every pool that can become visible
+    // content: a 72x81 sliced table fragment is not a photo, not a cutout and not
+    // even a usable thumbnail. Letting those through is what scored a page 38/100
+    // on 2026-08-08. is_icon was never excluded from the photo pool either, so a
+    // clipart glyph could be picked as a hero. Logos are exempt: the nav wordmark
+    // is legitimately small and is placed by rule, not chosen as photography.
+    $content = fn($i) => empty($i['is_tiny']) && empty($i['is_icon']);
+    $photo_imgs  = array_values(array_filter($imgs, fn($i) => $content($i) && empty($i['is_logo']) && empty($i['is_thumb']) && empty($i['is_team_card']) && empty($i['is_cutout']) && empty($i['is_portrait']) && empty($i['is_soft'])));
+    $cutout_imgs = array_values(array_filter($imgs, fn($i) => $content($i) && (!empty($i['is_cutout']) || !empty($i['is_portrait'])) && empty($i['is_logo'])));
+    $team_card_imgs = array_values(array_filter($imgs, fn($i) => $content($i) && !empty($i['is_team_card'])));
     $logo_imgs = array_values(array_filter($imgs, fn($i) => !empty($i['is_logo'])));
-    $thumb_imgs = array_values(array_filter($imgs, fn($i) => !empty($i['is_thumb']) && empty($i['is_logo']) && empty($i['is_team_card']) && empty($i['is_cutout'])));
+    $thumb_imgs = array_values(array_filter($imgs, fn($i) => $content($i) && !empty($i['is_thumb']) && empty($i['is_logo']) && empty($i['is_team_card']) && empty($i['is_cutout'])));
     $strip = fn($arr) => array_map(fn($i) => ['url' => $i['url'], 'alt' => $i['alt']], $arr);
     $scrape_summary = [
         'business_name' => $biz, 'industry' => $industry ?: 'unknown', 'current_url' => $scrape['url'] ?? '',

@@ -519,3 +519,50 @@ function ww_db_write_retry(callable $fn, int $tries = 6) {
         }
     }
 }
+
+/**
+ * Persist a visual-QA verdict onto the previews row for a generated variant.
+ *
+ * Added 2026-08-09. Every previews INSERT on every live path wrote
+ * qa_score/qa_pass/qa_issues as literal NULL (magic.php x2, edit.php,
+ * drain_pending.php, batch.php) and nothing ever updated them afterwards, so
+ * only 13 of 2445 preview rows carried a score and all 13 came from
+ * private/worker.php in May 2026. The visual QA itself worked fine and had been
+ * logging verdicts to /tmp/wwmagic_debug.log the whole time - 128 verdicts, 53
+ * of them failures - but because the score never reached the database, nothing
+ * in the product or the admin could see that 41% of generations were failing.
+ *
+ * Keyed by job token rather than a preview id because the caller in magic.php
+ * runs in the post-response background phase, where the only stable handle it
+ * still holds is the token.
+ *
+ * Never throws: QA bookkeeping must not be able to break a generation that has
+ * already been handed to the visitor.
+ */
+function ww_qa_persist(PDO $db, string $token, int $variant_n, array $verdict, bool $repaired = false): bool {
+    if ($token === '') return false;
+    $score = isset($verdict['score']) && is_numeric($verdict['score']) ? (int)$verdict['score'] : null;
+    $pass  = array_key_exists('pass', $verdict) ? (int)!empty($verdict['pass']) : null;
+    // Keep the whole issue list plus the summary: the admin needs the defect
+    // categories to tell an image-pipeline failure from a layout failure.
+    $issues = json_encode([
+        'summary'  => mb_substr((string)($verdict['summary'] ?? ''), 0, 600),
+        'issues'   => array_slice((array)($verdict['issues'] ?? []), 0, 12),
+        'repaired' => $repaired ? 1 : 0,
+        'at'       => gmdate('c'),
+    ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    try {
+        return (bool)ww_db_write_retry(function () use ($db, $token, $variant_n, $score, $pass, $issues) {
+            $st = $db->prepare(
+                "UPDATE previews SET qa_score = ?, qa_pass = ?, qa_issues = ?
+                  WHERE variant_n = ?
+                    AND job_id = (SELECT id FROM jobs WHERE token = ? ORDER BY id DESC LIMIT 1)"
+            );
+            $st->execute([$score, $pass, $issues, $variant_n, $token]);
+            return $st->rowCount() > 0;
+        });
+    } catch (Throwable $e) {
+        error_log('[ww_qa_persist] ' . $e->getMessage());
+        return false;
+    }
+}

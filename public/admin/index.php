@@ -662,6 +662,82 @@ if ($tab === 'stats') {
     shell_open('Stats', $me, 'stats', $is_admin);
     echo '<h1>Stats</h1>';
 
+    // ---------- Visual QA ----------
+    // Added 2026-08-09. The visual-QA verdict was computed on every generation
+    // and then thrown away: every previews INSERT hardcoded qa_score/qa_pass to
+    // NULL, so a 41% failure rate (53 of 128 verdicts in the debug log) was
+    // invisible everywhere in the product. Nothing here is a new measurement -
+    // it is the measurement that was already being taken, finally written down
+    // by ww_qa_persist() and shown.
+    try {
+        $qdb = ww_db();
+        $agg = $qdb->query(
+            "SELECT COUNT(*) n,
+                    SUM(CASE WHEN qa_pass = 1 THEN 1 ELSE 0 END) passed,
+                    ROUND(AVG(qa_score), 1) avg_score
+               FROM previews WHERE qa_score IS NOT NULL"
+        )->fetch(PDO::FETCH_ASSOC) ?: [];
+        $n = (int)($agg['n'] ?? 0);
+        $passed = (int)($agg['passed'] ?? 0);
+        $rate = $n > 0 ? round($passed * 100 / $n) : null;
+        $rate_class = ($rate === null) ? '' : ($rate >= 85 ? 'ok' : ($rate >= 65 ? 'warn' : 'bad'));
+
+        echo '<style>
+          .qa-tiles{display:flex;gap:14px;flex-wrap:wrap;margin:10px 0 18px;}
+          .qa-tile{background:#fff;border:3px solid var(--navy);border-radius:14px;padding:14px 18px;min-width:150px;box-shadow:5px 5px 0 var(--yellow);}
+          .qa-tile .k{font-size:11px;letter-spacing:.12em;text-transform:uppercase;font-weight:900;opacity:.65;}
+          .qa-tile .v{font-size:28px;font-weight:900;line-height:1.15;}
+          .qa-tile .v.ok{color:#137333;} .qa-tile .v.warn{color:#8a6100;} .qa-tile .v.bad{color:#9b1c1c;}
+          .qa-tbl{width:100%;border-collapse:collapse;font-size:13px;background:#fff;border:2px solid var(--navy);border-radius:10px;overflow:hidden;}
+          .qa-tbl th{background:var(--navy);color:#fff;text-align:left;padding:8px 10px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;}
+          .qa-tbl td{padding:8px 10px;border-top:1px solid #e6e6e6;vertical-align:top;}
+          .qa-score{font-weight:900;} .qa-score.bad{color:#9b1c1c;} .qa-score.warn{color:#8a6100;}
+          .qa-empty{background:#fff;border:2px dashed var(--navy);border-radius:10px;padding:16px;font-size:13px;}
+        </style>';
+        echo '<h2 style="margin-top:6px">Visual QA</h2>';
+        echo '<div class="qa-tiles">';
+        echo '<div class="qa-tile"><div class="k">Scored pages</div><div class="v">' . $n . '</div></div>';
+        echo '<div class="qa-tile"><div class="k">Pass rate</div><div class="v ' . $rate_class . '">'
+           . ($rate === null ? '&mdash;' : $rate . '%') . '</div></div>';
+        echo '<div class="qa-tile"><div class="k">Avg score</div><div class="v">'
+           . ($agg['avg_score'] !== null ? ww_h((string)$agg['avg_score']) : '&mdash;') . '</div></div>';
+        echo '<div class="qa-tile"><div class="k">Failures</div><div class="v ' . (($n - $passed) > 0 ? 'bad' : '') . '">'
+           . ($n - $passed) . '</div></div>';
+        echo '</div>';
+
+        if ($n === 0) {
+            echo '<div class="qa-empty">No verdicts recorded yet. Scores are written by <code>ww_qa_persist()</code> '
+               . 'at the end of generation, so this fills in from the next generation onward. '
+               . 'Rows generated before 2026-08-09 have no score and cannot be backfilled: the verdicts were only ever '
+               . 'written to <code>/tmp/wwmagic_debug.log</code>, which records a pid and a timestamp but not a token.</div>';
+        } else {
+            $fails = $qdb->query(
+                "SELECT p.qa_score, p.qa_issues, p.created_at, j.token, j.business_name
+                   FROM previews p JOIN jobs j ON j.id = p.job_id
+                  WHERE p.qa_score IS NOT NULL AND p.qa_pass = 0
+                  ORDER BY p.id DESC LIMIT 25"
+            )->fetchAll(PDO::FETCH_ASSOC);
+            if ($fails) {
+                echo '<h3 style="margin:16px 0 8px">Recent failures</h3><table class="qa-tbl">'
+                   . '<thead><tr><th>When</th><th>Business</th><th>Score</th><th>What QA saw</th><th></th></tr></thead><tbody>';
+                foreach ($fails as $f) {
+                    $meta = json_decode((string)$f['qa_issues'], true);
+                    $why  = is_array($meta) ? (string)($meta['summary'] ?? '') : '';
+                    $rep  = is_array($meta) && !empty($meta['repaired']) ? ' <em>(repaired)</em>' : '';
+                    $sc   = (int)$f['qa_score'];
+                    echo '<tr><td>' . ww_h(substr((string)$f['created_at'], 0, 16)) . '</td>'
+                       . '<td>' . ww_h(mb_substr((string)$f['business_name'], 0, 42)) . '</td>'
+                       . '<td class="qa-score ' . ($sc < 50 ? 'bad' : 'warn') . '">' . $sc . $rep . '</td>'
+                       . '<td>' . ww_h(mb_substr($why, 0, 190)) . '</td>'
+                       . '<td><a href="/try/?t=' . ww_h((string)$f['token']) . '" target="_blank">open</a></td></tr>';
+                }
+                echo '</tbody></table>';
+            }
+        }
+    } catch (Throwable $e) {
+        echo '<div class="qa-empty">QA panel unavailable: ' . ww_h($e->getMessage()) . '</div>';
+    }
+
     $subs = stripe_get($STRIPE_SECRET, 'subscriptions', ['status' => 'all', 'limit' => 100]);
     $charges = stripe_get($STRIPE_SECRET, 'charges', ['limit' => 100]);
 

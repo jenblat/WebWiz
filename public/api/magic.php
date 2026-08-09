@@ -512,7 +512,12 @@ try {
         ml_debug("soft-source detect: flagged $soft_count of " . count($cand_imgs));
     } catch (Throwable $e) { ml_debug('soft detect failed: ' . $e->getMessage()); }
 
-    $usable = array_values(array_filter($scrape['images'] ?? [], fn($i) => empty($i['is_logo']) && empty($i['is_thumb']) && empty($i['is_team_card']) && empty($i['is_icon']) && empty($i['is_soft'])));
+    // is_tiny = measured real pixel size below content threshold (see
+    // ww_filter_live_images). Excluding it here is what makes the Imagen
+    // pre-generation branch below fire for a junk-image site: madbanana.com
+    // presented 9 sliced 72x81 fragments, which counted as 9 "usable" images,
+    // cleared the target of 7, and so generated ZERO real photography.
+    $usable = array_values(array_filter($scrape['images'] ?? [], fn($i) => empty($i['is_logo']) && empty($i['is_thumb']) && empty($i['is_team_card']) && empty($i['is_icon']) && empty($i['is_soft']) && empty($i['is_tiny'])));
 
     // Save the REAL scraped images so the editor can offer "use my real photos" later.
     $scrape_data_json = null;
@@ -1047,58 +1052,120 @@ try {
         }
         $genimg_urls = array_values(array_unique($genimg_urls));
         $pw_count = 0;
+        $placeholders = 0;
         if ($genimg_urls) {
-            $mh = curl_multi_init();
-            $handles = [];
-            foreach (array_slice($genimg_urls, 0, 10) as $u) {
-                $ch = curl_init($u);
-                curl_setopt_array($ch, [
-                    CURLOPT_RETURNTRANSFER => true,
-                    CURLOPT_TIMEOUT        => 9,
-                    CURLOPT_CONNECTTIMEOUT => 3,
-                    CURLOPT_HTTPHEADER     => ['user-agent: WebWiz-PreWarm/1.0'],
-                ]);
-                curl_multi_add_handle($mh, $ch);
-                $handles[] = $ch;
+            // Two passes. A 200 is NOT proof the image is real: img.php and
+            // genimg.php both answer a failure with a branded monogram SVG at
+            // HTTP 200, which is precisely the "empty image box" / "placeholder
+            // box" defect that dominates the visual-QA failures (empty 26,
+            // placeholder 16, blank 14 of 73 defect instances). Content-type is
+            // the reliable tell: a real image from these endpoints is jpeg/png,
+            // a failure is image/svg+xml. Now that failures are served no-store
+            // and genimg retries a 429 internally, simply asking again clears
+            // most of them, so the second pass is worth its couple of seconds.
+            $probe = function (array $urls) use (&$pw_count) {
+                $mh = curl_multi_init();
+                $handles = [];
+                foreach ($urls as $u) {
+                    $ch = curl_init($u);
+                    curl_setopt_array($ch, [
+                        CURLOPT_RETURNTRANSFER => true,
+                        CURLOPT_TIMEOUT        => 9,
+                        CURLOPT_CONNECTTIMEOUT => 3,
+                        CURLOPT_HTTPHEADER     => ['user-agent: WebWiz-PreWarm/1.0'],
+                    ]);
+                    curl_multi_add_handle($mh, $ch);
+                    $handles[$u] = $ch;
+                }
+                $deadline = microtime(true) + 12.0;
+                do {
+                    curl_multi_exec($mh, $running);
+                    if ($running > 0) curl_multi_select($mh, 0.2);
+                } while ($running > 0 && microtime(true) < $deadline);
+                $bad = [];
+                foreach ($handles as $u => $ch) {
+                    $code  = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                    $ctype = (string)(curl_getinfo($ch, CURLINFO_CONTENT_TYPE) ?? '');
+                    if ($code === 200 && stripos($ctype, 'svg') === false) $pw_count++;
+                    else $bad[] = $u;
+                    curl_multi_remove_handle($mh, $ch);
+                    curl_close($ch);
+                }
+                curl_multi_close($mh);
+                return $bad;
+            };
+            $first = array_slice($genimg_urls, 0, 10);
+            $bad = $probe($first);
+            if ($bad) {
+                ml_debug('pre-warm: ' . count($bad) . ' placeholder/failed image(s), retrying once');
+                $bad = $probe($bad);
             }
-            $deadline = microtime(true) + 7.0;
-            do {
-                curl_multi_exec($mh, $running);
-                if ($running > 0) curl_multi_select($mh, 0.2);
-            } while ($running > 0 && microtime(true) < $deadline);
-            foreach ($handles as $ch) {
-                $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-                if ($code === 200) $pw_count++;
-                curl_multi_remove_handle($mh, $ch);
-                curl_close($ch);
-            }
-            curl_multi_close($mh);
+            $placeholders = count($bad);
         }
-        ml_time('PHASE_2_5_pre_warm', microtime(true) - $tPW, ['found' => count($genimg_urls), 'warmed' => $pw_count]);
-        ml_debug("pre-warm: found=" . count($genimg_urls) . " warmed=$pw_count");
+        ml_time('PHASE_2_5_pre_warm', microtime(true) - $tPW, ['found' => count($genimg_urls), 'warmed' => $pw_count, 'placeholders' => $placeholders]);
+        ml_debug("pre-warm: found=" . count($genimg_urls) . " warmed=$pw_count placeholders=$placeholders");
     } catch (Throwable $e) { ml_debug('pre-warm failed: ' . $e->getMessage()); }
-    // Async only: now that images are warmed, drop the ready marker so the
-    // poller opens the reveal on a fully-loaded page (no blank images popping in).
-    if ($async) { @file_put_contents($dir . '/ready', '1'); ml_debug('async ready marker written (post pre-warm)'); }
-
-    // ---- Phase 4: Visual QA loop (Sonnet vision check + auto-regen if fail) ----
+    // ---- Phase 4: Visual QA — runs BEFORE the reveal on every path ----
+    //
+    // This used to sit AFTER the `ready` marker, and its repair branch was gated
+    // `if (!$async && ...)`. /try/ posts to magic.php?async=1, so on the only path
+    // a real self-serve visitor takes, the repair had never run since async landed
+    // in a2cbf47 (2026-07-13): PHASE_4c_qa_regen appears in the timing log from
+    // 2026-06-09 to 2026-07-14 and then stops, while QA failures continue through
+    // 2026-08-08. 53 of 128 verdicts failed (41%) and every one of them was shown
+    // to the visitor anyway, because the marker that opens the reveal had already
+    // been written. Real people saw those pages: Rod Donaciano (62), Gandona
+    // Winery (42), Misty Winter (52), Mad Banana (38).
+    //
+    // BUDGET, which dictates the design. The client polls gen_status.php every 3s
+    // with maxPolls=100 after a 4s delay, so it gives up at ~300s. A healthy build
+    // measures ~168s and pre-warm ~7s, leaving ~120s before the reveal must open.
+    // Screenshot + vision inspect fit in that (~30s). A repair regen does NOT: it
+    // measured 102-165s in PHASE_4c_qa_regen, so repair-then-reveal would land at
+    // ~350s, past the point the visitor has already been told it failed. Repair
+    // therefore cannot be a precondition of the reveal for everyone.
+    //
+    // So: QA gates the reveal, and a FAILING page is never revealed as-is. We
+    // repair only when the clock genuinely allows it, and when it does not, we
+    // hold rather than ship. Holding is not a dead end - the poller keeps saying
+    // "building", the client's own 300s timeout already shows "Drop your email
+    // above and we'll send your site the moment it's ready", and the notify-ready
+    // email below delivers the repaired page. That is a worse wait than today but
+    // a better outcome than handing someone a page our own QA scored 38.
+    $QA_HOLD_CEILING = 380.0; // stay under gen_status.php's 420s stall detector
+    $qa_verdict = null;
+    $qa_repaired = false;
+    // In-flight marker. gen_status.php has a `$settled` safety net that declares
+    // the preview ready once index.html has simply existed for 25s, which exists
+    // so a dead background process cannot hang the poller forever. That net would
+    // silently defeat everything below by opening the reveal while QA is still
+    // running, so QA announces itself and the poller waits for it instead. The
+    // 420s stall detector remains the real backstop if this process dies here.
+    if ($async) @file_put_contents($dir . '/qa', (string)time());
     $tQA = microtime(true);
-    try {
-        $variant_url = 'https://trywebwiz.com/preview/' . $token . '/v1/index.html?qa=' . time();
-        $shots = function_exists('ww_render_screenshots') ? ww_render_screenshots([1 => $variant_url], null) : [];
+    $run_inspect = function (string $why) use ($token, $biz, &$qa_verdict) {
+        $url = 'https://trywebwiz.com/preview/' . $token . '/v1/index.html?qa=' . microtime(true);
+        $t0 = microtime(true);
+        $shots = function_exists('ww_render_screenshots') ? ww_render_screenshots([1 => $url], null) : [];
         $png = $shots[1] ?? null;
-        $shot_dt = microtime(true)-$tQA;
-        ml_time('PHASE_4a_screenshot', $shot_dt, ['ok' => $png ? true : false]);
-        if ($png && function_exists('ww_visual_inspect')) {
-            $tInspect = microtime(true);
-            $verdict = ww_visual_inspect($png, $biz, null);
-            ml_time('PHASE_4b_vision_inspect', microtime(true)-$tInspect, ['pass' => !empty($verdict['pass']), 'score' => $verdict['score'] ?? null]);
-            ml_debug(sprintf('QA verdict pass=%s score=%s reason=%s',
-                empty($verdict['pass'])?'no':'yes',
-                $verdict['score'] ?? '?',
-                substr((string)($verdict['summary'] ?? ''), 0, 200)
-            ));
-            if (!$async && empty($verdict['pass']) && function_exists('ww_qa_feedback') && isset($htmls[1])) {
+        ml_time('PHASE_4a_screenshot', microtime(true) - $t0, ['ok' => $png ? true : false, 'pass_no' => $why]);
+        if (!$png || !function_exists('ww_visual_inspect')) return null;
+        $t1 = microtime(true);
+        $v = ww_visual_inspect($png, $biz, null);
+        ml_time('PHASE_4b_vision_inspect', microtime(true) - $t1, ['pass' => !empty($v['pass']), 'score' => $v['score'] ?? null, 'round' => $why]);
+        ml_debug(sprintf('QA verdict [%s] pass=%s score=%s reason=%s', $why,
+            empty($v['pass']) ? 'no' : 'yes', $v['score'] ?? '?',
+            substr((string)($v['summary'] ?? ''), 0, 200)));
+        $qa_verdict = $v;
+        return $v;
+    };
+    try {
+        $verdict = $run_inspect('first');
+        if ($verdict && empty($verdict['pass']) && function_exists('ww_qa_feedback') && isset($htmls[1])) {
+            $elapsed = microtime(true) - $T0;
+            // Only start a repair we can actually finish. ~150s is the observed
+            // upper end of a regen plus the re-inspect that has to follow it.
+            if ($elapsed + 150.0 < $QA_HOLD_CEILING) {
                 $tRegen = microtime(true);
                 $fb = ww_qa_feedback($verdict['issues'] ?? []);
                 $rreqs = [1 => ['system' => $system, 'messages' => [['role' => 'user', 'content' => $first_user_content . "\n\n" . $fb]]]];
@@ -1107,15 +1174,65 @@ try {
                 if ($rcand && quality_gate($rcand)['ok']) {
                     file_put_contents($dir . '/v1/index.html', ww_polish_html($rcand, $website));
                     $htmls[1] = $rcand;
+                    $qa_repaired = true;
                     ml_time('PHASE_4c_qa_regen', microtime(true)-$tRegen, ['written' => true]);
                     ml_debug('QA regen written to disk');
+                    // Re-inspect: a repair we never re-check is just a second guess.
+                    // This is also what makes the reveal decision below honest.
+                    $run_inspect('after_repair');
                 } else {
                     ml_time('PHASE_4c_qa_regen', microtime(true)-$tRegen, ['written' => false]);
                 }
+            } else {
+                ml_debug(sprintf('QA repair SKIPPED, no budget (elapsed %.0fs of %.0fs ceiling)', $elapsed, $QA_HOLD_CEILING));
+                ml_time('PHASE_4c_qa_regen', 0.0, ['written' => false, 'skipped' => 'budget']);
             }
         }
     } catch (Throwable $e) { ml_debug('QA phase failed: ' . $e->getMessage()); }
-    ml_time('PHASE_4_total', microtime(true)-$tQA);
+    ml_time('PHASE_4_total', microtime(true)-$tQA, ['pass' => $qa_verdict ? (int)!empty($qa_verdict['pass']) : null]);
+
+    // ---- Persist the verdict (Bug B) ----
+    // Every previews INSERT on every live path hardcoded qa_score/qa_pass/
+    // qa_issues to NULL and nothing ever updated them, so 13 of 2445 preview rows
+    // carried a score and all 13 were from private/worker.php in May. The 41%
+    // failure rate was invisible in the product because it was never written down.
+    if ($qa_verdict) {
+        try {
+            ww_qa_persist($db, $token, 1, $qa_verdict, $qa_repaired);
+        } catch (Throwable $e) { ml_debug('qa persist failed: ' . $e->getMessage()); }
+    }
+
+    // ---- The reveal decision ----
+    // Never open the reveal on a page our own QA rejected. A missing verdict
+    // (screenshot service down, vision call failed) opens as before: QA being
+    // unavailable must not take the product offline.
+    $qa_ok = (!$qa_verdict) || !empty($qa_verdict['pass']);
+    if ($async) {
+        if ($qa_ok) {
+            @file_put_contents($dir . '/ready', '1');
+            ml_debug('async ready marker written (post QA)');
+        } else {
+            // Hold. The poller keeps returning "building" until the notify email
+            // takes over, and the job is flagged so a human can see it queued
+            // rather than it silently disappearing.
+            @file_put_contents($dir . '/held', json_encode([
+                'ts'    => time(),
+                'score' => $qa_verdict['score'] ?? null,
+                'why'   => substr((string)($qa_verdict['summary'] ?? ''), 0, 300),
+            ], JSON_UNESCAPED_SLASHES));
+            ml_debug('async reveal HELD: QA failed score=' . ($qa_verdict['score'] ?? '?'));
+            try {
+                if (function_exists('ww_report')) {
+                    ww_report('generation', 'qa_failed_reveal_held',
+                        'WebWiz held a reveal because visual QA failed', [
+                            'token' => $token, 'score' => $qa_verdict['score'] ?? null,
+                            'repaired' => $qa_repaired ? 1 : 0,
+                        ], 'warning', null, 0);
+                }
+            } catch (Throwable $e) { /* reporting must not break generation */ }
+        }
+        @unlink($dir . '/qa'); // QA is done deciding; the safety net may apply again
+    }
 
     // ---- Phase 5: Image upscale (Real-ESRGAN via Replicate) ----
     // Run after QA so we upscale the final HTML. Replicate calls are slow HTTP
