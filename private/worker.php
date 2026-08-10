@@ -369,9 +369,71 @@ function ww_noindex_html(string $html): string {
     return $tag . $html;
 }
 
+/**
+ * Replace stock-photo URLs the model invented with real generated photography.
+ *
+ * Measured 2026-08-10 across the 300 most recent shipped previews: 17 of them
+ * (5.7%) carried an images.unsplash.com URL that was in NO source data. The
+ * scrape never produced it and the Imagen pre-generation never produced it - the
+ * model wrote a plausible-looking Unsplash photo id from memory and proxied it
+ * through /api/img.php. Four separate problems come out of that:
+ *
+ *  1. The ids are guesses, and some are wrong. 1 of 12 sampled returned 404, and
+ *     a 404 through img.php is served as the branded monogram placeholder, which
+ *     is exactly the "empty image box" defect visual QA rejects a page for.
+ *  2. It is generic stock. The entire pitch is that this is YOUR business rebuilt
+ *     from YOUR content; a stock office photo is precisely what ChatGPT or
+ *     Lovable would hand back, so it throws away the differentiator.
+ *  3. The alt text is often unrelated to the business ("Alaska media landscape"
+ *     on a creative services firm), because the id was recalled, not chosen.
+ *  4. We had already paid to generate real photography for that page and the
+ *     model ignored it, so ~$0.28 of Imagen spend per affected job bought
+ *     nothing, and the shipped page hotlinks a third party we do not control.
+ *
+ * A prompt rule alone does not hold - the em dash proved that, 298 of 300 pages
+ * carried one despite explicit instructions - so this is the deterministic
+ * backstop and the prompt rule is the belt.
+ *
+ * Deliberately narrow. Only <img> tags, and only the known stock-photo hosts.
+ * Scraped client images legitimately arrive from every CDN under the sun (Wix,
+ * Squarespace, Cloudinary, shopify), so a general "external host" rule would
+ * throw away real photos of the actual business. <iframe> is untouched, so
+ * YouTube and Vimeo embeds still work.
+ */
+function ww_enforce_image_sources(string $html): string {
+    $stock = '~(^|\.)(unsplash\.com|pexels\.com|pixabay\.com|shutterstock\.com|istockphoto\.com|gettyimages\.com)$~i';
+    return preg_replace_callback('~<img\b[^>]*>~i', function ($m) use ($stock) {
+        $tag = $m[0];
+        if (!preg_match('~\bsrc\s*=\s*(["\'])(.*?)\1~is', $tag, $s)) return $tag;
+        $src = html_entity_decode($s[2], ENT_QUOTES | ENT_HTML5);
+        // Unwrap our own proxy so a stock URL hidden inside ?u= is still seen.
+        $target = $src;
+        if (preg_match('~/api/img\.php\?(.*)$~i', $src, $q)) {
+            parse_str(html_entity_decode($q[1], ENT_QUOTES | ENT_HTML5), $params);
+            if (!empty($params['u'])) $target = (string)$params['u'];
+        }
+        $host = (string)parse_url($target, PHP_URL_HOST);
+        if ($host === '' || !preg_match($stock, $host)) return $tag;
+
+        // Build the replacement prompt from the alt text, which is what the model
+        // intended the picture to show. Falls back to the proxy's label.
+        $alt = '';
+        if (preg_match('~\balt\s*=\s*(["\'])(.*?)\1~is', $tag, $a)) {
+            $alt = trim(html_entity_decode($a[2], ENT_QUOTES | ENT_HTML5));
+        }
+        if ($alt === '' && isset($params['l'])) $alt = trim((string)$params['l']);
+        $alt = preg_replace('~\s+~u', ' ', $alt);
+        if (mb_strlen($alt) < 4) $alt = 'professional photograph for a small business website';
+        $prompt = mb_substr('Editorial photograph, natural light, realistic: ' . $alt, 0, 300);
+        $new = '/api/genimg.php?prompt=' . rawurlencode($prompt) . '&ar=4:3&l=' . rawurlencode(mb_substr($alt, 0, 60));
+        return preg_replace('~\bsrc\s*=\s*(["\']).*?\1~is', 'src="' . htmlspecialchars($new, ENT_QUOTES) . '"', $tag, 1);
+    }, $html) ?? $html;
+}
+
 function ww_polish_html(string $html, string $clientUrl = ''): string {
     $html = ww_dedash_copy($html);
     $html = ww_noindex_html($html);
+    $html = ww_enforce_image_sources($html);
     $year = date('Y');
     $html = preg_replace('/(©|&copy;|Copyright)\s*20\d{2}/iu', '${1} ' . $year, $html);
     $u = (strpos($clientUrl, '://') === false && $clientUrl !== '') ? 'https://' . $clientUrl : $clientUrl;
@@ -505,6 +567,13 @@ IMAGE PICKING GUIDE
 - images.team_card = ONLY for testimonial cards (name/title baked in).
 - images.logo = ONLY in the nav.
 - Every URL is verified to load. NEVER use the same URL twice.
+- NEVER invent an image URL. Every src you write must be copied verbatim from the
+  lists above, or be a /api/genimg.php?prompt=... URL you construct. Writing a
+  stock-photo URL from memory (images.unsplash.com/photo-..., pexels, pixabay,
+  shutterstock, getty) is forbidden: those ids are guesses, some of them 404 into
+  an empty grey box, and generic stock is the exact thing that makes a site look
+  like every other AI site. If you need a picture that the source data does not
+  contain, generate one with /api/genimg.php and describe it precisely.
 
 REQUIREMENTS
 - Complete HTML with embedded <style> and <script>. Finish the document - end with </html>.
