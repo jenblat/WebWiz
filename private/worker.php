@@ -334,8 +334,44 @@ function ww_dedash_copy(string $html): string {
  *  - add UTM tracking to the "Designed by WebWiz" backlink so WebWiz can attribute traffic.
  *  - strip em/en dashes from visible copy (see ww_dedash_copy)
  */
+/**
+ * Keep a preview out of the search index.
+ *
+ * A preview is a single self-contained HTML file at /preview/<token>/v1/index.html
+ * with no auth and, until 2026-08-09, no robots directive. 971 directories were
+ * being publicly served and were fully crawlable: robots.txt disallowed only
+ * /wp-admin/, /admin/ and /api/.
+ *
+ * The tag goes in the FILE rather than in server config or .htaccess on purpose.
+ * This box runs OpenLiteSpeed, the static file is served directly without touching
+ * PHP (so no header can be added at request time by our code), and a directive
+ * that lives in the document travels with it no matter what serves it. robots.txt
+ * is updated too, but that file is stamped "Managed by SeedSite SEO" and can be
+ * regenerated from under us, so it cannot be the only defence.
+ *
+ * This is friction proportional to the price, not DRM. Anything rendered in a
+ * browser can be copied, and this does not pretend otherwise - it stops the site
+ * being FOUND by someone who was not given the link, which is the actual leak.
+ */
+function ww_noindex_html(string $html): string {
+    if (stripos($html, 'name="robots"') !== false || stripos($html, "name='robots'") !== false) {
+        return $html;
+    }
+    $tag = '<meta name="robots" content="noindex,nofollow,noarchive,noimageindex">';
+    // Prefer just after <head>; fall back to before </head>, then to the top.
+    if (preg_match('~<head\b[^>]*>~i', $html, $m, PREG_OFFSET_CAPTURE)) {
+        $at = $m[0][1] + strlen($m[0][0]);
+        return substr($html, 0, $at) . $tag . substr($html, $at);
+    }
+    if (stripos($html, '</head>') !== false) {
+        return preg_replace('~</head>~i', $tag . '</head>', $html, 1) ?? $html;
+    }
+    return $tag . $html;
+}
+
 function ww_polish_html(string $html, string $clientUrl = ''): string {
     $html = ww_dedash_copy($html);
+    $html = ww_noindex_html($html);
     $year = date('Y');
     $html = preg_replace('/(©|&copy;|Copyright)\s*20\d{2}/iu', '${1} ' . $year, $html);
     $u = (strpos($clientUrl, '://') === false && $clientUrl !== '') ? 'https://' . $clientUrl : $clientUrl;

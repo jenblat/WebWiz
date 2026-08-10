@@ -612,9 +612,19 @@ function ww_of(?array $OF, string $k, string $default): string {
   body[data-cap="hit"] .suggested-row .sugchip{display:none;}
 
   /* When the conversion card takes over, hide the chat parts entirely. */
-  body[data-conv="on"] .chat-history,
-  body[data-conv="on"] .suggested-row,
-  body[data-conv="on"] .chat-input-row{display:none;}
+  /* RETIRED 2026-08-09: the AI edit chat.
+     It was the funnel's failure point, not a feature. The two deepest-engaged
+     sessions in the ad window both died here (Rod asked for blue and got green;
+     me@harrisonerd.com asked for a hero animation, did not get it, and asked for
+     a full redesign). The composer is hidden unconditionally rather than only
+     under data-conv so it cannot be reached by clearing an attribute, and
+     /api/edit.php answers 410 so no edit can be issued even if it were.
+     The DOM nodes stay in place deliberately: a dozen handlers still reference
+     chatInput/chatSend, and deleting the nodes would null-crash the script on
+     the reveal, which is the money path. */
+  .chat-history,
+  .suggested-row,
+  .chat-input-row{display:none!important;}
   body[data-conv="on"] .edit-panel{max-height:none;}
 
   /* ----------- Conversion (Phase 4) ----------- */
@@ -1376,19 +1386,24 @@ window.__TRY_INIT__ = {
     body.setAttribute('data-chat', state === 'open' ? 'open' : 'closed');
     try { track('chat_' + state); } catch (e) {}
   }
-  if (chatFab) chatFab.addEventListener('click', function () { setChat('open'); chatInput.focus(); });
+  if (chatFab) chatFab.addEventListener('click', function () { setChat('open'); body.setAttribute('data-conv','on'); });
   if (chatClose) chatClose.addEventListener('click', function () { setChat('closed'); });
   // Topbar "Customize" button opens the chat panel
   var topbarCustomize = document.getElementById('topbarCustomize');
   if (topbarCustomize) {
-    topbarCustomize.addEventListener('click', function () { setChat('open'); if (chatInput) chatInput.focus(); try { track('topbar_customize_click'); } catch(e){} });
+    topbarCustomize.addEventListener('click', function () { setChat('open'); body.setAttribute('data-conv','on'); try { track('topbar_customize_click'); } catch(e){} });
   }
 
   // If page is already hydrated to reveal (via /try/?t=<token>), init chrome open.
+  // This is the RETURNING visitor path and it does not go through setView(), so
+  // it needs data-conv set here too. Without it the panel opens with the chat
+  // hidden (the composer is display:none since the edit chat was retired) and
+  // #convCard still hidden, i.e. an empty panel with no offer in it.
   if (body.getAttribute('data-view') === 'reveal') {
     var dtNow = document.getElementById('deviceToggleTop');
     if (dtNow) dtNow.style.display = 'inline-flex';
     body.setAttribute('data-chat-init', '1');
+    body.setAttribute('data-conv', 'on');
     setChat('open');
   }
 
@@ -1455,14 +1470,25 @@ window.__TRY_INIT__ = {
   function setView(v){
     body.setAttribute('data-view', v);
     window.scrollTo({top:0, behavior:'smooth'});
-    // On reveal: show device toggle in topbar; chat starts OPEN.
+    // On reveal: show device toggle in topbar; the panel starts OPEN.
     var dt = document.getElementById('deviceToggleTop');
     if (dt) dt.style.display = (v === 'reveal' ? 'inline-flex' : 'none');
     if (v === 'reveal' && !body.hasAttribute('data-chat-init')) {
       body.setAttribute('data-chat-init', '1');
       body.setAttribute('data-chat', 'open');
+      // The AI edit chat is retired (2026-08-09). The reveal now opens straight
+      // onto the human handoff card instead of an editor the model could not
+      // deliver on. The two deepest-engaged sessions in the ad window both died
+      // in that chat: Rod asked for blue, got green, said "It's in green not
+      // blue" and left; me@harrisonerd.com asked for a specific hero animation,
+      // did not get it, said "redesign it completely the entire page" and left.
+      // data-conv="on" hides the chat history, the suggested chips and the input
+      // row, and shows #convCard - the offer that was previously only reachable
+      // by exhausting the edit cap.
+      body.setAttribute('data-conv', 'on');
     } else if (v !== 'reveal') {
       body.removeAttribute('data-chat');
+      body.removeAttribute('data-conv');
     }
   }
 
@@ -1589,7 +1615,7 @@ window.__TRY_INIT__ = {
       stopLoadingTickers();
       try { window.__wwStopQA && window.__wwStopQA(); } catch(e){}
       track('gen_completed', { duration_ms: Date.now() - __genT0 });
-      setTimeout(function(){ previewFrame.src = previewUrl; setView('reveal'); chatInput.focus(); track('reveal_viewed');
+      setTimeout(function(){ previewFrame.src = previewUrl; setView('reveal'); track('reveal_viewed');
         try { window.history.replaceState({t: token}, '', '/try/?t=' + encodeURIComponent(token)); window.__wwShareUrl = window.location.origin + '/try/?t=' + encodeURIComponent(token); } catch(e){}
       }, 500);
     };

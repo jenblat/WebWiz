@@ -1,10 +1,44 @@
 <?php
-// /api/edit.php — Wizzy edit chat backend for the /try ad-funnel.
-// POST { token, message } → reads current /preview/<token>/v1/index.html,
-// asks Sonnet to apply the requested tweak, writes the updated HTML back,
-// returns { ok, edits_remaining, preview_url, reply }.
-// Enforces a 5-edit hard cap per token, server-side.
+// /api/edit.php — RETIRED 2026-08-09. Owner's call.
+//
+// This was the Wizzy edit chat backend for the /try ad-funnel: POST {token,
+// message}, ask Sonnet to apply the tweak, write the HTML back, 5-edit cap.
+//
+// It is retired because it was the funnel's failure point, not a feature. The
+// two deepest-engaged sessions in the whole ad window both died here:
+//   - Rod Donaciano asked for blue, got green, said "It's in green not blue",
+//     and left.
+//   - me@harrisonerd.com asked for a specific hero animation, did not get it,
+//     said "redesign it completely the entire page", and left.
+// Those are people who WANTED the product. An AI editor that cannot reliably
+// change a colour loses them at the exact moment they are most engaged, and it
+// is not going to get good enough to be worth that risk. The reveal now opens
+// directly onto the human handoff (#convCard + the design brief), which is also
+// the actual offer: a real designer finishes it.
+//
+// The endpoint answers 410 Gone rather than being deleted so that any cached
+// page, in-flight retry or bookmarked client gets a clear, non-5xx answer
+// instead of a fatal. The UI no longer calls it.
+//
+// DELIBERATELY PRESERVED: the `edit_log` table and the /preview/<token>/edits/
+// directories. That is the historical record of what people actually asked for,
+// which is the best evidence we have about what a human designer will be asked
+// to do. Do not drop either.
 declare(strict_types=1);
+header('Content-Type: application/json');
+header('Cache-Control: no-store');
+http_response_code(410);
+echo json_encode([
+    'ok'    => false,
+    'error' => 'The edit chat has been retired. Tell us what you want changed and a designer will do it.',
+    'gone'  => true,
+]);
+exit;
+
+// ---------------------------------------------------------------------------
+// Everything below is the retired implementation, kept for reference only and
+// unreachable past the exit above.
+// ---------------------------------------------------------------------------
 @set_time_limit(360); // hard backstop; covers one long (~300s) model call + overhead
 ignore_user_abort(true);
 header('Content-Type: application/json');
