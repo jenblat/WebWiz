@@ -1122,19 +1122,24 @@ try {
     // measures ~168s and pre-warm ~7s, leaving ~120s before the reveal must open.
     // Screenshot + vision inspect fit in that (~30s). A repair regen does NOT: it
     // measured 102-165s in PHASE_4c_qa_regen, so repair-then-reveal would land at
-    // ~350s, past the point the visitor has already been told it failed. Repair
-    // therefore cannot be a precondition of the reveal for everyone.
+    // ~350s, past the point the visitor has already been told it failed.
     //
-    // So: QA gates the reveal, and a FAILING page is never revealed as-is. We
-    // repair only when the clock genuinely allows it, and when it does not, we
-    // hold rather than ship. Holding is not a dead end - the poller keeps saying
-    // "building", the client's own 300s timeout already shows "Drop your email
-    // above and we'll send your site the moment it's ready", and the notify-ready
-    // email below delivers the repaired page. That is a worse wait than today but
-    // a better outcome than handing someone a page our own QA scored 38.
-    $QA_HOLD_CEILING = 380.0; // stay under gen_status.php's 420s stall detector
+    // NO REPAIR HERE. Owner's call, 2026-08-09: repair-then-reveal is not a good
+    // trade. It doubles the wait for the visitor least likely to be patient, it
+    // burns a second full Sonnet call on a page that will be rebuilt by a human
+    // anyway, and the evidence is that it does not address the actual defects -
+    // the failure mix is dominated by image problems (empty 26, placeholder 16,
+    // blank 14), and a regen is handed the same image pool that produced them.
+    // The madbanana.com page that scored 38 would have failed a regen too: all 16
+    // of its scraped images were 72x81-class slices. Fixing the image pipeline
+    // moved that same site to 82 on the FIRST attempt, with no regen involved.
+    //
+    // So: QA gates the reveal, and a FAILING page is never revealed. It holds.
+    // Holding is not a dead end - the poller keeps saying "building", the client's
+    // own 300s timeout already shows "Drop your email above and we'll send your
+    // site the moment it's ready", and the page goes to a human instead. That is
+    // the right destination for a page our own QA rejected.
     $qa_verdict = null;
-    $qa_repaired = false;
     // In-flight marker. gen_status.php has a `$settled` safety net that declares
     // the preview ready once index.html has simply existed for 25s, which exists
     // so a dead background process cannot hang the poller forever. That net would
@@ -1160,34 +1165,7 @@ try {
         return $v;
     };
     try {
-        $verdict = $run_inspect('first');
-        if ($verdict && empty($verdict['pass']) && function_exists('ww_qa_feedback') && isset($htmls[1])) {
-            $elapsed = microtime(true) - $T0;
-            // Only start a repair we can actually finish. ~150s is the observed
-            // upper end of a regen plus the re-inspect that has to follow it.
-            if ($elapsed + 150.0 < $QA_HOLD_CEILING) {
-                $tRegen = microtime(true);
-                $fb = ww_qa_feedback($verdict['issues'] ?? []);
-                $rreqs = [1 => ['system' => $system, 'messages' => [['role' => 'user', 'content' => $first_user_content . "\n\n" . $fb]]]];
-                $rres = anthropic_multi('claude-sonnet-4-6', $rreqs, 14000, 0.9, null, ['</html>']);
-                $rcand = finalize_html($rres[1]['text'] ?? '');
-                if ($rcand && quality_gate($rcand)['ok']) {
-                    file_put_contents($dir . '/v1/index.html', ww_polish_html($rcand, $website));
-                    $htmls[1] = $rcand;
-                    $qa_repaired = true;
-                    ml_time('PHASE_4c_qa_regen', microtime(true)-$tRegen, ['written' => true]);
-                    ml_debug('QA regen written to disk');
-                    // Re-inspect: a repair we never re-check is just a second guess.
-                    // This is also what makes the reveal decision below honest.
-                    $run_inspect('after_repair');
-                } else {
-                    ml_time('PHASE_4c_qa_regen', microtime(true)-$tRegen, ['written' => false]);
-                }
-            } else {
-                ml_debug(sprintf('QA repair SKIPPED, no budget (elapsed %.0fs of %.0fs ceiling)', $elapsed, $QA_HOLD_CEILING));
-                ml_time('PHASE_4c_qa_regen', 0.0, ['written' => false, 'skipped' => 'budget']);
-            }
-        }
+        $run_inspect('first');
     } catch (Throwable $e) { ml_debug('QA phase failed: ' . $e->getMessage()); }
     ml_time('PHASE_4_total', microtime(true)-$tQA, ['pass' => $qa_verdict ? (int)!empty($qa_verdict['pass']) : null]);
 
@@ -1198,7 +1176,7 @@ try {
     // failure rate was invisible in the product because it was never written down.
     if ($qa_verdict) {
         try {
-            ww_qa_persist($db, $token, 1, $qa_verdict, $qa_repaired);
+            ww_qa_persist($db, $token, 1, $qa_verdict);
         } catch (Throwable $e) { ml_debug('qa persist failed: ' . $e->getMessage()); }
     }
 
@@ -1226,7 +1204,6 @@ try {
                     ww_report('generation', 'qa_failed_reveal_held',
                         'WebWiz held a reveal because visual QA failed', [
                             'token' => $token, 'score' => $qa_verdict['score'] ?? null,
-                            'repaired' => $qa_repaired ? 1 : 0,
                         ], 'warning', null, 0);
                 }
             } catch (Throwable $e) { /* reporting must not break generation */ }

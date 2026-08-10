@@ -15,15 +15,27 @@ Repo `github.com/jenblat/WebWiz`, branch `main`. Shared lib `private/webwiz_lib.
    checker cannot report it because `health_check.php` dies on line 9 requiring the very
    file that broke (its try/catch starts *after* the require). It took the site down for
    ~6 minutes on 2026-08-07.
-   **There is already a script for this. Use it — do not hand-roll a chown:**
+   **⚠️ CORRECTED 2026-08-09: the script this section told you to run DOES NOT EXIST.**
+   This block used to say "there is already a script for this, use it, do not hand-roll a
+   chown" and pointed at `/opt/seedsite/scripts/fix-webwiz-perms.sh`. That path is not on
+   the droplet. `/opt/seedsite/scripts/` contains only `backfill-sites.js`,
+   `backup-cleanup.sh`, `backup.sh`, `cert-monitor.sh`, `disk-monitor.sh`, `healthcheck.sh`,
+   `provision-sftp.sh` and `provision-site.sh`. Either it was never written or it was lost.
+   An agent that trusts this doc, edits `webwiz_lib.php` as root and then "runs the script"
+   gets `No such file or directory` and leaves the site down.
+
+   **Until someone writes it, restore ownership by hand, ownership only, never chmod:**
    ```
-   /opt/seedsite/scripts/fix-webwiz-perms.sh
+   chown -R www-data:www-data /var/www/sites/trywebwiz/private /var/www/sites/trywebwiz/public
    ```
-   (`--check` reports drift and exits 1, for cron.) It is **ownership-only and never
-   chmods**, which is correct: www-data reads a 640 file fine once it owns it, and
-   blanket-chmodding would loosen files that are tight on purpose. It covers
-   `private public data logs` and deliberately skips `.git`, `.claude` and `backups/`.
-   It is already in `.claude/settings.json` allow-list, so it runs without a prompt.
+   Ownership-only is the correct behaviour: www-data reads a 640 file fine once it owns it,
+   and blanket-chmodding would loosen files that are tight on purpose. Skip `.git`,
+   `.claude` and `backups/`. **Verify `private/webwiz_lib.php` is still `-rw-r----- www-data
+   www-data` afterwards**, then curl `/api/db_ping.php` and confirm HTTP 200.
+
+   Note that appending with `cat >>` or editing in place preserves ownership, whereas a tool
+   that rewrites the file wholesale does not. That is why some root edits are harmless and
+   others take the site down.
 
    This has now caused **two** outages: 2026-08-06 (`private/lib/anthropic.php`, which
    took `/api/wizzy.php`, `/api/edit.php`, `/api/upload.php` and `worker.php` down) and
@@ -33,7 +45,8 @@ Repo `github.com/jenblat/WebWiz`, branch `main`. Shared lib `private/webwiz_lib.
    `{"db":"ok","rw":true,...}` and HTTP 200, and `/api/version.php` → HTTP 200.
 
    **Note `git` also runs as root here**, so ownership drifts after a commit too, not
-   just after an edit. Run the script last, after pushing.
+   just after an edit. Restore ownership **last, after pushing**, and re-verify
+   `db_ping.php` then.
 
 1. **`git status` silently reports nothing** until you run
    `git config --global --add safe.directory` for **both** `/var/www/sites/trywebwiz`
@@ -273,6 +286,100 @@ SDK's handler reports them. The real gap was never fatals, it was **swallowed** 
   comes off the prospect row, with the scrape as fallback.)
 - **Existing previews were deliberately NOT backfilled** (owner's call, 2026-08-07). All
   ~958 preview dirs stay live at `/try/?t=<token>` with their original copy.
+
+## 2026-08-09: visual QA gates the reveal, and the image pipeline root cause
+
+**Visual QA ran on every generation and the verdict was thrown away.** 128 verdicts in
+`/tmp/wwmagic_debug.log`, **53 failures = 41%**, and every failing page was shown to the
+visitor. Real people saw them: Rod Donaciano (62), Gandona Winery (42), Misty Winter (52),
+Mad Banana (38).
+
+### The root cause was the image pipeline, not the model
+
+**Nothing in the pipeline ever measured a REAL pixel dimension.** `ww_filter_live_images()`
+did a `HEAD` request (`CURLOPT_NOBODY`) and checked only status + content-type.
+`ww_image_is_thumb()` / `ww_image_is_icon()` parse dimensions out of the URL **string**.
+`ww_image_is_soft()` early-returns for anything under 600x400, so it never evaluated small
+images at all.
+
+madbanana.com is a sliced table layout: `M3_r1_c1.jpg` etc at **72x81, 101x81, 72x36**, no
+dimension hint in the URL, no `width`/`height` attrs. All nine passed every filter, counted
+as nine "usable" images, **cleared the `magic_image_target` of 7 so ZERO real photography
+was generated**, and Sonnet stretched 72x81 fragments across full-width sections. Score 38.
+
+> **A regen would not have fixed that page.** Attempt two gets the same nine fragments.
+> This is why the fix is in the image pipeline and not in more retries.
+
+- `ww_filter_live_images()` now does a **ranged GET** (`CURLOPT_RANGE` + a write callback
+  that aborts at 64KB), reads real dimensions with `getimagesizefromstring()` and sets
+  `real_w`/`real_h`/`is_tiny` (below 400px long edge or 200px short edge).
+  **Fails OPEN**: parse failure, SVG, a server that ignores `Range`, or a timeout all keep
+  the image. Wrongly dropping a good photo is worse than keeping an unmeasured one.
+- Do **not** feed that request's `CONTENT_LENGTH_DOWNLOAD` into `ww_image_is_soft()`. With
+  `CURLOPT_RANGE` a 206 reports the **range** length (64KB), not the file size, so every
+  large photo would look like ~0.03 MB/MP and be wrongly dropped as "soft".
+- `is_tiny` **and `is_icon`** (which was never excluded from the photo pool) are filtered
+  out of every content pool in `build_user_prompt()` and `magic.php`. That makes the
+  existing "usable < target -> pre-generate with Imagen" branch fire, so a junk-image site
+  becomes a generated-photography site.
+
+Measured on the same site: 16 images all flagged tiny, **7 real photos generated, QA
+pass=yes score=82** on the first attempt. Regression-checked on heritagebodyandframe.com
+(the 82/100 site): 20 measured, 2 tiny, 18 kept, real 1536x1024 photos untouched.
+
+### QA now gates the reveal, and there is NO repair
+
+Order is now: write HTML -> pre-warm -> **QA** -> `ready`. It used to be HTML -> pre-warm ->
+`ready` -> QA, i.e. the verdict arrived after the visitor was already looking at the page.
+
+**Repair was removed entirely (owner's call, 2026-08-09).** The old regen was gated
+`if (!$async && ...)` and `/try/` posts to `magic.php?async=1`, so it had not run for a real
+visitor since `a2cbf47` (2026-07-13) - `PHASE_4c_qa_regen` stops dead in the timing log on
+2026-07-14. It is not coming back: the client gives up at ~300s (`maxPolls=100` x 3s), a
+healthy build is ~168s and a regen measured **102-165s**, so repair-then-reveal lands past
+the point the visitor has been told it failed. It also burns a second Sonnet call on a page
+a human will rebuild anyway, against a defect mix that is dominated by image problems the
+regen cannot fix.
+
+**A failing page HOLDS instead.** `magic.php` writes a `held` marker, `gen_status.php`
+keeps answering `building` (with `stage:finishing`) and deliberately does **not** trip its
+own 420s stall detector, and the client's existing 300s timeout shows "drop your email and
+we'll send your site the moment it's ready". The page goes to a human.
+
+> ⚠️ **`gen_status.php`'s `$settled` net outranked the reveal gate.** It declared a preview
+> ready once `index.html` had merely existed for **25s** - and the HTML is written ~30s
+> before QA finishes. **Any fix that only moved the `ready` marker later would have looked
+> correct and changed nothing.** QA now announces itself with a `qa` marker and `$settled`
+> is suppressed while it runs. If you touch this ordering, re-check that file.
+
+### The verdict is finally written down
+
+Every `previews` INSERT hardcoded `qa_score/qa_pass/qa_issues` to **NULL** (`magic.php` x2,
+`edit.php`, `drain_pending.php`, `batch.php`) and nothing updated them, so **13 of 2445**
+rows had a score and all 13 came from `worker.php` in May. New `ww_qa_persist()` in
+`webwiz_lib.php` writes it, keyed by job token (the background phase no longer holds a
+preview id). Admin **Stats** page shows pass rate, average score and recent failures.
+
+Rows generated before 2026-08-09 **cannot be backfilled**: the verdicts only ever went to
+`/tmp/wwmagic_debug.log`, which records a pid and a timestamp but not a token.
+
+### Placeholder failures were cached for a day
+
+`img.php` and `genimg.php` both answer a failure with a **branded monogram SVG at HTTP 200**
+(initials on a flat colour). That is the "empty image box" / "placeholder box" / "pixelated
+monogram" defect in the QA rubric. Both served it as `Cache-Control: public, max-age=86400`,
+freezing a **transient** failure into the browser and any CDN for a full day when the very
+next request would have succeeded. **Both are now `no-store`; successes keep
+`max-age=604800, immutable`.**
+
+`genimg.php` also retries once with jitter on 429/5xx/0. **13 of the 14 non-200 responses
+that endpoint has ever returned were 429s**, and a burst on 2026-08-05 21:15:34-42 produced
+the "flat colored placeholder boxes" and "empty image panel with only 'GO' text" verdict 24s
+later. Pre-warm in `magic.php` now probes for those SVG responses by content-type and
+retries them before the reveal.
+
+> A 200 from `img.php`/`genimg.php` is **not** proof the image is real. Check the
+> content-type: a real image is jpeg/png, a failure is `image/svg+xml`.
 
 ## Known issues not fixed
 - Worker log shows `sh: 1: cd: can't cd to .../private/qa-tools` for every
