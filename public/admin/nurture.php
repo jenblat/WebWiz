@@ -247,13 +247,27 @@ $counts['all'] = array_sum($counts);
 // OVERVIEW
 // ============================================================
 if ($view === 'overview') {
-    $sends_total  = (int)$db->query("SELECT COUNT(*) FROM nurture_sends WHERE status = 'sent'")->fetchColumn();
-    $sends_today  = (int)$db->query("SELECT COUNT(*) FROM nurture_sends WHERE status = 'sent' AND sent_at >= datetime('now','start of day')")->fetchColumn();
-    $sends_7d     = (int)$db->query("SELECT COUNT(*) FROM nurture_sends WHERE status = 'sent' AND sent_at >= datetime('now','-7 days')")->fetchColumn();
+    // 'sent_unconfirmed' counts as delivered. Brevo accepted those emails; only
+    // our bookkeeping write lost a SQLite lock race, so the recipient has them
+    // and excluding them would understate delivery by ~35% of all sends.
+    // They can never carry opens or clicks though, because the Brevo message id
+    // was lost with the write, so the rates below deliberately stay on confirmed
+    // sends only - mixing them in would silently depress open rate instead.
+    $DELIVERED    = "status IN ('sent','sent_unconfirmed')";
+    $sends_total  = (int)$db->query("SELECT COUNT(*) FROM nurture_sends WHERE $DELIVERED")->fetchColumn();
+    $sends_today  = (int)$db->query("SELECT COUNT(*) FROM nurture_sends WHERE $DELIVERED AND sent_at >= datetime('now','start of day')")->fetchColumn();
+    $sends_7d     = (int)$db->query("SELECT COUNT(*) FROM nurture_sends WHERE $DELIVERED AND sent_at >= datetime('now','-7 days')")->fetchColumn();
+    $sends_conf   = (int)$db->query("SELECT COUNT(*) FROM nurture_sends WHERE status = 'sent'")->fetchColumn();
+    $sends_unconf = (int)$db->query("SELECT COUNT(*) FROM nurture_sends WHERE status = 'sent_unconfirmed'")->fetchColumn();
+    $sends_pend   = (int)$db->query("SELECT COUNT(*) FROM nurture_sends WHERE status = 'pending'")->fetchColumn();
+    $sends_failed = (int)$db->query("SELECT COUNT(*) FROM nurture_sends WHERE status LIKE 'failed:%'")->fetchColumn();
     $opens_total  = (int)$db->query("SELECT COALESCE(SUM(open_count),0)  FROM nurture_sends")->fetchColumn();
     $clicks_total = (int)$db->query("SELECT COALESCE(SUM(click_count),0) FROM nurture_sends")->fetchColumn();
-    $open_rate    = $sends_total > 0 ? round(100 * (int)$db->query("SELECT COUNT(*) FROM nurture_sends WHERE first_opened_at IS NOT NULL")->fetchColumn() / $sends_total, 1) : 0;
-    $click_rate   = $sends_total > 0 ? round(100 * (int)$db->query("SELECT COUNT(*) FROM nurture_sends WHERE click_count > 0")->fetchColumn() / $sends_total, 1) : 0;
+    // Denominator is CONFIRMED sends. A sent_unconfirmed row lost its Brevo
+    // message id, so it can never record an open or a click; counting it here
+    // would report a fake decline in engagement rather than a bookkeeping gap.
+    $open_rate    = $sends_conf > 0 ? round(100 * (int)$db->query("SELECT COUNT(*) FROM nurture_sends WHERE first_opened_at IS NOT NULL")->fetchColumn() / $sends_conf, 1) : 0;
+    $click_rate   = $sends_conf > 0 ? round(100 * (int)$db->query("SELECT COUNT(*) FROM nurture_sends WHERE click_count > 0")->fetchColumn() / $sends_conf, 1) : 0;
     $next_send    = $db->query("SELECT MIN(next_send_at) FROM nurture_contacts WHERE status='active' AND next_send_at IS NOT NULL")->fetchColumn();
 ?>
   <div class="stat-grid">
@@ -262,6 +276,34 @@ if ($view === 'overview') {
     <div class="stat"><div class="lbl">Open rate</div><div class="val"><?= $open_rate ?>%</div><div class="sub"><?= $opens_total ?> total opens</div></div>
     <div class="stat"><div class="lbl">Click rate</div><div class="val"><?= $click_rate ?>%</div><div class="sub"><?= $clicks_total ?> total clicks</div></div>
     <div class="stat"><div class="lbl">Purchased</div><div class="val"><?= $counts['purchased'] ?></div><div class="sub">from nurture</div></div>
+  </div>
+
+  <?php
+  // Delivery health. Until 2026-08-09 a send row was inserted 'pending' before the
+  // Brevo POST and only flipped to 'sent' afterwards, with no retry on that flip
+  // and no terminal state, so a lost SQLite lock left a DELIVERED email recorded
+  // as pending forever. 134 rows sat that way and nothing surfaced it.
+  // sent_unconfirmed = Brevo accepted it, we lost the message id. Never re-send
+  // these: the recipient already has the email.
+  // failed:* = Brevo genuinely rejected it. Those DO retry.
+  $health_bad = ($sends_pend > 0 || $sends_failed > 0);
+  ?>
+  <div class="help-row" style="margin-top:14px;<?= $health_bad ? 'border-left:4px solid #b45309;' : '' ?>">
+    <strong>Delivery bookkeeping:</strong>
+    <?= $sends_conf ?> confirmed
+    &middot; <?= $sends_unconf ?> delivered but unconfirmed
+    &middot; <?= $sends_pend ?> in flight
+    &middot; <?= $sends_failed ?> failed
+    <?php if ($sends_unconf > 0): ?>
+      <br><span style="font-size:12px;opacity:.75;">
+        &ldquo;Unconfirmed&rdquo; means Brevo accepted the email but the write recording it lost a
+        database lock, so the Brevo message id is gone and opens and clicks can never be
+        attributed to it. The recipient has the email. <strong>Do not re-send these.</strong>
+      </span>
+    <?php endif; ?>
+    <?php if ($sends_failed > 0): ?>
+      <br><span style="font-size:12px;opacity:.75;">Failed sends are genuine Brevo rejections and are retried automatically.</span>
+    <?php endif; ?>
   </div>
 
   <div class="help-row" style="margin-top:18px;">
@@ -322,7 +364,7 @@ if ($view === 'overview') {
     $sends = $db->query("
         SELECT s.id, s.contact_id, s.step, s.subject, s.sent_at, s.brevo_message_id, 'send' AS kind, c.name AS cname, c.email AS cemail
           FROM nurture_sends s JOIN nurture_contacts c ON c.id = s.contact_id
-         WHERE s.status = 'sent' ORDER BY s.sent_at DESC LIMIT 25
+         WHERE s.status IN ('sent','sent_unconfirmed') ORDER BY s.sent_at DESC LIMIT 25
     ")->fetchAll(PDO::FETCH_ASSOC);
     $events = $db->query("
         SELECT e.id, e.contact_id, e.send_id, e.type AS kind, e.target, e.occurred_at, c.name AS cname, c.email AS cemail, s.step

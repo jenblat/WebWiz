@@ -471,9 +471,18 @@ function ww_nurture_upsert_contact(PDO $db, array $data): int {
     }
 
     $next = gmdate('Y-m-d H:i:s', time() + 2 * 86400);
+    // status was hardcoded 'active' and any caller-supplied status was silently
+    // dropped. That matters now that /o/ form leads enrol: the live sequence is
+    // written for someone who HAS a generated preview ("the free website we made
+    // for you", CTA -> {{preview_url}}), and an offer-form lead has neither, so
+    // enrolling one active would send copy that is untrue with a dead button.
+    // Whitelisted rather than passed through so a bad caller cannot invent a
+    // status the cron does not understand and strand a contact forever.
+    $status = (string)($data['status'] ?? 'active');
+    if (!in_array($status, ['active', 'paused', 'unsubscribed'], true)) $status = 'active';
     $ins = $db->prepare("
         INSERT INTO nurture_contacts (name, email, company, website, token, preview_url, source, status, current_step, next_send_at, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'active', 0, ?, datetime('now'), datetime('now'))
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, datetime('now'), datetime('now'))
     ");
     $ins->execute([
         (string)($data['name'] ?? ''),
@@ -483,6 +492,7 @@ function ww_nurture_upsert_contact(PDO $db, array $data): int {
         (string)($data['token'] ?? ''),
         (string)($data['preview_url'] ?? ''),
         (string)($data['source'] ?? 'try'),
+        $status,
         $next,
     ]);
     return (int)$db->lastInsertId();
@@ -496,17 +506,65 @@ function ww_nurture_upsert_contact(PDO $db, array $data): int {
 function ww_nurture_advance_contact(PDO $db, array $contact, int $step): bool {
     $now  = gmdate('Y-m-d H:i:s');
     $next = ww_nurture_compute_next_send((string)$contact['created_at'], $step, $now);
-    for ($i = 0; $i < 6; $i++) {
-        try {
+    // Was a bespoke 6-try loop with linear 200ms backoff, i.e. ~4.2s of total
+    // patience, and it caught every Throwable and slept on it rather than only
+    // lock contention. It was not enough: the cron log carries 86 "CRITICAL:
+    // could not advance" lines, all of them alongside "database is locked", and
+    // the runs that failed measured ~5.2s, which is exactly the loop giving up.
+    // ww_db_write_retry() is the shared bounded-backoff helper (100ms doubling to
+    // 1.6s over 6 tries) already used for the INSERT below.
+    try {
+        return (bool)ww_db_write_retry(function () use ($db, $contact, $step, $now, $next) {
             $st = $db->prepare("UPDATE nurture_contacts SET current_step = ?, last_sent_at = ?, next_send_at = ?, updated_at = datetime('now') WHERE id = ?");
             $st->execute([$step, $now, $next, (int)$contact['id']]);
             return true;
-        } catch (Throwable $e) {
-            usleep(200000 * ($i + 1));
-        }
+        });
+    } catch (Throwable $e) {
+        error_log('[nurture] CRITICAL: could not advance contact ' . (int)$contact['id'] . ' past step ' . $step . ': ' . $e->getMessage());
+        return false;
     }
-    error_log('[nurture] CRITICAL: could not advance contact ' . (int)$contact['id'] . ' past step ' . $step);
-    return false;
+}
+
+/**
+ * Reconcile send rows whose email went out but whose bookkeeping was lost.
+ *
+ * A `pending` row does NOT mean "not sent". The email is handed to Brevo first
+ * and only then are two writes attempted: advance the contact, then stamp the
+ * row `sent` with its Brevo message id. When SQLite is locked, Brevo has already
+ * accepted the message and both writes are lost, leaving a delivered email
+ * recorded as pending forever. The cron log is explicit about it:
+ *   [nurture] send-row update failed (email was delivered): database is locked
+ * 68 of those, against 134 stuck rows and zero `failed:*` rows.
+ *
+ * This is why those rows must NEVER be re-sent to clear the counter: every one
+ * of them is an email a real person already received. ww_nurture_send_one()'s
+ * idempotency guard treats 'pending' as already-delivered for the same reason.
+ *
+ * Evidence that the send really happened: the contact advanced past that step.
+ * The advance only ever runs after Brevo returned success, and the duplicate
+ * guard advances too. Rows meeting that test become 'sent_unconfirmed' - it was
+ * delivered, we just lost the message id and can never attribute opens/clicks to
+ * it. Rows that do NOT meet it are left alone: they are usually minutes old and
+ * the next hourly run advances them.
+ */
+function ww_nurture_reconcile_pending(PDO $db, int $older_than_minutes = 90): int {
+    try {
+        return (int)ww_db_write_retry(function () use ($db, $older_than_minutes) {
+            $st = $db->prepare(
+                "UPDATE nurture_sends SET status = 'sent_unconfirmed'
+                  WHERE status = 'pending'
+                    AND sent_at < datetime('now', ?)
+                    AND EXISTS (SELECT 1 FROM nurture_contacts c
+                                 WHERE c.id = nurture_sends.contact_id
+                                   AND c.current_step >= nurture_sends.step)"
+            );
+            $st->execute(['-' . max(1, $older_than_minutes) . ' minutes']);
+            return $st->rowCount();
+        });
+    } catch (Throwable $e) {
+        error_log('[nurture] reconcile failed: ' . $e->getMessage());
+        return 0;
+    }
 }
 
 function ww_nurture_send_one(PDO $db, array $contact, string $brevo_key, string $hmac_secret, string $mailing_address): array {
@@ -516,7 +574,13 @@ function ww_nurture_send_one(PDO $db, array $contact, string $brevo_key, string 
     // this exact email to Brevo but died before recording it, so the recipient
     // already has it. Never send the same step twice. Genuine 'failed:*' rows
     // are excluded so real delivery failures still retry.
-    $g = $db->prepare("SELECT COUNT(*) FROM nurture_sends WHERE contact_id = ? AND step = ? AND status IN ('sent','pending')");
+    // 'sent_unconfirmed' MUST be in this list. It means Brevo accepted the email
+    // and only our bookkeeping write was lost (see ww_nurture_reconcile_pending).
+    // Omitting it would make this guard stop matching reconciled rows and re-send
+    // an email the recipient already has - the exact double-send this guard exists
+    // to prevent. Genuine 'failed:*' rows stay excluded so real delivery failures
+    // still retry.
+    $g = $db->prepare("SELECT COUNT(*) FROM nurture_sends WHERE contact_id = ? AND step = ? AND status IN ('sent','pending','sent_unconfirmed')");
     $g->execute([(int)$contact['id'], $step]);
     if ((int)$g->fetchColumn() > 0) {
         ww_nurture_advance_contact($db, $contact, $step);
@@ -606,10 +670,17 @@ function ww_nurture_send_one(PDO $db, array $contact, string $brevo_key, string 
     // lock left the contact un-advanced and spammed the recipient.)
     ww_nurture_advance_contact($db, $contact, $step);
 
-    // Bookkeeping is best effort and must never block or undo the advance.
+    // Bookkeeping is best effort and must never block or undo the advance - but
+    // it had NO retry at all, just a try/catch and a log line, while the INSERT
+    // above and the advance both retry. That asymmetry is the whole bug: 68
+    // "send-row update failed (email was delivered): database is locked" lines in
+    // the cron log, and 134 delivered emails permanently recorded as 'pending'
+    // with a NULL brevo_message_id, which also loses open and click attribution.
     try {
-        $db->prepare("UPDATE nurture_sends SET brevo_message_id = ?, status = 'sent', sent_at = ? WHERE id = ?")
-           ->execute([$msg_id, $now, $send_id]);
+        ww_db_write_retry(function () use ($db, $msg_id, $now, $send_id) {
+            return $db->prepare("UPDATE nurture_sends SET brevo_message_id = ?, status = 'sent', sent_at = ? WHERE id = ?")
+                      ->execute([$msg_id, $now, $send_id]);
+        });
     } catch (Throwable $e) {
         error_log('[nurture] send-row update failed (email was delivered): ' . $e->getMessage());
     }
