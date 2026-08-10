@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  syntax:
+    name: Syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: node --check every tracked JS file
+        run: |
+          FAILED=0
+          for f in $(git ls-files '*.js' '*.cjs' '*.mjs' | grep -v '^node_modules/'); do
+            node --check "$f" || { echo "::error file=$f::syntax error"; FAILED=1; }
+          done
+          exit $FAILED
