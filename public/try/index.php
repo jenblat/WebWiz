@@ -248,6 +248,46 @@ $WW_OFFER_PRICING = [
         'lead'     => 'Wizzy gets you the first draft. Then a <strong>real human designer</strong> on our team finishes it properly. Building it costs you nothing &mdash; you pay $50/month to host it. Here&rsquo;s what that covers:',
         'qa_price' => 'A designer would charge $3,000 to $5,000 to build this. At $50 a month with no build fee, how does that feel?',
     ],
+    // ---- TRUNCATED REVEAL cell (the gate test) ----
+    //
+    // NAMING. The brief called this "cell T", but 't' is already the guarded $1
+    // live-payment test cell and 'c' is already the tokenless brief-form cell.
+    // Reusing either would have repriced a live cell or made the $1 test
+    // unreachable, so this is 'u' for unlock. a/b/c/t are untouched and every
+    // existing report still filters on them exactly as before.
+    //
+    // PRICE IS HELD CONSTANT with cell b (free build, $50/month) on purpose. The
+    // variable under test is WHERE the ask sits relative to the reveal, not what
+    // it costs. $100 versus free is a price test on an offer nobody has accepted
+    // at any price, and it has produced zero conversions in two months.
+    //
+    // The hero and the first section stay fully sharp. Everything below is
+    // rendered, recognisably theirs, and locked. Blurring the hero would destroy
+    // the only structural advantage this product has: the visitor sees their own
+    // business rebuilt from their real scraped content with no prompting, which
+    // is precisely what ChatGPT and Lovable cannot do. The reference is Zety and
+    // Resume.io - build the whole resume, show the finished thing, gate the
+    // download.
+    'u' => [
+        'build_cents' => 0,
+        'truncate' => true,
+        'title'    => 'See your new website free. The build is free &middot; WebWiz',
+        'desc'     => 'See your new website free in minutes. The build costs nothing. You pay $50/month to host it, and that is the whole cost of having a website.',
+        'buy'      => 'Unlock my full site',
+        'anchor'   => 'Free to launch',
+        'save'     => 'Build free',
+        'micro'    => 'Free to preview &middot; free to launch &middot; $50/month hosting.',
+        'chip1'    => 'Free to launch',
+        'chip2'    => 'No build fee, ever',
+        'brief'    => 'Unlock my full site &mdash; free build',
+        'brief_js' => 'Unlock my full site — free build',
+        'big'      => '$50/month',
+        'save_big' => 'No build fee',
+        'conv_cta' => 'Unlock my full site &rarr;',
+        'pay_note' => 'The website is free. <strong>Getting started is $50</strong> &mdash; it covers your hosting and setup, then it&rsquo;s $50/month. Cancel anytime.',
+        'lead'     => 'This is your site, built from your own business. Wizzy gets you the first draft, then a <strong>real human designer</strong> on our team finishes it properly and you talk to them directly about every change you want. Building it costs you nothing &mdash; you pay $50/month to host it. Here&rsquo;s what that covers:',
+        'qa_price' => 'A designer would charge $3,000 to $5,000 to build this. At $50 a month with no build fee, how does that feel?',
+    ],
     // The guarded $1 live-payment TEST cell. Reached only via /o/t/try/?k=<secret>,
     // which 404s without the key. Present here so the builder half of the test
     // runs the real generator and mints a jobs row with offer_variant='t', which
@@ -1925,6 +1965,105 @@ window.__TRY_INIT__ = {
     body.removeAttribute('data-conv');
   }
   convBack.addEventListener('click', hideConvCard);
+
+  // ---------- TRUNCATED REVEAL (gate-test cell 'u') ----------
+  //
+  // The hero and the first content section stay FULLY SHARP. Everything below is
+  // rendered, recognisably theirs, and locked behind a blur with the section
+  // outlines still readable, and the ask sits exactly at that boundary.
+  //
+  // The hero is never blurred. The one structural advantage this product has is
+  // that the visitor sees their own business rebuilt from their real scraped
+  // content without typing a prompt, which is what ChatGPT and Lovable cannot do.
+  // Blurring that throws the advantage away before the ask. Reference model is
+  // Zety / Resume.io: build the whole thing, show the finished thing, gate the
+  // download.
+  //
+  // Done by injecting into the iframe document rather than overlaying the frame,
+  // because an overlay is fixed to the viewport and scrolling just slides clean
+  // content out from under it. /preview/ is same-origin with /try/, so this is
+  // allowed. It FAILS OPEN: any error and the visitor simply gets the full site,
+  // because showing too much is a lost upsell while showing a broken page is a
+  // lost customer.
+  var WW_TRUNCATE = <?= json_encode(!empty($OF['truncate'])) ?>;
+  function wwApplyTruncation(){
+    if (!WW_TRUNCATE) return;
+    var d;
+    try { d = previewFrame.contentDocument || (previewFrame.contentWindow && previewFrame.contentWindow.document); }
+    catch (e) { return; }
+    if (!d || !d.body || d.getElementById('ww-lock-style')) return;
+    try {
+      var SKIP = { SCRIPT:1, STYLE:1, LINK:1, NOSCRIPT:1, TEMPLATE:1 };
+      var pick = function (root) {
+        return Array.prototype.filter.call(root.children, function (el) { return !SKIP[el.tagName]; });
+      };
+      // Find the element whose CHILDREN are the page's sections. Two shapes occur
+      // in real output and they need different handling:
+      //   <body><nav><section>x6<footer>      -> split on body
+      //   <body><header><main>...</main><footer> -> split INSIDE main
+      // Splitting the second shape on <body> is the trap: body has three children,
+      // so "keep the header plus the first block" keeps the whole of <main> and
+      // locks nothing but the footer, i.e. the entire site is still visible and
+      // the cell silently becomes the control. Measured on real pages: 2 of 4
+      // sampled previews are that shape.
+      var host = d.body, blocks = pick(host), guard = 0;
+      while (blocks.length === 1 && blocks[0].children.length > 1 && guard++ < 3) {
+        host = blocks[0]; blocks = pick(host);
+      }
+      for (var m = 0; m < blocks.length; m++) {
+        if (blocks[m].tagName === 'MAIN' && pick(blocks[m]).length >= 3) {
+          host = blocks[m]; blocks = pick(host); break;
+        }
+      }
+      if (blocks.length < 3) return; // too few sections to truncate meaningfully
+      // Keep any leading header/nav, then the first real content section, sharp.
+      var keep = 0;
+      for (var i = 0; i < blocks.length; i++) {
+        var t = blocks[i].tagName;
+        if (t === 'HEADER' || t === 'NAV') { keep = i + 1; continue; }
+        keep = i + 1;
+        break;
+      }
+      if (keep >= blocks.length) return; // nothing left to lock
+      var st = d.createElement('style');
+      st.id = 'ww-lock-style';
+      st.textContent =
+        '.ww-locked{filter:blur(7px) saturate(.72);opacity:.55;pointer-events:none;user-select:none;}' +
+        '.ww-lock-bar{position:relative;z-index:2147483000;margin:0;padding:34px 20px 40px;text-align:center;' +
+        'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#FFF8E7;' +
+        'border-top:3px solid #12184A;border-bottom:3px solid #12184A;}' +
+        '.ww-lock-bar h3{margin:0 0 8px;font-size:26px;font-weight:900;color:#12184A;letter-spacing:-.02em;}' +
+        '.ww-lock-bar p{margin:0 auto 18px;font-size:15px;line-height:1.5;color:#12184A;opacity:.8;max-width:460px;}' +
+        '.ww-lock-bar button{background:#F7C84A;color:#12184A;border:2px solid #12184A;border-radius:12px;' +
+        'padding:15px 30px;font-size:17px;font-weight:900;cursor:pointer;font-family:inherit;}' +
+        '.ww-lock-bar small{display:block;margin-top:12px;font-size:12px;color:#12184A;opacity:.6;}';
+      d.head ? d.head.appendChild(st) : d.body.appendChild(st);
+
+      for (var j = keep; j < blocks.length; j++) blocks[j].classList.add('ww-locked');
+
+      var bar = d.createElement('div');
+      bar.className = 'ww-lock-bar';
+      bar.innerHTML =
+        '<h3>The rest of your site is ready.</h3>' +
+        '<p>This is your site, built from your own business. Unlock it and a real designer finishes ' +
+        'it with you, then it is yours on your own domain.</p>' +
+        '<button type="button" id="ww-unlock">Unlock my full site</button>' +
+        '<small>Free to build &middot; $50/month hosting &middot; cancel anytime</small>';
+      host.insertBefore(bar, blocks[keep]);
+      var btn = d.getElementById('ww-unlock');
+      if (btn) btn.addEventListener('click', function () {
+        // reveal_to_unlock_click is the metric that separates "won't pay" from
+        // "didn't want it". Keep the variant key shaped like every other
+        // try_events payload so historical comparison still works.
+        try { track('unlock_clicked', { variant: WW_OFFER || null }); } catch (e) {}
+        body.setAttribute('data-conv', 'on');
+        var cc = document.getElementById('convCard');
+        if (cc) cc.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+      try { track('reveal_truncated', { variant: WW_OFFER || null, locked_sections: blocks.length - keep }); } catch (e) {}
+    } catch (e) { /* fail open: full site rather than a broken one */ }
+  }
+  if (previewFrame) previewFrame.addEventListener('load', wwApplyTruncation);
 
   // "Make it real" now runs through a short design brief first, so a human
   // designer gets the work order (saved even if checkout is abandoned).

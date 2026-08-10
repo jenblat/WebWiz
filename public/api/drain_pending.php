@@ -46,7 +46,7 @@ foreach ($files as $f) {
             // silently lost its offer and the visitor was priced at $500 despite
             // arriving from the $100 or free cell.
             $__ww_off = $p['offer_variant'] ?? null;
-            if ($__ww_off !== null && in_array($__ww_off, ['a','b'], true)) {
+            if ($__ww_off !== null && in_array($__ww_off, ['a','b','u'], true)) {
                 try { $db->prepare("UPDATE jobs SET offer_variant=? WHERE id=?")->execute([$__ww_off, $jid]); }
                 catch (Throwable $e) { /* pricing falls back to default, never break the drain */ }
             }

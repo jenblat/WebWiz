@@ -274,7 +274,7 @@ if ($type === 'checkout.session.completed') {
     // the same reason a/b/c are: without it the test purchase would reach Meta
     // and try_events with an empty variant and would prove nothing about how a
     // real cell behaves. Everything it produces is filterable on variant='t'.
-    if (!in_array($ovariant, ['a', 'b', 'c', 't'], true)) $ovariant = '';
+    if (!in_array($ovariant, ['a', 'b', 'c', 'u', 't'], true)) $ovariant = '';
     $olead_id = (int)($obj['metadata']['lead_id'] ?? 0);
     $is_sub   = (string)($obj['mode'] ?? '') === 'subscription';
 

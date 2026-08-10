@@ -275,7 +275,7 @@ function ww_offer_test_key(): string {
  */
 function ww_offer_variant_from_request(): ?string {
     $o = strtolower(trim((string)($_GET['offer'] ?? '')));
-    if ($o === 'a' || $o === 'b') return $o;
+    if ($o === 'a' || $o === 'b' || $o === 'u') return $o;
     if ($o === 't' && ww_offer_test_key_ok((string)($_GET['k'] ?? ''))) return 't';
     return null;
 }

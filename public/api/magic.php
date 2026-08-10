@@ -82,7 +82,7 @@ try { $db->exec('PRAGMA busy_timeout = 30000'); } catch (Throwable $e) {}
             // visitor. A drain triggered from /o/a/try/ would stamp 'a' onto a
             // backfilled job that was never part of cell A, and price it there.
             $__ww_off = $p['offer_variant'] ?? null;
-            if ($__ww_off !== null && !in_array($__ww_off, ['a','b','t'], true)) { $__ww_off = null; }
+            if ($__ww_off !== null && !in_array($__ww_off, ['a','b','u','t'], true)) { $__ww_off = null; }
             if ($__ww_off !== null) {
                 try { $db->prepare("UPDATE jobs SET offer_variant=? WHERE id=?")->execute([$__ww_off, $jid]); }
                 catch (Throwable $e) { /* pricing falls back to default, never break generation */ }
@@ -982,7 +982,7 @@ try {
             // because ww_offer_variant_from_request() only returns it with a
             // valid ?k=, so a guessed ?offer=t can never mint a $1 job.
             $__ww_off = $persist_payload['offer_variant'] ?? null;
-            if ($__ww_off !== null && !in_array($__ww_off, ['a','b','t'], true)) { $__ww_off = null; }
+            if ($__ww_off !== null && !in_array($__ww_off, ['a','b','u','t'], true)) { $__ww_off = null; }
             if ($__ww_off !== null) {
                 try { $pdb->prepare("UPDATE jobs SET offer_variant=? WHERE id=?")->execute([$__ww_off, $jid]); }
                 catch (Throwable $e) { /* pricing falls back to default, never break generation */ }
