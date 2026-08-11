@@ -487,6 +487,10 @@ if ($type === 'checkout.session.completed') {
 elseif ($type === 'invoice.payment_succeeded') {
     try {
         require_once __DIR__ . '/_billing.php';
+        require_once __DIR__ . '/_gatemetrics.php';
+        // Every paid invoice, with its cell. Month-two retention is computed
+        // from these rows (billing_reason = 'subscription_cycle').
+        ww_gm_record_invoice(ww_db(), $obj, (string)($secrets['STRIPE_SECRET_KEY'] ?? ''));
         $sub   = (string)($obj['subscription'] ?? '');
         $email = (string)($obj['customer_email'] ?? '');
         if ($sub !== '' || $email !== '') {
@@ -707,6 +711,36 @@ elseif ($type === 'checkout.session.expired') {
                     'component' => 'webhook', 'reason' => 'checkout_recovery_failed',
                 ], 'error');
             }
+        }
+    }
+}
+
+// ---- Refunds and disputes: the flag-early signal for the gate test ----
+// Stored with the cell resolved AT WRITE TIME. A refund can land 30 days after
+// the sale and a dispute later still, by which point recovering which cell it
+// came from is expensive or impossible. Idempotency rides on the existing
+// stripe_events_seen claim plus a UNIQUE stripe_event_id on the row.
+elseif ($type === 'charge.refunded' || $type === 'charge.dispute.created' || $type === 'charge.dispute.closed') {
+    try {
+        require_once __DIR__ . '/_gatemetrics.php';
+        ww_gm_record_event(ww_db(), $WW_EVENT_ID, $type, $obj, null, (string)($secrets['STRIPE_SECRET_KEY'] ?? ''));
+        error_log('[webhook] billing_event recorded: ' . $type);
+        // A refund or dispute means someone paid for a site and wanted their
+        // money back. That is worth telling a human about immediately, not at
+        // the next time somebody happens to open the report.
+        if ($ADMIN_TO) {
+            $amt = dollars((int)($obj['amount_refunded'] ?? $obj['amount'] ?? 0));
+            brevo_send($BREVO_KEY, ['name' => 'WebWiz alerts', 'email' => $FROM_ADDR], $ADMIN_TO, null,
+                'WebWiz ' . ($type === 'charge.refunded' ? 'refund' : 'dispute') . ': ' . $amt,
+                '<p><strong>' . htmlspecialchars($type) . '</strong> for ' . htmlspecialchars($amt) . '.</p>'
+                . '<p>This is the flag-early signal from the gate test. Check /admin/gate_report.php.</p>');
+        }
+    } catch (Throwable $e) {
+        error_log('[webhook] billing_event failed: ' . $e->getMessage());
+        if (function_exists('ww_sentry_alert')) {
+            ww_sentry_alert('WebWiz could not record a refund or dispute', [
+                'component' => 'webhook', 'reason' => 'billing_event_record_failed',
+            ], 'error');
         }
     }
 }

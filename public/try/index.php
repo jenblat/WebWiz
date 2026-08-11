@@ -1613,18 +1613,31 @@ window.__TRY_INIT__ = {
       websiteField.classList.remove('invalid');
     }
     descField.classList.remove('invalid');
+    // Scroll the offending field into view before focusing it. The error text
+    // itself was already being surfaced (adding .invalid on the .field reveals
+    // its .err-msg), but on a short viewport the invalid field can sit below the
+    // fold, and relying on focus() alone to scroll leaves it browser-dependent.
+    // This makes it deterministic: the visitor always sees what is wrong.
+    var wwReject = function (el, field) {
+      try {
+        if (field) field.classList.add('invalid');
+        var target = field || el;
+        if (target && target.scrollIntoView) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (el && el.focus) setTimeout(function () { el.focus({ preventScroll: true }); }, 180);
+      } catch (e) { if (el && el.focus) el.focus(); }
+    };
     // Email is required for the nurture sequence.
     var emailEl = document.getElementById('lead_email');
     var emailVal = ((emailEl && emailEl.value) || '').trim();
     var emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailVal);
     var leadField = emailEl ? emailEl.closest('.field') : null;
     if (leadField) leadField.classList.toggle('invalid', !emailOk);
-    if (!emailOk) { if (emailEl) emailEl.focus(); return; }
+    if (!emailOk) { wwReject(emailEl, leadField); return; }
 
     var nameEl = document.getElementById('lead_name');
     var nameVal = ((nameEl && nameEl.value) || '').trim();
     var errName = document.getElementById('errName');
-    if (!nameVal) { if (nameEl) nameEl.focus(); if (errName) errName.style.display = 'block'; return; }
+    if (!nameVal) { wwReject(nameEl, nameEl ? nameEl.closest('.field') : null); if (errName) errName.style.display = 'block'; return; }
     if (errName) errName.style.display = 'none';
 
     track('form_submit', { has_website: !!web.value.trim(), description_length: desc.value.trim().length });

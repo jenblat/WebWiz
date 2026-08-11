@@ -463,12 +463,31 @@ try {
     ml_debug(sprintf('scrape done %.2fs imgs=%d', $scrape_dt, count($scrape['images'] ?? [])));
     ml_time('PHASE_1_scrape', $scrape_dt, ['images' => count($scrape['images'] ?? []), 'website' => $website]);
 
-    $biz = trim((string)($scrape['business_name'] ?? ''));
+    // THE VISITOR'S OWN INPUT WINS. This used to fall straight through to the
+    // scrape and only honoured $company in describe mode, so on any scraped site
+    // the name the person actually typed was discarded. When the source page's
+    // h1 is a paragraph rather than a name, that paragraph became the business
+    // name: jobs 1060 and 1070 both stored the same 474-character
+    // "Factory certifications from auto manufacturers like Tesla, Nissan..."
+    // block, and 1070 had been submitted as "ZZGATE Heritage Body and Frame".
+    // The rendered nav was fine, so it never showed, but business_name feeds the
+    // admin lists and the {{company}} merge tag in every nurture email.
+    $biz = '';
+    if ($company !== '') $biz = $company;
+    if ($biz === '') { $biz = trim((string)($scrape['business_name'] ?? '')); }
     if ($biz === '') { $biz = trim((string)($scrape['h1'][0] ?? '')); }
     if ($biz === '') { $t = trim((string)($scrape['title'] ?? '')); if ($t !== '') $biz = trim((string)preg_split('~[|\-\x{2013}\x{2014}:]~u', $t)[0]); }
     if ($biz === '') { $biz = preg_replace('~^www\.~', '', (string)(parse_url($website, PHP_URL_HOST) ?: 'Your Business')); }
+    // Backstop: a business name is a name, not a paragraph. If whatever we ended
+    // up with is prose, keep its first clause and fall back to the hostname when
+    // even that is unreasonable, so a bad scrape can never poison the merge tags.
+    if (mb_strlen($biz) > 80) {
+        $first = trim((string)preg_split('~(?<=[.!?])\s+|\s+[|]\s+~u', $biz)[0]);
+        $biz = (mb_strlen($first) > 0 && mb_strlen($first) <= 80)
+            ? $first
+            : preg_replace('~^www\.~', '', (string)(parse_url($website, PHP_URL_HOST) ?: mb_substr($biz, 0, 80)));
+    }
     $industry = '';
-    if ($describe && $company !== '') $biz = $company;
     // Soft-source detection: parallel HEAD over scraped images to capture
     // Content-Length, then flag is_soft for any image whose bytes/MP-at-requested-
     // dimensions ratio is under 0.30. Wix/Squarespace/etc happily upscale tiny
