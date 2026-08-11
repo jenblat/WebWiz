@@ -152,7 +152,138 @@ function ww_nurture_compute_next_send(string $created_at, int $step_just_sent, ?
  * Step 1-5 = front-loaded sequence. Step 6+ = monthly recurring,
  * alternating A (even step) and B (odd step).
  */
-function ww_nurture_template(int $step): array {
+/**
+ * Sequence for contacts who came from an /o/ FORM, not the builder.
+ *
+ * These people filled in the brief on a cell-C style offer page. They never saw
+ * a generated site, so there is no token and no preview_url. The main sequence
+ * cannot be reused: its step 1 is "The free website we made for {{company}}"
+ * with the eyebrow "YOUR FREE WEBSITE IS STILL LIVE" and a CTA pointing at
+ * {{preview_url}}, which for these contacts is untrue copy with a dead button on
+ * the end. That mismatch is why /o/ leads were enrolled PAUSED when
+ * offer_lead.php started enrolling them; this is the sequence that lets them be
+ * switched on.
+ *
+ * Two things shape the copy. First, they ASKED us for something specific, so the
+ * opening acknowledges that rather than announcing a thing they have not seen.
+ * Second, the strongest asset we have is the builder itself: a site for their
+ * business, from their own details, in about two minutes. So the CTA is "watch
+ * it get built", not "buy now" - it moves them from a form to the reveal, which
+ * is where the actual offer lives.
+ *
+ * Only {{name}} and {{company}} are merged here. {{preview_url}} is deliberately
+ * never used: for these contacts it silently falls back to /try/ and would read
+ * as a broken promise.
+ */
+function ww_nurture_template_offer_form(int $step): array {
+    $BUILD = NURTURE_DOMAIN . '/try/';
+    if ($step === 1) return [
+        'subject'         => 'Got your note about {{company}}',
+        'eyebrow'         => 'WE READ IT',
+        'hero_before'     => 'We got',
+        'hero_emphasized' => 'your brief.',
+        'paragraphs'      => [
+            "Hi <strong>{{name}}</strong>, thanks for telling us what you need for <strong>{{company}}</strong>. A real person on our team has read it, not a bot.",
+            "Here is the short version of how we work: you tell us what you want, a designer builds it, and you talk to that designer directly about every change until it is right. No logins, no dashboards, no learning a website builder.",
+            "If you want to see the shape of it first, you can watch a site for {{company}} build itself in about two minutes. It costs nothing and you do not need a card.",
+        ],
+        'cta_label'       => 'Watch it build itself',
+        'cta_url'         => $BUILD,
+        'subtext'         => 'Or just hit reply and tell me more. I read every one.',
+    ];
+    if ($step === 2) return [
+        'subject'         => 'What it actually costs',
+        'eyebrow'         => 'THE HONEST VERSION',
+        'hero_before'     => 'No',
+        'hero_emphasized' => 'surprises.',
+        'paragraphs' => [
+            "Hi <strong>{{name}}</strong>, quick and plain, because nobody likes chasing a price.",
+            "The build is free. You pay <strong>$50 a month</strong>, and that covers hosting, your domain set up for you, and unlimited changes by text or email. Cancel any time, no fee, and we send you your files.",
+            "A design studio would quote you three to five thousand for the same thing and then charge again every time you wanted a phone number changed. That is the whole difference.",
+        ],
+        'cta_label'       => 'See what we would build for {{company}}',
+        'cta_url'         => $BUILD,
+        'subtext'         => 'Questions about the price? Reply and ask me straight.',
+    ];
+    if ($step === 3) return [
+        'subject'         => 'The part people do not believe',
+        'eyebrow'         => 'A REAL DESIGNER, NOT A BOT',
+        'hero_before'     => 'A person',
+        'hero_emphasized' => 'finishes it.',
+        'paragraphs' => [
+            "Hi <strong>{{name}}</strong>, the bit people assume is marketing: a human designer on our team finishes your site properly, and you deal with them directly.",
+            "You will not be dragging blocks around at eleven at night. You email or text what you want changed, in your own words, and it gets done. That is what the monthly fee buys.",
+            "The AI gets you the first draft in two minutes so you are not staring at a blank page. The person makes it good.",
+        ],
+        'cta_label'       => 'Start with the free draft',
+        'cta_url'         => $BUILD,
+        'subtext'         => 'Want to talk to the designer first? Reply and I will set it up.',
+    ];
+    if ($step === 4) return [
+        'subject'         => 'What about your domain?',
+        'eyebrow'         => 'WE HANDLE THE FIDDLY PART',
+        'hero_before'     => 'We do the',
+        'hero_emphasized' => 'boring bits.',
+        'paragraphs' => [
+            "Hi <strong>{{name}}</strong>, the thing that stops most people is not the design, it is the plumbing.",
+            "If <strong>{{company}}</strong> already has a domain, we point it at the new site for you. If you do not have one yet, we get it and set it up. Business email too, if you want it.",
+            "You do not need to touch a nameserver or ring your old web guy. Send us the login or tell us who has it and we take it from there.",
+        ],
+        'cta_label'       => 'See your site first',
+        'cta_url'         => $BUILD,
+        'subtext'         => 'Not sure who controls your domain? Reply and we will work it out.',
+    ];
+    if ($step === 5) return [
+        'subject'         => "I'll stop crowding your inbox",
+        'eyebrow'         => 'TAKING A STEP BACK',
+        'hero_before'     => 'No',
+        'hero_emphasized' => 'pressure.',
+        'paragraphs' => [
+            "Hi <strong>{{name}}</strong>, I do not want to be a pest, so I will ease off and check in now and then instead.",
+            "Nothing expires. Whenever you are ready to sort out the website for <strong>{{company}}</strong>, reply to any of these and we will pick it straight up.",
+        ],
+        'cta_label'       => 'Build it whenever you like',
+        'cta_url'         => $BUILD,
+        'subtext'         => 'See you next month.',
+    ];
+    // Step 6+ monthly check-in, alternating so it does not read as a loop.
+    $is_a = ($step % 2) === 0;
+    if ($is_a) return [
+        // No {{name}} in this subject. The /o/ brief form does not capture a
+        // name, so it is ALWAYS empty for this sequence and merges to the
+        // fallback "there", giving "Still here when you need us, there".
+        'subject'         => 'Still here when you need us',
+        'eyebrow'         => 'MONTHLY HELLO',
+        'hero_before'     => 'Quick',
+        'hero_emphasized' => 'hello.',
+        'paragraphs' => [
+            "Hi <strong>{{name}}</strong>, quick hello from Wizzy. Still happy to build the site for <strong>{{company}}</strong> whenever the timing is right.",
+            "Free to build, $50 a month to keep, cancel any time.",
+        ],
+        'cta_label'       => 'Watch it build itself',
+        'cta_url'         => $BUILD,
+        'subtext'         => 'Reply any time.',
+    ];
+    return [
+        'subject'         => 'One question about {{company}}',
+        'eyebrow'         => 'A GENUINE QUESTION',
+        'hero_before'     => 'What is',
+        'hero_emphasized' => 'stopping you?',
+        'paragraphs' => [
+            "Hi <strong>{{name}}</strong>, honest question and I will take the answer either way: what is holding up the website for <strong>{{company}}</strong>?",
+            "If it is the money, say so and I will tell you if we can work something out. If it is timing, tell me when to come back. If you have sorted it elsewhere, tell me that and I will stop emailing.",
+        ],
+        'cta_label'       => 'Or just see what we would build',
+        'cta_url'         => $BUILD,
+        'subtext'         => 'A one line reply is plenty.',
+    ];
+}
+
+function ww_nurture_template(int $step, string $source = ''): array {
+    // Contacts captured by an /o/ offer form have no generated site, so they get
+    // a sequence that never references one. Everything else keeps the original
+    // preview-led sequence unchanged.
+    if ($source === 'offer_form') return ww_nurture_template_offer_form($step);
     if ($step === 1) return [
         'subject'         => 'The free website we made for {{company}}',
         'eyebrow'         => 'YOUR FREE WEBSITE IS STILL LIVE',
@@ -588,7 +719,7 @@ function ww_nurture_send_one(PDO $db, array $contact, string $brevo_key, string 
         return ['ok' => true, 'message_id' => null, 'send_id' => null, 'error' => null, 'skipped' => 'already_sent'];
     }
 
-    $tpl = ww_nurture_template($step);
+    $tpl = ww_nurture_template($step, (string)($contact["source"] ?? ""));
     $subject_merged = ww_nurture_apply_merge($tpl['subject'], $contact);
     $unsub_url      = ww_nurture_unsub_url((int)$contact['id'], $hmac_secret);
 
