@@ -480,11 +480,74 @@ if ($type === 'checkout.session.completed') {
     }
 }
 
+// invoice.payment_succeeded — the card came good. Restore instantly.
+// Runs BEFORE the failure branch below so an account that recovers mid-dunning
+// is put back the moment Stripe tells us, not on the next hourly cron tick. A
+// customer who has just paid must never see their own site still offline.
+elseif ($type === 'invoice.payment_succeeded') {
+    try {
+        require_once __DIR__ . '/_billing.php';
+        $sub   = (string)($obj['subscription'] ?? '');
+        $email = (string)($obj['customer_email'] ?? '');
+        if ($sub !== '' || $email !== '') {
+            $n = ww_billing_recover(ww_db(), $sub, $email);
+            if ($n > 0) error_log('[webhook] billing recovered rows=' . $n . ' sub=' . $sub);
+        }
+    } catch (Throwable $e) {
+        error_log('[webhook] billing recover failed: ' . $e->getMessage());
+        if (function_exists('ww_sentry_alert')) {
+            ww_sentry_alert('WebWiz could not restore a site after payment recovered', [
+                'component' => 'webhook', 'reason' => 'billing_recover_failed',
+            ], 'error');
+        }
+    }
+}
+
 elseif ($type === 'invoice.payment_failed') {
     $email = $obj['customer_email'] ?? null;
     $name  = (string)($obj['customer_name'] ?? '');
     $amt   = $obj['amount_due'] ?? null;
     $invoice = (string)($obj['hosted_invoice_url'] ?? '');
+
+    // Open (or refresh) the dunning record. This email IS day 0 of the schedule;
+    // cron_billing.php runs days 3, 7 and the suspension on day 8.
+    //
+    // Stripe fires invoice.payment_failed on EVERY retry of the same invoice, so
+    // ww_billing_open() is idempotent per subscription: an existing open record
+    // is refreshed, never reopened. Resetting failed_at on each retry would keep
+    // pushing the suspension date forward and the site would never come down,
+    // which is the failure mode where this feature silently does nothing.
+    try {
+        require_once __DIR__ . '/_billing.php';
+        $sub_id = (string)($obj['subscription'] ?? '');
+        $token  = '';
+        $biz    = '';
+        // Map the invoice back to the customer's site. offer_checkout.php stamps
+        // token/business_name onto the SUBSCRIPTION metadata as well as the
+        // session, which is the only handle available on an invoice event.
+        if ($sub_id !== '' && !empty($secrets['STRIPE_SECRET_KEY'])) {
+            $chs = curl_init('https://api.stripe.com/v1/subscriptions/' . urlencode($sub_id));
+            curl_setopt_array($chs, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_USERPWD => $secrets['STRIPE_SECRET_KEY'] . ':',
+                CURLOPT_TIMEOUT => 10,
+            ]);
+            $sr = json_decode((string)curl_exec($chs), true);
+            curl_close($chs);
+            $token = (string)($sr['metadata']['token'] ?? '');
+            $biz   = (string)($sr['metadata']['business_name'] ?? '');
+        }
+        ww_billing_open(ww_db(), [
+            'email'           => (string)$email,
+            'customer_id'     => (string)($obj['customer'] ?? ''),
+            'subscription_id' => $sub_id,
+            'token'           => $token,
+            'business_name'   => $biz,
+            'invoice_url'     => $invoice,
+        ]);
+    } catch (Throwable $e) {
+        error_log('[webhook] billing open failed: ' . $e->getMessage());
+    }
 
     $vars = [
         'first_name'         => first_name_from($name) ?: 'there',
