@@ -895,7 +895,7 @@ function ww_of(?array $OF, string $k, string $default): string {
           </style>
           <div class="lead-row">
             <div class="lead-col">
-              <label for="lead_name">Your name</label>
+              <label for="lead_name">Your name <span class="opt-tag">(required)</span></label>
               <input type="text" id="lead_name" name="name" autocomplete="name" placeholder="Your first name" required>
               <div class="err-msg" id="errName" style="color:#b34;font-size:13px;margin-top:6px;display:none;">Please add your name.</div>
             </div>
@@ -910,7 +910,7 @@ function ww_of(?array $OF, string $k, string $default): string {
             <div class="err-msg" id="errCompany">Tell Wizzy your business name.</div>
         </div>
         <div class="field" data-field="description">
-          <label for="description">Tell Wizzy about your business <span class="opt-tag">(required)</span></label>
+          <label for="description">Tell Wizzy about your business <span class="opt-tag">(required if you have no website)</span></label>
           <textarea id="description" name="description" rows="4" placeholder="We&rsquo;re a family bakery in Pawtucket. Custom cakes, weekend pastries, been here 15 years."></textarea>
           <div class="field-helper">No website yet? Give Wizzy a few sentences about what you do and he&rsquo;ll design from scratch.</div>
           <div class="err-msg">Give Wizzy a few sentences about your business (at least 20 characters) so he can design the right site.</div>
