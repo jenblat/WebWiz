@@ -87,18 +87,45 @@ try {
 } catch (Throwable $e) {}
 
 // Alert the team immediately - this is a hot lead who wants human help.
+// The alert carries the contact details, the commercial state (did they see a
+// price, did they reach Stripe) and the full engagement history, because the
+// old four-line version could not tell an abandoned checkout from a cold click.
 try {
     if (function_exists('ww_send_email')) {
-        $sx = @include '/var/www/sites/trywebwiz/secrets.php';
-        $to = (is_array($sx) && !empty($sx['NOTIFY_EMAIL'])) ? $sx['NOTIFY_EMAIL'] : 'ultimax97@gmail.com';
-        $h = function($s){ return htmlspecialchars((string)$s, ENT_QUOTES); };
-        $html = '<h2 style="color:#12184A">New design brief (wants a human)</h2>'
-              . '<p><b>Preview:</b> <a href="https://trywebwiz.com/try/?t=' . $h($token) . '">' . $h($token) . '</a></p>'
-              . ($contact !== '' ? ('<p><b>Contact:</b> ' . $h($contact) . '</p>') : '')
-              . '<p><b>What they want changed:</b><br>' . nl2br($h($changes)) . '</p>'
-              . ($notes !== '' ? ('<p><b>Anything else:</b><br>' . nl2br($h($notes)) . '</p>') : '')
-              . '<p style="color:#666;font-size:12px">Saved before payment, so follow up even if they do not check out.</p>';
-        ww_send_email(['email'=>$to,'name'=>'WebWiz Ops'], 'WebWiz - new design brief', $html);
+        require_once '/var/www/sites/trywebwiz/private/lib/lead_alert.php';
+
+        $snap  = ww_lead_snapshot($db, $token);
+        $brief = ['changes' => $changes, 'notes' => $notes, 'contact' => $contact];
+
+        // Did they write this, or did they submit the prefill of their old edits
+        // unchanged? Same question the designer would ask first.
+        $replayed = false;
+        try {
+            $pf = $db->prepare("SELECT message FROM edit_log WHERE token = ? AND message IS NOT NULL AND message <> '' ORDER BY id ASC");
+            $pf->execute([$token]);
+            $prior = [];
+            foreach ($pf->fetchAll(PDO::FETCH_COLUMN) as $m) {
+                $m = trim((string)$m);
+                if ($m !== '' && mb_strlen($m) <= 120 && !in_array($m, $prior, true)) $prior[] = $m;
+            }
+            if ($prior) {
+                $submitted = array_values(array_filter(array_map(
+                    fn($l) => trim(ltrim(trim($l), "-* \t")), explode("\n", $changes)
+                ), fn($l) => $l !== ''));
+                $replayed = $submitted && !array_diff($submitted, $prior);
+            }
+        } catch (Throwable $e) { /* the flag is a nicety, never block the alert */ }
+
+        $html    = ww_lead_alert_html($snap, $brief, $replayed);
+        $subject = ww_lead_alert_subject($snap);
+        $reply   = (string)($snap['job']['customer_email'] ?? '');
+
+        // One send per recipient: a bad address for one teammate must not
+        // silently swallow the other's copy.
+        foreach (ww_alert_recipients() as $rcpt) {
+            ww_send_email(['email' => $rcpt, 'name' => 'WebWiz Ops'], $subject, $html,
+                          $reply !== '' ? $reply : null);
+        }
     }
 } catch (Throwable $e) {
     // The brief IS saved at this point, but nobody has been told about it. Silence here
