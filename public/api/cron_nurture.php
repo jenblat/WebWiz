@@ -66,6 +66,14 @@ if ($lock_fh === false || !flock($lock_fh, LOCK_EX | LOCK_NB)) {
     exit(0);
 }
 
+// Resolve delivered-but-unrecorded sends before doing anything else. A 'pending'
+// row whose contact has already advanced past that step is an email Brevo
+// accepted and we failed to write down (SQLite lock). Left alone it sits as
+// 'pending' forever and reads as a backlog that someone will eventually be
+// tempted to "fix" by re-sending, which would double-mail real people.
+$reconciled = ww_nurture_reconcile_pending($db);
+if ($reconciled > 0) echo "Nurture reconcile: {$reconciled} delivered send(s) marked sent_unconfirmed.\n";
+
 $due = ww_nurture_due_contacts($db, $max_per_run);
 $started = microtime(true);
 

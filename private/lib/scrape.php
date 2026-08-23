@@ -251,18 +251,63 @@ function ww_http_get_many(array $urls, int $timeout = 12): array {
 }
 
 // Parallel HEAD-check; keep only images that respond 200-399 w/ image content-type (405/0 kept).
+// An image below these REAL pixel dimensions cannot carry a section or hero. It
+// is a nav slice, a spacer, a bullet or a sliced table-layout fragment.
+const WW_IMG_MIN_LONG_EDGE  = 400;
+const WW_IMG_MIN_SHORT_EDGE = 200;
+// Enough of the file to carry the dimension header of any format we accept.
+const WW_IMG_SNIFF_BYTES    = 65536;
+
+/**
+ * Validate that candidate images load AND are actually usable as photography.
+ *
+ * This used to be a HEAD request that checked only status + content-type. That
+ * verified an image EXISTS, which is not the same as it being usable, and the
+ * prompt then promised the model "every URL is verified to load". Nothing in the
+ * pipeline ever measured a real pixel dimension: ww_image_is_thumb/is_icon parse
+ * dimensions out of the URL string, and ww_image_is_soft returns false for
+ * anything under 600x400 (it only ever looked for upscaled-soft BIG images). So a
+ * site built from sliced table-layout graphics passed every filter.
+ *
+ * Measured live: madbanana.com serves M3_r1_c1.jpg .. M3_r3_c1.jpg at 72x81,
+ * 101x81 and 72x36 with no dimension hint in the URL and no width/height attrs.
+ * All nine sailed through, magic.php counted 9 usable images (>= the target of 7)
+ * so it generated NO real photography, and Sonnet stretched 72x81 fragments
+ * across full-width sections. Visual QA scored that page 38/100 on 2026-08-08:
+ * "severely pixelated/low-resolution section images throughout".
+ *
+ * So we now do a RANGED GET instead, read the real dimensions off the header
+ * bytes, and flag anything too small to be content. Flag rather than drop: the
+ * record stays in scrape_data for debugging, and magic.php's existing
+ * "usable < target -> pre-generate with Imagen" branch turns a junk-image site
+ * into a generated-photography site instead of a pixelated one.
+ *
+ * Fails OPEN. A parse failure, a server that ignores Range, an SVG (vector, no
+ * meaningful raster size) or a timeout all keep the image unflagged, because
+ * wrongly dropping a good photo is worse than keeping an unmeasured one.
+ */
 function ww_filter_live_images(array $images, int $max_check = 24, int $timeout = 6): array {
     if (!$images) return $images;
     $images = array_slice($images, 0, $max_check);
     $mh = curl_multi_init();
     $handles = [];
+    $buffers = [];
     foreach ($images as $i => $img) {
         $ch = curl_init($img['url']);
+        $buffers[$i] = '';
         curl_setopt_array($ch, [
-            CURLOPT_NOBODY => true, CURLOPT_RETURNTRANSFER => true, CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_RETURNTRANSFER => true, CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_MAXREDIRS => 3, CURLOPT_TIMEOUT => $timeout, CURLOPT_CONNECTTIMEOUT => 4,
             CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_RANGE => '0-' . (WW_IMG_SNIFF_BYTES - 1),
             CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
+            // Hard stop for servers that ignore Range and start streaming a 40MB
+            // original: returning less than the chunk length aborts the transfer.
+            CURLOPT_WRITEFUNCTION => function ($_c, $chunk) use (&$buffers, $i) {
+                $buffers[$i] .= $chunk;
+                if (strlen($buffers[$i]) >= WW_IMG_SNIFF_BYTES) return 0;
+                return strlen($chunk);
+            },
         ]);
         curl_multi_add_handle($mh, $ch);
         $handles[$i] = $ch;
@@ -274,8 +319,32 @@ function ww_filter_live_images(array $images, int $max_check = 24, int $timeout 
         $ctype = (string)(curl_getinfo($ch, CURLINFO_CONTENT_TYPE) ?? '');
         curl_multi_remove_handle($mh, $ch);
         curl_close($ch);
+        // 0 = aborted by our own write callback once we had enough bytes, which is
+        // a success. 206 = Range honoured. 405 = HEAD/Range refused, keep as before.
         $keep = ($code === 0 || $code === 405) || ($code >= 200 && $code < 400 && ($ctype === '' || stripos($ctype, 'image/') === 0));
-        if ($keep) $alive[] = $images[$i];
+        if (!$keep) continue;
+
+        $img = $images[$i];
+        $buf = $buffers[$i] ?? '';
+        $is_vector = (stripos($ctype, 'svg') !== false) || preg_match('~\.svgz?($|\?)~i', (string)$img['url']);
+        if ($buf !== '' && !$is_vector) {
+            $dims = @getimagesizefromstring($buf);
+            if (is_array($dims) && !empty($dims[0]) && !empty($dims[1])) {
+                $w = (int)$dims[0]; $h = (int)$dims[1];
+                $img['real_w'] = $w;
+                $img['real_h'] = $h;
+                $long = max($w, $h); $short = min($w, $h);
+                if ($long < WW_IMG_MIN_LONG_EDGE || $short < WW_IMG_MIN_SHORT_EDGE) {
+                    $img['is_tiny'] = true;
+                }
+                // NOTE: deliberately NOT feeding $clen into ww_image_is_soft() here.
+                // With CURLOPT_RANGE a 206 reports the RANGE length (64KB), not the
+                // file size, so every large photo would look like ~0.03 MB/MP and be
+                // wrongly flagged soft and dropped. magic.php already runs its own
+                // Content-Length soft pass with real HEAD requests; leave it there.
+            }
+        }
+        $alive[] = $img;
     }
     curl_multi_close($mh);
     return $alive;

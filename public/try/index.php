@@ -248,6 +248,46 @@ $WW_OFFER_PRICING = [
         'lead'     => 'Wizzy gets you the first draft. Then a <strong>real human designer</strong> on our team finishes it properly. Building it costs you nothing &mdash; you pay $50/month to host it. Here&rsquo;s what that covers:',
         'qa_price' => 'A designer would charge $3,000 to $5,000 to build this. At $50 a month with no build fee, how does that feel?',
     ],
+    // ---- TRUNCATED REVEAL cell (the gate test) ----
+    //
+    // NAMING. The brief called this "cell T", but 't' is already the guarded $1
+    // live-payment test cell and 'c' is already the tokenless brief-form cell.
+    // Reusing either would have repriced a live cell or made the $1 test
+    // unreachable, so this is 'u' for unlock. a/b/c/t are untouched and every
+    // existing report still filters on them exactly as before.
+    //
+    // PRICE IS HELD CONSTANT with cell b (free build, $50/month) on purpose. The
+    // variable under test is WHERE the ask sits relative to the reveal, not what
+    // it costs. $100 versus free is a price test on an offer nobody has accepted
+    // at any price, and it has produced zero conversions in two months.
+    //
+    // The hero and the first section stay fully sharp. Everything below is
+    // rendered, recognisably theirs, and locked. Blurring the hero would destroy
+    // the only structural advantage this product has: the visitor sees their own
+    // business rebuilt from their real scraped content with no prompting, which
+    // is precisely what ChatGPT and Lovable cannot do. The reference is Zety and
+    // Resume.io - build the whole resume, show the finished thing, gate the
+    // download.
+    'u' => [
+        'build_cents' => 0,
+        'truncate' => true,
+        'title'    => 'See your new website free. The build is free &middot; WebWiz',
+        'desc'     => 'See your new website free in minutes. The build costs nothing. You pay $50/month to host it, and that is the whole cost of having a website.',
+        'buy'      => 'Unlock my full site',
+        'anchor'   => 'Free to launch',
+        'save'     => 'Build free',
+        'micro'    => 'Free to preview &middot; free to launch &middot; $50/month hosting.',
+        'chip1'    => 'Free to launch',
+        'chip2'    => 'No build fee, ever',
+        'brief'    => 'Unlock my full site &mdash; free build',
+        'brief_js' => 'Unlock my full site — free build',
+        'big'      => '$50/month',
+        'save_big' => 'No build fee',
+        'conv_cta' => 'Unlock my full site &rarr;',
+        'pay_note' => 'The website is free. <strong>Getting started is $50</strong> &mdash; it covers your hosting and setup, then it&rsquo;s $50/month. Cancel anytime.',
+        'lead'     => 'This is your site, built from your own business. Wizzy gets you the first draft, then a <strong>real human designer</strong> on our team finishes it properly and you talk to them directly about every change you want. Building it costs you nothing &mdash; you pay $50/month to host it. Here&rsquo;s what that covers:',
+        'qa_price' => 'A designer would charge $3,000 to $5,000 to build this. At $50 a month with no build fee, how does that feel?',
+    ],
     // The guarded $1 live-payment TEST cell. Reached only via /o/t/try/?k=<secret>,
     // which 404s without the key. Present here so the builder half of the test
     // runs the real generator and mints a jobs row with offer_variant='t', which
@@ -612,9 +652,19 @@ function ww_of(?array $OF, string $k, string $default): string {
   body[data-cap="hit"] .suggested-row .sugchip{display:none;}
 
   /* When the conversion card takes over, hide the chat parts entirely. */
-  body[data-conv="on"] .chat-history,
-  body[data-conv="on"] .suggested-row,
-  body[data-conv="on"] .chat-input-row{display:none;}
+  /* RETIRED 2026-08-09: the AI edit chat.
+     It was the funnel's failure point, not a feature. The two deepest-engaged
+     sessions in the ad window both died here (Rod asked for blue and got green;
+     me@harrisonerd.com asked for a hero animation, did not get it, and asked for
+     a full redesign). The composer is hidden unconditionally rather than only
+     under data-conv so it cannot be reached by clearing an attribute, and
+     /api/edit.php answers 410 so no edit can be issued even if it were.
+     The DOM nodes stay in place deliberately: a dozen handlers still reference
+     chatInput/chatSend, and deleting the nodes would null-crash the script on
+     the reveal, which is the money path. */
+  .chat-history,
+  .suggested-row,
+  .chat-input-row{display:none!important;}
   body[data-conv="on"] .edit-panel{max-height:none;}
 
   /* ----------- Conversion (Phase 4) ----------- */
@@ -845,7 +895,7 @@ function ww_of(?array $OF, string $k, string $default): string {
           </style>
           <div class="lead-row">
             <div class="lead-col">
-              <label for="lead_name">Your name</label>
+              <label for="lead_name">Your name <span class="opt-tag">(required)</span></label>
               <input type="text" id="lead_name" name="name" autocomplete="name" placeholder="Your first name" required>
               <div class="err-msg" id="errName" style="color:#b34;font-size:13px;margin-top:6px;display:none;">Please add your name.</div>
             </div>
@@ -860,7 +910,7 @@ function ww_of(?array $OF, string $k, string $default): string {
             <div class="err-msg" id="errCompany">Tell Wizzy your business name.</div>
         </div>
         <div class="field" data-field="description">
-          <label for="description">Tell Wizzy about your business <span class="opt-tag">(required)</span></label>
+          <label for="description">Tell Wizzy about your business <span class="opt-tag">(required if you have no website)</span></label>
           <textarea id="description" name="description" rows="4" placeholder="We&rsquo;re a family bakery in Pawtucket. Custom cakes, weekend pastries, been here 15 years."></textarea>
           <div class="field-helper">No website yet? Give Wizzy a few sentences about what you do and he&rsquo;ll design from scratch.</div>
           <div class="err-msg">Give Wizzy a few sentences about your business (at least 20 characters) so he can design the right site.</div>
@@ -1376,19 +1426,24 @@ window.__TRY_INIT__ = {
     body.setAttribute('data-chat', state === 'open' ? 'open' : 'closed');
     try { track('chat_' + state); } catch (e) {}
   }
-  if (chatFab) chatFab.addEventListener('click', function () { setChat('open'); chatInput.focus(); });
+  if (chatFab) chatFab.addEventListener('click', function () { setChat('open'); body.setAttribute('data-conv','on'); });
   if (chatClose) chatClose.addEventListener('click', function () { setChat('closed'); });
   // Topbar "Customize" button opens the chat panel
   var topbarCustomize = document.getElementById('topbarCustomize');
   if (topbarCustomize) {
-    topbarCustomize.addEventListener('click', function () { setChat('open'); if (chatInput) chatInput.focus(); try { track('topbar_customize_click'); } catch(e){} });
+    topbarCustomize.addEventListener('click', function () { setChat('open'); body.setAttribute('data-conv','on'); try { track('topbar_customize_click'); } catch(e){} });
   }
 
   // If page is already hydrated to reveal (via /try/?t=<token>), init chrome open.
+  // This is the RETURNING visitor path and it does not go through setView(), so
+  // it needs data-conv set here too. Without it the panel opens with the chat
+  // hidden (the composer is display:none since the edit chat was retired) and
+  // #convCard still hidden, i.e. an empty panel with no offer in it.
   if (body.getAttribute('data-view') === 'reveal') {
     var dtNow = document.getElementById('deviceToggleTop');
     if (dtNow) dtNow.style.display = 'inline-flex';
     body.setAttribute('data-chat-init', '1');
+    body.setAttribute('data-conv', 'on');
     setChat('open');
   }
 
@@ -1455,14 +1510,25 @@ window.__TRY_INIT__ = {
   function setView(v){
     body.setAttribute('data-view', v);
     window.scrollTo({top:0, behavior:'smooth'});
-    // On reveal: show device toggle in topbar; chat starts OPEN.
+    // On reveal: show device toggle in topbar; the panel starts OPEN.
     var dt = document.getElementById('deviceToggleTop');
     if (dt) dt.style.display = (v === 'reveal' ? 'inline-flex' : 'none');
     if (v === 'reveal' && !body.hasAttribute('data-chat-init')) {
       body.setAttribute('data-chat-init', '1');
       body.setAttribute('data-chat', 'open');
+      // The AI edit chat is retired (2026-08-09). The reveal now opens straight
+      // onto the human handoff card instead of an editor the model could not
+      // deliver on. The two deepest-engaged sessions in the ad window both died
+      // in that chat: Rod asked for blue, got green, said "It's in green not
+      // blue" and left; me@harrisonerd.com asked for a specific hero animation,
+      // did not get it, said "redesign it completely the entire page" and left.
+      // data-conv="on" hides the chat history, the suggested chips and the input
+      // row, and shows #convCard - the offer that was previously only reachable
+      // by exhausting the edit cap.
+      body.setAttribute('data-conv', 'on');
     } else if (v !== 'reveal') {
       body.removeAttribute('data-chat');
+      body.removeAttribute('data-conv');
     }
   }
 
@@ -1547,18 +1613,31 @@ window.__TRY_INIT__ = {
       websiteField.classList.remove('invalid');
     }
     descField.classList.remove('invalid');
+    // Scroll the offending field into view before focusing it. The error text
+    // itself was already being surfaced (adding .invalid on the .field reveals
+    // its .err-msg), but on a short viewport the invalid field can sit below the
+    // fold, and relying on focus() alone to scroll leaves it browser-dependent.
+    // This makes it deterministic: the visitor always sees what is wrong.
+    var wwReject = function (el, field) {
+      try {
+        if (field) field.classList.add('invalid');
+        var target = field || el;
+        if (target && target.scrollIntoView) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (el && el.focus) setTimeout(function () { el.focus({ preventScroll: true }); }, 180);
+      } catch (e) { if (el && el.focus) el.focus(); }
+    };
     // Email is required for the nurture sequence.
     var emailEl = document.getElementById('lead_email');
     var emailVal = ((emailEl && emailEl.value) || '').trim();
     var emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailVal);
     var leadField = emailEl ? emailEl.closest('.field') : null;
     if (leadField) leadField.classList.toggle('invalid', !emailOk);
-    if (!emailOk) { if (emailEl) emailEl.focus(); return; }
+    if (!emailOk) { wwReject(emailEl, leadField); return; }
 
     var nameEl = document.getElementById('lead_name');
     var nameVal = ((nameEl && nameEl.value) || '').trim();
     var errName = document.getElementById('errName');
-    if (!nameVal) { if (nameEl) nameEl.focus(); if (errName) errName.style.display = 'block'; return; }
+    if (!nameVal) { wwReject(nameEl, nameEl ? nameEl.closest('.field') : null); if (errName) errName.style.display = 'block'; return; }
     if (errName) errName.style.display = 'none';
 
     track('form_submit', { has_website: !!web.value.trim(), description_length: desc.value.trim().length });
@@ -1589,7 +1668,7 @@ window.__TRY_INIT__ = {
       stopLoadingTickers();
       try { window.__wwStopQA && window.__wwStopQA(); } catch(e){}
       track('gen_completed', { duration_ms: Date.now() - __genT0 });
-      setTimeout(function(){ previewFrame.src = previewUrl; setView('reveal'); chatInput.focus(); track('reveal_viewed');
+      setTimeout(function(){ previewFrame.src = previewUrl; setView('reveal'); track('reveal_viewed');
         try { window.history.replaceState({t: token}, '', '/try/?t=' + encodeURIComponent(token)); window.__wwShareUrl = window.location.origin + '/try/?t=' + encodeURIComponent(token); } catch(e){}
       }, 500);
     };
@@ -1899,6 +1978,105 @@ window.__TRY_INIT__ = {
     body.removeAttribute('data-conv');
   }
   convBack.addEventListener('click', hideConvCard);
+
+  // ---------- TRUNCATED REVEAL (gate-test cell 'u') ----------
+  //
+  // The hero and the first content section stay FULLY SHARP. Everything below is
+  // rendered, recognisably theirs, and locked behind a blur with the section
+  // outlines still readable, and the ask sits exactly at that boundary.
+  //
+  // The hero is never blurred. The one structural advantage this product has is
+  // that the visitor sees their own business rebuilt from their real scraped
+  // content without typing a prompt, which is what ChatGPT and Lovable cannot do.
+  // Blurring that throws the advantage away before the ask. Reference model is
+  // Zety / Resume.io: build the whole thing, show the finished thing, gate the
+  // download.
+  //
+  // Done by injecting into the iframe document rather than overlaying the frame,
+  // because an overlay is fixed to the viewport and scrolling just slides clean
+  // content out from under it. /preview/ is same-origin with /try/, so this is
+  // allowed. It FAILS OPEN: any error and the visitor simply gets the full site,
+  // because showing too much is a lost upsell while showing a broken page is a
+  // lost customer.
+  var WW_TRUNCATE = <?= json_encode(!empty($OF['truncate'])) ?>;
+  function wwApplyTruncation(){
+    if (!WW_TRUNCATE) return;
+    var d;
+    try { d = previewFrame.contentDocument || (previewFrame.contentWindow && previewFrame.contentWindow.document); }
+    catch (e) { return; }
+    if (!d || !d.body || d.getElementById('ww-lock-style')) return;
+    try {
+      var SKIP = { SCRIPT:1, STYLE:1, LINK:1, NOSCRIPT:1, TEMPLATE:1 };
+      var pick = function (root) {
+        return Array.prototype.filter.call(root.children, function (el) { return !SKIP[el.tagName]; });
+      };
+      // Find the element whose CHILDREN are the page's sections. Two shapes occur
+      // in real output and they need different handling:
+      //   <body><nav><section>x6<footer>      -> split on body
+      //   <body><header><main>...</main><footer> -> split INSIDE main
+      // Splitting the second shape on <body> is the trap: body has three children,
+      // so "keep the header plus the first block" keeps the whole of <main> and
+      // locks nothing but the footer, i.e. the entire site is still visible and
+      // the cell silently becomes the control. Measured on real pages: 2 of 4
+      // sampled previews are that shape.
+      var host = d.body, blocks = pick(host), guard = 0;
+      while (blocks.length === 1 && blocks[0].children.length > 1 && guard++ < 3) {
+        host = blocks[0]; blocks = pick(host);
+      }
+      for (var m = 0; m < blocks.length; m++) {
+        if (blocks[m].tagName === 'MAIN' && pick(blocks[m]).length >= 3) {
+          host = blocks[m]; blocks = pick(host); break;
+        }
+      }
+      if (blocks.length < 3) return; // too few sections to truncate meaningfully
+      // Keep any leading header/nav, then the first real content section, sharp.
+      var keep = 0;
+      for (var i = 0; i < blocks.length; i++) {
+        var t = blocks[i].tagName;
+        if (t === 'HEADER' || t === 'NAV') { keep = i + 1; continue; }
+        keep = i + 1;
+        break;
+      }
+      if (keep >= blocks.length) return; // nothing left to lock
+      var st = d.createElement('style');
+      st.id = 'ww-lock-style';
+      st.textContent =
+        '.ww-locked{filter:blur(7px) saturate(.72);opacity:.55;pointer-events:none;user-select:none;}' +
+        '.ww-lock-bar{position:relative;z-index:2147483000;margin:0;padding:34px 20px 40px;text-align:center;' +
+        'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#FFF8E7;' +
+        'border-top:3px solid #12184A;border-bottom:3px solid #12184A;}' +
+        '.ww-lock-bar h3{margin:0 0 8px;font-size:26px;font-weight:900;color:#12184A;letter-spacing:-.02em;}' +
+        '.ww-lock-bar p{margin:0 auto 18px;font-size:15px;line-height:1.5;color:#12184A;opacity:.8;max-width:460px;}' +
+        '.ww-lock-bar button{background:#F7C84A;color:#12184A;border:2px solid #12184A;border-radius:12px;' +
+        'padding:15px 30px;font-size:17px;font-weight:900;cursor:pointer;font-family:inherit;}' +
+        '.ww-lock-bar small{display:block;margin-top:12px;font-size:12px;color:#12184A;opacity:.6;}';
+      d.head ? d.head.appendChild(st) : d.body.appendChild(st);
+
+      for (var j = keep; j < blocks.length; j++) blocks[j].classList.add('ww-locked');
+
+      var bar = d.createElement('div');
+      bar.className = 'ww-lock-bar';
+      bar.innerHTML =
+        '<h3>The rest of your site is ready.</h3>' +
+        '<p>This is your site, built from your own business. Unlock it and a real designer finishes ' +
+        'it with you, then it is yours on your own domain.</p>' +
+        '<button type="button" id="ww-unlock">Unlock my full site</button>' +
+        '<small>Free to build &middot; $50/month hosting &middot; cancel anytime</small>';
+      host.insertBefore(bar, blocks[keep]);
+      var btn = d.getElementById('ww-unlock');
+      if (btn) btn.addEventListener('click', function () {
+        // reveal_to_unlock_click is the metric that separates "won't pay" from
+        // "didn't want it". Keep the variant key shaped like every other
+        // try_events payload so historical comparison still works.
+        try { track('unlock_clicked', { variant: WW_OFFER || null }); } catch (e) {}
+        body.setAttribute('data-conv', 'on');
+        var cc = document.getElementById('convCard');
+        if (cc) cc.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+      try { track('reveal_truncated', { variant: WW_OFFER || null, locked_sections: blocks.length - keep }); } catch (e) {}
+    } catch (e) { /* fail open: full site rather than a broken one */ }
+  }
+  if (previewFrame) previewFrame.addEventListener('load', wwApplyTruncation);
 
   // "Make it real" now runs through a short design brief first, so a human
   // designer gets the work order (saved even if checkout is abandoned).

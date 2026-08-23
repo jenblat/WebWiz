@@ -65,6 +65,43 @@ try {
     });
     $lead_id = (int)$db->lastInsertId();
 
+    // ---- Nurture enrollment ----
+    // offer_leads was a dead end: a row, a Stripe session, and nothing else ever.
+    // Marketingcasey9@gmail.com (ids 17 and 18, 2026-08-08) opened Stripe twice at
+    // $50, both expired unpaid, and heard nothing afterwards because she was never
+    // in nurture_contacts. She is the closest anyone has come to buying.
+    //
+    // ENROLLED PAUSED ON PURPOSE. The live 5-step sequence is written for someone
+    // who has a generated preview: step 1 is subject "The free website we made for
+    // {{company}}", eyebrow "YOUR FREE WEBSITE IS STILL LIVE", body "this is the
+    // website we built for X, free of charge, and it's still live", and the CTA
+    // points at {{preview_url}}. A /o/ form lead has NO generated site and NO
+    // preview_url, so that copy is a flat untruth with a broken button on the end.
+    // Enrolling them active would have shipped exactly the mismatched copy we were
+    // told not to ship. Paused means they are captured, deduped, visible in the
+    // admin and reachable the moment a suitable sequence exists, and meanwhile a
+    // human gets the notification email below.
+    // TO ACTIVATE: write an offer-form sequence (no preview_url, no "we already
+    // built it"), then flip these contacts to active.
+    $nurture_id = 0;
+    try {
+        require_once __DIR__ . '/_nurture.php';
+        if (function_exists('ww_nurture_upsert_contact')) {
+            $nurture_id = (int)ww_nurture_upsert_contact($db, [
+                'email'   => $contact,
+                'name'    => '',
+                'company' => $business,
+                'source'  => 'offer_form',
+                'status'  => 'paused',
+            ]);
+        }
+    } catch (Throwable $e) {
+        // A lead that is saved but not enrolled is recoverable; losing the lead is not.
+        error_log('[offer_lead] nurture enroll failed: ' . $e->getMessage());
+        ww_report('offer_lead', 'offer_lead_nurture_enroll_failed',
+            'WebWiz offer lead saved but nurture enrollment failed', ['lead_id' => $lead_id], 'warning', $e, 0);
+    }
+
     try {
         // try_events has no 'detail' column - variant goes in payload.
         $db->prepare("INSERT INTO try_events (event, payload, ip, user_agent) VALUES ('offer_lead', ?, ?, ?)")

@@ -106,6 +106,12 @@ $OFFERS = [
     'a' => ['build' => 10000, 'monthly' => 5000, 'trial' => 30, 'label' => 'WebWiz website build'],
     'b' => ['build' => 0,     'monthly' => 5000, 'trial' => 0,  'label' => 'WebWiz hosting & care'],
     'c' => ['build' => 0,     'monthly' => 5000, 'trial' => 0,  'label' => 'WebWiz hosting & care'],
+    // U = the truncated-reveal gate test. Economically IDENTICAL to b on purpose:
+    // the variable under test is where the ask sits relative to the reveal, not
+    // the price. If these ever diverge the test stops measuring gate position and
+    // silently becomes another price test, which is the thing that already
+    // produced zero conversions in two months.
+    'u' => ['build' => 0,     'monthly' => 5000, 'trial' => 0,  'label' => 'WebWiz hosting & care'],
     // t  $1 build + $1/month, no trial. The guarded live-payment test cell.
     //    Not an offer: it exists so a real card can be pushed through this exact
     //    file, Stripe, webhook.php and the receipt, which has never happened for

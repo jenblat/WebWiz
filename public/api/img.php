@@ -33,7 +33,11 @@ function svg_placeholder(string $label = ''): void {
     }
     if ($initials === '') $initials = 'WW';
     header('Content-Type: image/svg+xml');
-    header('Cache-Control: public, max-age=86400');
+    // NEVER cache a failure - see the same change in genimg.php. A dead upstream,
+    // a slow host or an 8s timeout is usually transient, but `max-age=86400` made
+    // the resulting monogram permanent for a day in the visitor's browser and any
+    // CDN in front of us, so the retry that would have fixed it never happened.
+    header('Cache-Control: no-store, max-age=0');
     echo '<?xml version="1.0" encoding="UTF-8"?>';
     echo '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" preserveAspectRatio="xMidYMid slice">';
     echo '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="' . $bg . '"/><stop offset="100%" stop-color="' . $fg . '" stop-opacity="0.18"/></linearGradient></defs>';

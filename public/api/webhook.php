@@ -274,7 +274,7 @@ if ($type === 'checkout.session.completed') {
     // the same reason a/b/c are: without it the test purchase would reach Meta
     // and try_events with an empty variant and would prove nothing about how a
     // real cell behaves. Everything it produces is filterable on variant='t'.
-    if (!in_array($ovariant, ['a', 'b', 'c', 't'], true)) $ovariant = '';
+    if (!in_array($ovariant, ['a', 'b', 'c', 'u', 't'], true)) $ovariant = '';
     $olead_id = (int)($obj['metadata']['lead_id'] ?? 0);
     $is_sub   = (string)($obj['mode'] ?? '') === 'subscription';
 
@@ -480,11 +480,78 @@ if ($type === 'checkout.session.completed') {
     }
 }
 
+// invoice.payment_succeeded — the card came good. Restore instantly.
+// Runs BEFORE the failure branch below so an account that recovers mid-dunning
+// is put back the moment Stripe tells us, not on the next hourly cron tick. A
+// customer who has just paid must never see their own site still offline.
+elseif ($type === 'invoice.payment_succeeded') {
+    try {
+        require_once __DIR__ . '/_billing.php';
+        require_once __DIR__ . '/_gatemetrics.php';
+        // Every paid invoice, with its cell. Month-two retention is computed
+        // from these rows (billing_reason = 'subscription_cycle').
+        ww_gm_record_invoice(ww_db(), $obj, (string)($secrets['STRIPE_SECRET_KEY'] ?? ''));
+        $sub   = (string)($obj['subscription'] ?? '');
+        $email = (string)($obj['customer_email'] ?? '');
+        if ($sub !== '' || $email !== '') {
+            $n = ww_billing_recover(ww_db(), $sub, $email);
+            if ($n > 0) error_log('[webhook] billing recovered rows=' . $n . ' sub=' . $sub);
+        }
+    } catch (Throwable $e) {
+        error_log('[webhook] billing recover failed: ' . $e->getMessage());
+        if (function_exists('ww_sentry_alert')) {
+            ww_sentry_alert('WebWiz could not restore a site after payment recovered', [
+                'component' => 'webhook', 'reason' => 'billing_recover_failed',
+            ], 'error');
+        }
+    }
+}
+
 elseif ($type === 'invoice.payment_failed') {
     $email = $obj['customer_email'] ?? null;
     $name  = (string)($obj['customer_name'] ?? '');
     $amt   = $obj['amount_due'] ?? null;
     $invoice = (string)($obj['hosted_invoice_url'] ?? '');
+
+    // Open (or refresh) the dunning record. This email IS day 0 of the schedule;
+    // cron_billing.php runs days 3, 7 and the suspension on day 8.
+    //
+    // Stripe fires invoice.payment_failed on EVERY retry of the same invoice, so
+    // ww_billing_open() is idempotent per subscription: an existing open record
+    // is refreshed, never reopened. Resetting failed_at on each retry would keep
+    // pushing the suspension date forward and the site would never come down,
+    // which is the failure mode where this feature silently does nothing.
+    try {
+        require_once __DIR__ . '/_billing.php';
+        $sub_id = (string)($obj['subscription'] ?? '');
+        $token  = '';
+        $biz    = '';
+        // Map the invoice back to the customer's site. offer_checkout.php stamps
+        // token/business_name onto the SUBSCRIPTION metadata as well as the
+        // session, which is the only handle available on an invoice event.
+        if ($sub_id !== '' && !empty($secrets['STRIPE_SECRET_KEY'])) {
+            $chs = curl_init('https://api.stripe.com/v1/subscriptions/' . urlencode($sub_id));
+            curl_setopt_array($chs, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_USERPWD => $secrets['STRIPE_SECRET_KEY'] . ':',
+                CURLOPT_TIMEOUT => 10,
+            ]);
+            $sr = json_decode((string)curl_exec($chs), true);
+            curl_close($chs);
+            $token = (string)($sr['metadata']['token'] ?? '');
+            $biz   = (string)($sr['metadata']['business_name'] ?? '');
+        }
+        ww_billing_open(ww_db(), [
+            'email'           => (string)$email,
+            'customer_id'     => (string)($obj['customer'] ?? ''),
+            'subscription_id' => $sub_id,
+            'token'           => $token,
+            'business_name'   => $biz,
+            'invoice_url'     => $invoice,
+        ]);
+    } catch (Throwable $e) {
+        error_log('[webhook] billing open failed: ' . $e->getMessage());
+    }
 
     $vars = [
         'first_name'         => first_name_from($name) ?: 'there',
@@ -511,6 +578,170 @@ elseif ($type === 'invoice.payment_failed') {
             $admin['subject'],
             $admin['html']
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// checkout.session.expired — abandoned checkout recovery.
+//
+// Expired sessions used to trigger nothing at all. Marketingcasey9@gmail.com
+// opened Stripe twice at $50 on 2026-08-08, both expired unpaid, and heard
+// nothing afterwards. She is the closest anyone has come to buying.
+//
+// TIMING. Subscription churn is front-loaded: 55% of cancellations happen on day
+// zero and 84% within a day, so the recovery window here is hours, not days.
+// Stripe expires a Checkout Session ~24h after creation, which means this event
+// is ALREADY at the edge of useful. It is sent immediately on receipt; there is
+// deliberately no multi-step drip, because by the time a second mail would land
+// the window is closed.
+//
+// THE ORDERING TRAP. Stripe fires expired for a session up to 24h after it was
+// created, and it fires even when the customer paid through a DIFFERENT session
+// in the meantime. So "expired" does NOT mean "did not buy", and emailing on it
+// blindly would send "you left something behind" to somebody who has already
+// paid. Every send is therefore gated on a live purchase check first.
+// ---------------------------------------------------------------------------
+elseif ($type === 'checkout.session.expired') {
+    $sid      = (string)($obj['id'] ?? '');
+    $email    = $obj['customer_email'] ?? ($obj['customer_details']['email'] ?? null);
+    $biz      = (string)($obj['metadata']['business_name'] ?? '');
+    $token    = (string)($obj['metadata']['token'] ?? '');
+    $lead_id  = (int)($obj['metadata']['lead_id'] ?? 0);
+    $ovariant = strtolower(trim((string)($obj['metadata']['offer_variant'] ?? '')));
+    $email    = is_string($email) ? strtolower(trim($email)) : '';
+
+    if ($email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        try {
+            require_once __DIR__ . '/../../private/webwiz_lib.php';
+            $rdb = ww_db();
+            $rdb->exec("CREATE TABLE IF NOT EXISTS checkout_recovery (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                email      TEXT NOT NULL,
+                session_id TEXT,
+                token      TEXT,
+                lead_id    INTEGER,
+                variant    TEXT,
+                status     TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            )");
+            $rdb->exec("CREATE INDEX IF NOT EXISTS idx_recovery_email ON checkout_recovery(email)");
+
+            $record = function (string $status) use ($rdb, $email, $sid, $token, $lead_id, $ovariant) {
+                try {
+                    $st = $rdb->prepare("INSERT INTO checkout_recovery (email, session_id, token, lead_id, variant, status) VALUES (?,?,?,?,?,?)");
+                    ww_db_write_retry(function () use ($st, $email, $sid, $token, $lead_id, $ovariant, $status) {
+                        return $st->execute([$email, $sid, $token ?: null, $lead_id ?: null, $ovariant ?: null, $status]);
+                    });
+                } catch (Throwable $e) { error_log('[webhook] recovery record failed: ' . $e->getMessage()); }
+            };
+
+            // GUARD 1 - did they already buy? Checked across every place a
+            // purchase is recorded, because a token checkout and a tokenless /o/c
+            // checkout land in different tables.
+            $purchased = false;
+            try {
+                $q = $rdb->prepare("SELECT COUNT(*) FROM offer_leads WHERE lower(contact) = ? AND status = 'purchased'");
+                $q->execute([$email]);
+                if ((int)$q->fetchColumn() > 0) $purchased = true;
+            } catch (Throwable $e) {}
+            if (!$purchased) {
+                try {
+                    $q = $rdb->prepare("SELECT COUNT(*) FROM nurture_contacts WHERE lower(email) = ? AND status = 'purchased'");
+                    $q->execute([$email]);
+                    if ((int)$q->fetchColumn() > 0) $purchased = true;
+                } catch (Throwable $e) {}
+            }
+
+            // GUARD 2 - the cap. One person opening checkout three times produces
+            // three expired events roughly 24h apart; they get ONE email. 30 days
+            // is deliberately long: a second "you left something behind" to the
+            // same person is noise, not recovery.
+            $capped = false;
+            if (!$purchased) {
+                try {
+                    $q = $rdb->prepare("SELECT COUNT(*) FROM checkout_recovery WHERE email = ? AND status = 'sent' AND created_at > datetime('now','-30 days')");
+                    $q->execute([$email]);
+                    if ((int)$q->fetchColumn() > 0) $capped = true;
+                } catch (Throwable $e) {}
+            }
+
+            if ($purchased) {
+                $record('suppressed_purchased');
+                error_log('[webhook] recovery suppressed (already purchased) for ' . $email);
+            } elseif ($capped) {
+                $record('suppressed_capped');
+                error_log('[webhook] recovery suppressed (capped) for ' . $email);
+            } else {
+                $first = first_name_from((string)($obj['customer_details']['name'] ?? ''));
+                $hello = $first !== '' ? 'Hi ' . htmlspecialchars($first, ENT_QUOTES) . ',' : 'Hi,';
+                $what  = $biz !== '' ? ('the site for <strong>' . htmlspecialchars($biz, ENT_QUOTES) . '</strong>') : 'your site';
+                $back  = $token !== ''
+                    ? 'https://trywebwiz.com/try/?t=' . urlencode($token)
+                    : 'https://trywebwiz.com/try/';
+                $html =
+                    '<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:16px;line-height:1.55;color:#12184A;">'
+                  . '<p>' . $hello . '</p>'
+                  . '<p>You started checking out for ' . $what . ' and the payment page timed out before it went through. Nothing was charged.</p>'
+                  . '<p>Your preview is still here if you want to pick it up:</p>'
+                  . '<p><a href="' . htmlspecialchars($back, ENT_QUOTES) . '" style="display:inline-block;background:#F7C84A;color:#12184A;border:2px solid #12184A;border-radius:10px;padding:12px 22px;text-decoration:none;font-weight:800;">Pick up where you left off</a></p>'
+                  . '<p>If something got in the way, or you just want a person to walk you through it, reply to this email and one of us will answer. A real designer finishes every site we build, so if there is something you want changed before you commit, tell us and we will do it.</p>'
+                  . '<p>Wizzy at WebWiz</p></div>';
+                $text = "You started checking out for your site and the payment page timed out before it went through. Nothing was charged.\n\n"
+                      . "Your preview is still here: $back\n\nReply to this email if you would like a person to walk you through it.\n\nWizzy at WebWiz";
+                $ok = brevo_send(
+                    $BREVO_KEY,
+                    ['name' => 'Wizzy at WebWiz', 'email' => 'wizzy@trywebwiz.com'],
+                    ['email' => $email],
+                    ['name' => 'Wizzy at WebWiz', 'email' => 'hello@trywebwiz.com'],
+                    'Your site is still here',
+                    $html,
+                    $text
+                );
+                $record($ok ? 'sent' : 'failed');
+                error_log('[webhook] recovery email ' . ($ok ? 'sent' : 'FAILED') . ' to ' . $email);
+                try {
+                    $rdb->prepare("INSERT INTO try_events (event, token, payload) VALUES ('checkout_recovery_sent', ?, ?)")
+                        ->execute([$token ?: null, json_encode(['variant' => $ovariant ?: null, 'ok' => $ok ? 1 : 0], JSON_UNESCAPED_SLASHES)]);
+                } catch (Throwable $e) {}
+            }
+        } catch (Throwable $e) {
+            error_log('[webhook] checkout.session.expired handler failed: ' . $e->getMessage());
+            if (function_exists('ww_sentry_alert')) {
+                ww_sentry_alert('WebWiz abandoned-checkout recovery failed', [
+                    'component' => 'webhook', 'reason' => 'checkout_recovery_failed',
+                ], 'error');
+            }
+        }
+    }
+}
+
+// ---- Refunds and disputes: the flag-early signal for the gate test ----
+// Stored with the cell resolved AT WRITE TIME. A refund can land 30 days after
+// the sale and a dispute later still, by which point recovering which cell it
+// came from is expensive or impossible. Idempotency rides on the existing
+// stripe_events_seen claim plus a UNIQUE stripe_event_id on the row.
+elseif ($type === 'charge.refunded' || $type === 'charge.dispute.created' || $type === 'charge.dispute.closed') {
+    try {
+        require_once __DIR__ . '/_gatemetrics.php';
+        ww_gm_record_event(ww_db(), $WW_EVENT_ID, $type, $obj, null, (string)($secrets['STRIPE_SECRET_KEY'] ?? ''));
+        error_log('[webhook] billing_event recorded: ' . $type);
+        // A refund or dispute means someone paid for a site and wanted their
+        // money back. That is worth telling a human about immediately, not at
+        // the next time somebody happens to open the report.
+        if ($ADMIN_TO) {
+            $amt = dollars((int)($obj['amount_refunded'] ?? $obj['amount'] ?? 0));
+            brevo_send($BREVO_KEY, ['name' => 'WebWiz alerts', 'email' => $FROM_ADDR], $ADMIN_TO, null,
+                'WebWiz ' . ($type === 'charge.refunded' ? 'refund' : 'dispute') . ': ' . $amt,
+                '<p><strong>' . htmlspecialchars($type) . '</strong> for ' . htmlspecialchars($amt) . '.</p>'
+                . '<p>This is the flag-early signal from the gate test. Check /admin/gate_report.php.</p>');
+        }
+    } catch (Throwable $e) {
+        error_log('[webhook] billing_event failed: ' . $e->getMessage());
+        if (function_exists('ww_sentry_alert')) {
+            ww_sentry_alert('WebWiz could not record a refund or dispute', [
+                'component' => 'webhook', 'reason' => 'billing_event_record_failed',
+            ], 'error');
+        }
     }
 }
 

@@ -32,7 +32,18 @@ Thumbs.db
 .vscode/
 *.swp
 private/sessions/
-public/api/_*.php
+# Throwaway deploy helpers only (the token-gated _x_write.php pattern), NOT the
+# permanent libraries. This rule used to be `public/api/_*.php`, which was added
+# on 2026-07-14 to ignore "one-shot helpers" but also silently swallowed every
+# real library in that directory. _email_templates.php, _meta.php, _nurture.php
+# and _session.php only survive because they were committed BEFORE the rule
+# existed and git does not ignore tracked files.
+#
+# It bit on 2026-08-11: a new public/api/_billing.php was written, `git add` said
+# nothing, the commit went through without it, and the two files that require it
+# would have fatalled on a clean checkout. Narrowed so the next library does not
+# vanish the same way.
+public/api/_x_*.php
 
 # Sentry rollout (2026-07-29)
 *.bak-*
