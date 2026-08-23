@@ -238,6 +238,52 @@ and production visual QA (82/100, no critical issues), emitted `<header>`/
 `<main>`, zero gradient blobs, no banned phrases. **Cost is now ~4 Anthropic
 calls per job instead of 3** — still far under the $1.50 `job_max_cost_usd` cap.
 
+## 2026-08-06: the worker was not running at all (showcase capture "failure")
+
+The visible symptom was paired `sh: 1: cd: can't cd to .../private/qa-tools` +
+`[showcase] job #NNN capture failed` lines. The cause was one thing, and it was
+not the showcase code: **the worker cron ran as `nobody`.**
+
+**The cron line is in `/etc/crontab` line 24, NOT `/etc/cron.d/`** (nothing under
+`/etc/cron.d` mentions WebWiz, and `crontab -l -u nobody` says "no crontab").
+`private/` is `750 www-data:www-data`, and `nobody` (uid 65534) is not www-data
+and not in its group, so it cannot **traverse** `private/` at all. Therefore:
+
+- `cd .../private/qa-tools` → EACCES. That error goes to the **shell's own
+  stderr**; the `2>&1` in `ww_capture_showcase_local()` only ever applied to
+  `node`, which is why a bare `sh:` line landed in the log next to a `capture
+  failed` with no explanation.
+- `ww_secrets()` could not read the secrets either, so `SCREENSHOTMACHINE_KEY`
+  came back empty and the SMC path returned false **before** any HTTP call —
+  that is why the local fallback was reached on every single job. SMC was never
+  broken. Run as www-data it captures in ~4s.
+- More seriously, php could not open `private/worker.php` itself, and cron's
+  `>> logs/worker.log` (also 750 www-data) failed before php even started. **The
+  worker was silently dead from 2026-05-26 12:11 to 2026-08-06** — worker.log's
+  mtime, the newest `failed` job and the last `upload_batches` row all stop at
+  that same timestamp. Generation kept working only because `/api/magic.php`
+  does it synchronously in the web request, as www-data.
+
+**Fix: `/etc/crontab` line 24 now runs the worker as `www-data`** (backup at
+`/etc/crontab.bak-20260806-worker-user`). That is the only correct user —
+everything the worker writes (`public/preview/*`, the SQLite DB, `logs/`) is
+www-data-owned, and the three other WebWiz crons already run as www-data from
+`crontab -u www-data`. Loosening `private/` was rejected: it would hand the
+secrets to every uid on the box, and adding `nobody` to the www-data group grants
+the same read anyway, so it buys no isolation. Relocating `qa-tools` out of
+`private/` fixes nothing, since `worker.php` is itself inside `private/`.
+
+`ww_capture_showcase_local()` also no longer shells out via `cd`: it invokes
+`showcase.js` by **absolute path** (the script needs only node built-ins, so the
+cwd bought nothing — `ww_render_screenshots()` above always did it this way), and
+it now prints `rc=` plus the captured output on failure instead of leaking a bare
+`sh:` line. A non-www-data caller gets an explicit
+`[showcase] local capture unavailable: cannot read ... as uid 65534`.
+
+Verified as www-data on real jobs: SMC path true in 4.2s (104KB jpg), local
+Chrome fallback true in 6.2s (146KB jpg), both written www-data-owned. 133 jobs
+were missing a showcase; the every-minute cron backfills 20 per run.
+
 ## 2026-08-07: the de-templating had missed the live funnel
 
 **`build_user_prompt()`'s `$dna`/`$brief` params default to `[]`, so a caller that
@@ -516,10 +562,6 @@ Adding a new cell means adding it to **every** whitelist:
 `offer_variant` and a returning visitor is priced from the legacy $500 funnel.
 
 ## Known issues not fixed
-- Worker log shows `sh: 1: cd: can't cd to .../private/qa-tools` for every
-  showcase capture, so `ww_generate_missing_showcases()` never succeeds and
-  retries the same jobs forever. `private/` is 750/www-data and the worker cron
-  is documented as running `sudo -u nobody`. Unrelated to generation quality.
 - `/opt/seedsite/scripts/backup.sh` line ~20 contains a **plaintext PostgreSQL
   password**. Should move to the SeedSite secrets manager.
 - ~69G of existing local backups remain. Deleting them is Omar's call.
