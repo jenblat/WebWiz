@@ -1,10 +1,44 @@
 <?php
-// /api/edit.php — Wizzy edit chat backend for the /try ad-funnel.
-// POST { token, message } → reads current /preview/<token>/v1/index.html,
-// asks Sonnet to apply the requested tweak, writes the updated HTML back,
-// returns { ok, edits_remaining, preview_url, reply }.
-// Enforces a 5-edit hard cap per token, server-side.
+// /api/edit.php — RETIRED 2026-08-09. Owner's call.
+//
+// This was the Wizzy edit chat backend for the /try ad-funnel: POST {token,
+// message}, ask Sonnet to apply the tweak, write the HTML back, 5-edit cap.
+//
+// It is retired because it was the funnel's failure point, not a feature. The
+// two deepest-engaged sessions in the whole ad window both died here:
+//   - Rod Donaciano asked for blue, got green, said "It's in green not blue",
+//     and left.
+//   - me@harrisonerd.com asked for a specific hero animation, did not get it,
+//     said "redesign it completely the entire page", and left.
+// Those are people who WANTED the product. An AI editor that cannot reliably
+// change a colour loses them at the exact moment they are most engaged, and it
+// is not going to get good enough to be worth that risk. The reveal now opens
+// directly onto the human handoff (#convCard + the design brief), which is also
+// the actual offer: a real designer finishes it.
+//
+// The endpoint answers 410 Gone rather than being deleted so that any cached
+// page, in-flight retry or bookmarked client gets a clear, non-5xx answer
+// instead of a fatal. The UI no longer calls it.
+//
+// DELIBERATELY PRESERVED: the `edit_log` table and the /preview/<token>/edits/
+// directories. That is the historical record of what people actually asked for,
+// which is the best evidence we have about what a human designer will be asked
+// to do. Do not drop either.
 declare(strict_types=1);
+header('Content-Type: application/json');
+header('Cache-Control: no-store');
+http_response_code(410);
+echo json_encode([
+    'ok'    => false,
+    'error' => 'The edit chat has been retired. Tell us what you want changed and a designer will do it.',
+    'gone'  => true,
+]);
+exit;
+
+// ---------------------------------------------------------------------------
+// Everything below is the retired implementation, kept for reference only and
+// unreachable past the exit above.
+// ---------------------------------------------------------------------------
 @set_time_limit(360); // hard backstop; covers one long (~300s) model call + overhead
 ignore_user_abort(true);
 header('Content-Type: application/json');
@@ -478,6 +512,31 @@ try {
     ee_log_finish($db, $log_id, 'fail', $emsg, (int)round((microtime(true) - $t0) * 1000));
     try { $db->prepare("INSERT INTO try_events (event, token, session_id, payload) VALUES ('edit_failed', ?, NULL, ?)")->execute([$token, json_encode(['error'=>mb_substr($emsg,0,300)])]); } catch (Throwable $te) {}
     ee_alert($token, $message, $emsg);
+    // Sentry as well as the email. ee_alert() is throttled to ONE message per 10 minutes
+    // globally, so a burst of editor failures produced a single mail and nothing to trend
+    // against - which is how an editor outage stayed invisible. Sentry groups and counts.
+    // reason is a BOUNDED classifier, never the raw message: ww_sentry_alert() fingerprints
+    // on (component, reason), so passing raw text would shatter this into one issue per edit.
+    if (function_exists('ww_sentry_alert')) {
+        $lc = strtolower($emsg);
+        $reason = 'edit_failed_other';
+        if (strpos($lc, 'timed out') !== false)                  $reason = 'edit_model_timeout';
+        elseif (strpos($lc, 'did not return html') !== false)    $reason = 'edit_model_no_html';
+        elseif (strpos($lc, 'model call error') !== false)       $reason = 'edit_model_call_error';
+        elseif (strpos($lc, 'could not save') !== false)         $reason = 'edit_save_failed';
+        elseif (strpos($lc, 'database is locked') !== false)     $reason = 'edit_db_locked';
+        elseif (strpos($lc, 'no usable') !== false)              $reason = 'edit_no_usable_html';
+        ww_sentry_alert('WebWiz edit failed', [
+            'component'    => 'edit',
+            'reason'       => $reason,
+            'token'        => $token,
+            'job_id'       => $job['id'] ?? null,
+            'edit_no'      => ($used ?? null),
+            'image_count'  => ($imgc ?? 0),
+            'elapsed_ms'   => (int)round((microtime(true) - $t0) * 1000),
+            'detail'       => mb_substr($emsg, 0, 300),
+        ], 'error', $e);
+    }
     // A timeout on a big edit gets a helpful "smaller steps" hint; everything else stays generic-on-us.
     $friendly = (stripos($emsg, 'timed out') !== false || stripos($emsg, 'did not return HTML') !== false || stripos($emsg, 'model call error') !== false)
         ? "That was a big edit and it didn't finish in time. Try it in smaller steps - for example change the look and feel first, then add one feature at a time."

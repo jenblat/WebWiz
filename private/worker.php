@@ -287,11 +287,160 @@ function extract_html(string $text): ?string {
 }
 
 /**
+ * Strip em/en dashes from VISIBLE COPY. The em dash is the single most recognisable
+ * "written by AI" tell in body text, and telling the model not to use one is not
+ * reliable enough on its own — this is the deterministic backstop that runs on every
+ * shipped page.
+ *
+ * Only text nodes are touched. <script> and <style> are cut out first (a dash inside
+ * CSS content:"—" or a JS string must survive), and attributes are left alone, so this
+ * can never corrupt markup, selectors or URLs.
+ *
+ * Replacement is a COMMA, not a period. A comma can never turn the second half into a
+ * sentence fragment; the worst case is a mild comma splice, which reads as ordinary
+ * informal marketing copy. A period would read better for two independent clauses and
+ * badly for everything else, and we cannot tell which is which without parsing.
+ */
+function ww_dedash_copy(string $html): string {
+    // Protect script/style blocks by swapping them for placeholders.
+    $stash = [];
+    $html = preg_replace_callback('~<(script|style)\b[^>]*>.*?</\1>~is', function ($m) use (&$stash) {
+        $k = "\x01WWSTASH" . count($stash) . "\x02";
+        $stash[$k] = $m[0];
+        return $k;
+    }, $html);
+
+    $html = preg_replace_callback('~>([^<]+)<~', function ($m) {
+        $t = $m[1];
+        if (strpos($t, '&') !== false) {
+            $t = str_ireplace(['&mdash;', '&ndash;', '&#8212;', '&#8211;', '&#x2014;', '&#x2013;'], '—', $t);
+        }
+        if (strpos($t, '—') === false && strpos($t, '–') === false && strpos($t, '--') === false) return $m[0];
+
+        // Testimonial/quote attribution ("— Jane Smith"): drop the dash, never comma it.
+        $t = preg_replace('~^(\s*)[—–]\s*~u', '$1', $t);
+        // Numeric ranges (9–5, 2020–2024) read as a plain hyphen.
+        $t = preg_replace('~(\d)\s*[—–]\s*(\d)~u', '$1-$2', $t);
+        // Everything else: dash acting as punctuation, spaced or not, incl. ASCII "--".
+        $t = preg_replace('~\s*(?:—|–|--)\s*~u', ', ', $t);
+        // Tidy the seams the substitution can create.
+        $t = preg_replace('~\s+,~u', ',', $t);
+        $t = preg_replace('~,\s*,~u', ',', $t);
+        $t = preg_replace('~,\s*([.!?;:])~u', '$1', $t);
+        $t = preg_replace('~([.!?;:])\s*,~u', '$1', $t);
+        $t = preg_replace('~,\s*$~u', '', $t);
+        return '>' . $t . '<';
+    }, $html);
+
+    return $stash ? strtr($html, $stash) : $html;
+}
+
+/**
  * Post-generation polish applied to every shipped variant:
  *  - force the footer copyright year to the CURRENT year (never a stale/hardcoded one)
  *  - add UTM tracking to the "Designed by WebWiz" backlink so WebWiz can attribute traffic.
+ *  - strip em/en dashes from visible copy (see ww_dedash_copy)
  */
+/**
+ * Keep a preview out of the search index.
+ *
+ * A preview is a single self-contained HTML file at /preview/<token>/v1/index.html
+ * with no auth and, until 2026-08-09, no robots directive. 971 directories were
+ * being publicly served and were fully crawlable: robots.txt disallowed only
+ * /wp-admin/, /admin/ and /api/.
+ *
+ * The tag goes in the FILE rather than in server config or .htaccess on purpose.
+ * This box runs OpenLiteSpeed, the static file is served directly without touching
+ * PHP (so no header can be added at request time by our code), and a directive
+ * that lives in the document travels with it no matter what serves it. robots.txt
+ * is updated too, but that file is stamped "Managed by SeedSite SEO" and can be
+ * regenerated from under us, so it cannot be the only defence.
+ *
+ * This is friction proportional to the price, not DRM. Anything rendered in a
+ * browser can be copied, and this does not pretend otherwise - it stops the site
+ * being FOUND by someone who was not given the link, which is the actual leak.
+ */
+function ww_noindex_html(string $html): string {
+    if (stripos($html, 'name="robots"') !== false || stripos($html, "name='robots'") !== false) {
+        return $html;
+    }
+    $tag = '<meta name="robots" content="noindex,nofollow,noarchive,noimageindex">';
+    // Prefer just after <head>; fall back to before </head>, then to the top.
+    if (preg_match('~<head\b[^>]*>~i', $html, $m, PREG_OFFSET_CAPTURE)) {
+        $at = $m[0][1] + strlen($m[0][0]);
+        return substr($html, 0, $at) . $tag . substr($html, $at);
+    }
+    if (stripos($html, '</head>') !== false) {
+        return preg_replace('~</head>~i', $tag . '</head>', $html, 1) ?? $html;
+    }
+    return $tag . $html;
+}
+
+/**
+ * Replace stock-photo URLs the model invented with real generated photography.
+ *
+ * Measured 2026-08-10 across the 300 most recent shipped previews: 17 of them
+ * (5.7%) carried an images.unsplash.com URL that was in NO source data. The
+ * scrape never produced it and the Imagen pre-generation never produced it - the
+ * model wrote a plausible-looking Unsplash photo id from memory and proxied it
+ * through /api/img.php. Four separate problems come out of that:
+ *
+ *  1. The ids are guesses, and some are wrong. 1 of 12 sampled returned 404, and
+ *     a 404 through img.php is served as the branded monogram placeholder, which
+ *     is exactly the "empty image box" defect visual QA rejects a page for.
+ *  2. It is generic stock. The entire pitch is that this is YOUR business rebuilt
+ *     from YOUR content; a stock office photo is precisely what ChatGPT or
+ *     Lovable would hand back, so it throws away the differentiator.
+ *  3. The alt text is often unrelated to the business ("Alaska media landscape"
+ *     on a creative services firm), because the id was recalled, not chosen.
+ *  4. We had already paid to generate real photography for that page and the
+ *     model ignored it, so ~$0.28 of Imagen spend per affected job bought
+ *     nothing, and the shipped page hotlinks a third party we do not control.
+ *
+ * A prompt rule alone does not hold - the em dash proved that, 298 of 300 pages
+ * carried one despite explicit instructions - so this is the deterministic
+ * backstop and the prompt rule is the belt.
+ *
+ * Deliberately narrow. Only <img> tags, and only the known stock-photo hosts.
+ * Scraped client images legitimately arrive from every CDN under the sun (Wix,
+ * Squarespace, Cloudinary, shopify), so a general "external host" rule would
+ * throw away real photos of the actual business. <iframe> is untouched, so
+ * YouTube and Vimeo embeds still work.
+ */
+function ww_enforce_image_sources(string $html): string {
+    $stock = '~(^|\.)(unsplash\.com|pexels\.com|pixabay\.com|shutterstock\.com|istockphoto\.com|gettyimages\.com)$~i';
+    return preg_replace_callback('~<img\b[^>]*>~i', function ($m) use ($stock) {
+        $tag = $m[0];
+        if (!preg_match('~\bsrc\s*=\s*(["\'])(.*?)\1~is', $tag, $s)) return $tag;
+        $src = html_entity_decode($s[2], ENT_QUOTES | ENT_HTML5);
+        // Unwrap our own proxy so a stock URL hidden inside ?u= is still seen.
+        $target = $src;
+        if (preg_match('~/api/img\.php\?(.*)$~i', $src, $q)) {
+            parse_str(html_entity_decode($q[1], ENT_QUOTES | ENT_HTML5), $params);
+            if (!empty($params['u'])) $target = (string)$params['u'];
+        }
+        $host = (string)parse_url($target, PHP_URL_HOST);
+        if ($host === '' || !preg_match($stock, $host)) return $tag;
+
+        // Build the replacement prompt from the alt text, which is what the model
+        // intended the picture to show. Falls back to the proxy's label.
+        $alt = '';
+        if (preg_match('~\balt\s*=\s*(["\'])(.*?)\1~is', $tag, $a)) {
+            $alt = trim(html_entity_decode($a[2], ENT_QUOTES | ENT_HTML5));
+        }
+        if ($alt === '' && isset($params['l'])) $alt = trim((string)$params['l']);
+        $alt = preg_replace('~\s+~u', ' ', $alt);
+        if (mb_strlen($alt) < 4) $alt = 'professional photograph for a small business website';
+        $prompt = mb_substr('Editorial photograph, natural light, realistic: ' . $alt, 0, 300);
+        $new = '/api/genimg.php?prompt=' . rawurlencode($prompt) . '&ar=4:3&l=' . rawurlencode(mb_substr($alt, 0, 60));
+        return preg_replace('~\bsrc\s*=\s*(["\']).*?\1~is', 'src="' . htmlspecialchars($new, ENT_QUOTES) . '"', $tag, 1);
+    }, $html) ?? $html;
+}
+
 function ww_polish_html(string $html, string $clientUrl = ''): string {
+    $html = ww_dedash_copy($html);
+    $html = ww_noindex_html($html);
+    $html = ww_enforce_image_sources($html);
     $year = date('Y');
     $html = preg_replace('/(©|&copy;|Copyright)\s*20\d{2}/iu', '${1} ' . $year, $html);
     $u = (strpos($clientUrl, '://') === false && $clientUrl !== '') ? 'https://' . $clientUrl : $clientUrl;
@@ -356,6 +505,16 @@ The single worst outcome is a page that could be swapped onto another company's 
 - Decoration by reflex: a blurred radial-gradient blob behind the hero, a generic logo marquee, uniform drop-shadowed rounded cards in a 3-up grid. Use these ONLY if the assigned ornament language actually calls for them.
 - Filler stats you cannot source. Never invent "500+ Projects" or "20 Years" unless that number appears in the source data.
 
+WRITE LIKE A PERSON, NOT LIKE A MODEL
+Prose gives away a generated page faster than the layout does. These are hard rules:
+- NO EM DASHES OR EN DASHES. Not one, anywhere in visible copy. No "—", no "–", no " -- ". Use a comma, a full stop, or brackets. This is the single most recognisable tell there is, and it is checked.
+- No abstract virtue headings. "Uncompromising Integrity", "Unwavering Commitment", "Relentless Excellence", "Built on Trust", "Our Core Values" say nothing. Name the actual thing the business does or promises: "We send the same report to you and the lender", "Owners see the maintenance invoices".
+- No anaphora triads. "Every decision, every communication, every report..." and "From X to Y to Z..." are pure model cadence. Say it once, concretely.
+- No "not just X, but Y" / "we don't just X, we Y" / "it's more than X, it's Y".
+- Banned vocabulary: elevate, empower, unlock, seamless, robust, leverage, delve, realm, landscape, tapestry, testament, journey, curated, bespoke, holistic, synergy, "transform your", "take your X to the next level", "in today's fast-paced world", "at the end of the day".
+- Vary sentence length. A three-word sentence next to a twenty-word one reads human; every sentence landing at 12-18 words reads generated.
+- Prefer concrete nouns and real specifics from the source data (place names, services, numbers, hours, neighbourhoods) over adjectives. One true detail beats three confident adjectives.
+
 FORBIDDEN
 - Chatbots, popups, cookie banners. Fake testimonials. Lorem Ipsum. External JS frameworks. Links to URLs not in source data. "Sign In" on non-SaaS sites. Any opacity:0 reveal without CSS-only animation. Empty sections. Cropped faces/bodies. Reusing an image URL.
 
@@ -367,11 +526,19 @@ TXT;
 
 function build_user_prompt(array $scrape, string $biz, string $industry, int $variant_n, array $dna = [], array $brief = []): string {
     $imgs = $scrape['images'] ?? [];
-    $photo_imgs  = array_values(array_filter($imgs, fn($i) => empty($i['is_logo']) && empty($i['is_thumb']) && empty($i['is_team_card']) && empty($i['is_cutout']) && empty($i['is_portrait'])));
-    $cutout_imgs = array_values(array_filter($imgs, fn($i) => (!empty($i['is_cutout']) || !empty($i['is_portrait'])) && empty($i['is_logo'])));
-    $team_card_imgs = array_values(array_filter($imgs, fn($i) => !empty($i['is_team_card'])));
+    // is_tiny is set by ww_filter_live_images() from the image's REAL measured
+    // pixel size. It must be excluded from every pool that can become visible
+    // content: a 72x81 sliced table fragment is not a photo, not a cutout and not
+    // even a usable thumbnail. Letting those through is what scored a page 38/100
+    // on 2026-08-08. is_icon was never excluded from the photo pool either, so a
+    // clipart glyph could be picked as a hero. Logos are exempt: the nav wordmark
+    // is legitimately small and is placed by rule, not chosen as photography.
+    $content = fn($i) => empty($i['is_tiny']) && empty($i['is_icon']);
+    $photo_imgs  = array_values(array_filter($imgs, fn($i) => $content($i) && empty($i['is_logo']) && empty($i['is_thumb']) && empty($i['is_team_card']) && empty($i['is_cutout']) && empty($i['is_portrait']) && empty($i['is_soft'])));
+    $cutout_imgs = array_values(array_filter($imgs, fn($i) => $content($i) && (!empty($i['is_cutout']) || !empty($i['is_portrait'])) && empty($i['is_logo'])));
+    $team_card_imgs = array_values(array_filter($imgs, fn($i) => $content($i) && !empty($i['is_team_card'])));
     $logo_imgs = array_values(array_filter($imgs, fn($i) => !empty($i['is_logo'])));
-    $thumb_imgs = array_values(array_filter($imgs, fn($i) => !empty($i['is_thumb']) && empty($i['is_logo']) && empty($i['is_team_card']) && empty($i['is_cutout'])));
+    $thumb_imgs = array_values(array_filter($imgs, fn($i) => $content($i) && !empty($i['is_thumb']) && empty($i['is_logo']) && empty($i['is_team_card']) && empty($i['is_cutout'])));
     $strip = fn($arr) => array_map(fn($i) => ['url' => $i['url'], 'alt' => $i['alt']], $arr);
     $scrape_summary = [
         'business_name' => $biz, 'industry' => $industry ?: 'unknown', 'current_url' => $scrape['url'] ?? '',
@@ -407,6 +574,13 @@ IMAGE PICKING GUIDE
 - images.team_card = ONLY for testimonial cards (name/title baked in).
 - images.logo = ONLY in the nav.
 - Every URL is verified to load. NEVER use the same URL twice.
+- NEVER invent an image URL. Every src you write must be copied verbatim from the
+  lists above, or be a /api/genimg.php?prompt=... URL you construct. Writing a
+  stock-photo URL from memory (images.unsplash.com/photo-..., pexels, pixabay,
+  shutterstock, getty) is forbidden: those ids are guesses, some of them 404 into
+  an empty grey box, and generic stock is the exact thing that makes a site look
+  like every other AI site. If you need a picture that the source data does not
+  contain, generate one with /api/genimg.php and describe it precisely.
 
 REQUIREMENTS
 - Complete HTML with embedded <style> and <script>. Finish the document - end with </html>.

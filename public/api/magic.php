@@ -82,7 +82,7 @@ try { $db->exec('PRAGMA busy_timeout = 30000'); } catch (Throwable $e) {}
             // visitor. A drain triggered from /o/a/try/ would stamp 'a' onto a
             // backfilled job that was never part of cell A, and price it there.
             $__ww_off = $p['offer_variant'] ?? null;
-            if ($__ww_off !== null && !in_array($__ww_off, ['a','b','t'], true)) { $__ww_off = null; }
+            if ($__ww_off !== null && !in_array($__ww_off, ['a','b','u','t'], true)) { $__ww_off = null; }
             if ($__ww_off !== null) {
                 try { $db->prepare("UPDATE jobs SET offer_variant=? WHERE id=?")->execute([$__ww_off, $jid]); }
                 catch (Throwable $e) { /* pricing falls back to default, never break generation */ }
@@ -463,12 +463,31 @@ try {
     ml_debug(sprintf('scrape done %.2fs imgs=%d', $scrape_dt, count($scrape['images'] ?? [])));
     ml_time('PHASE_1_scrape', $scrape_dt, ['images' => count($scrape['images'] ?? []), 'website' => $website]);
 
-    $biz = trim((string)($scrape['business_name'] ?? ''));
+    // THE VISITOR'S OWN INPUT WINS. This used to fall straight through to the
+    // scrape and only honoured $company in describe mode, so on any scraped site
+    // the name the person actually typed was discarded. When the source page's
+    // h1 is a paragraph rather than a name, that paragraph became the business
+    // name: jobs 1060 and 1070 both stored the same 474-character
+    // "Factory certifications from auto manufacturers like Tesla, Nissan..."
+    // block, and 1070 had been submitted as "ZZGATE Heritage Body and Frame".
+    // The rendered nav was fine, so it never showed, but business_name feeds the
+    // admin lists and the {{company}} merge tag in every nurture email.
+    $biz = '';
+    if ($company !== '') $biz = $company;
+    if ($biz === '') { $biz = trim((string)($scrape['business_name'] ?? '')); }
     if ($biz === '') { $biz = trim((string)($scrape['h1'][0] ?? '')); }
     if ($biz === '') { $t = trim((string)($scrape['title'] ?? '')); if ($t !== '') $biz = trim((string)preg_split('~[|\-\x{2013}\x{2014}:]~u', $t)[0]); }
     if ($biz === '') { $biz = preg_replace('~^www\.~', '', (string)(parse_url($website, PHP_URL_HOST) ?: 'Your Business')); }
+    // Backstop: a business name is a name, not a paragraph. If whatever we ended
+    // up with is prose, keep its first clause and fall back to the hostname when
+    // even that is unreasonable, so a bad scrape can never poison the merge tags.
+    if (mb_strlen($biz) > 80) {
+        $first = trim((string)preg_split('~(?<=[.!?])\s+|\s+[|]\s+~u', $biz)[0]);
+        $biz = (mb_strlen($first) > 0 && mb_strlen($first) <= 80)
+            ? $first
+            : preg_replace('~^www\.~', '', (string)(parse_url($website, PHP_URL_HOST) ?: mb_substr($biz, 0, 80)));
+    }
     $industry = '';
-    if ($describe && $company !== '') $biz = $company;
     // Soft-source detection: parallel HEAD over scraped images to capture
     // Content-Length, then flag is_soft for any image whose bytes/MP-at-requested-
     // dimensions ratio is under 0.30. Wix/Squarespace/etc happily upscale tiny
@@ -512,7 +531,12 @@ try {
         ml_debug("soft-source detect: flagged $soft_count of " . count($cand_imgs));
     } catch (Throwable $e) { ml_debug('soft detect failed: ' . $e->getMessage()); }
 
-    $usable = array_values(array_filter($scrape['images'] ?? [], fn($i) => empty($i['is_logo']) && empty($i['is_thumb']) && empty($i['is_team_card']) && empty($i['is_icon']) && empty($i['is_soft'])));
+    // is_tiny = measured real pixel size below content threshold (see
+    // ww_filter_live_images). Excluding it here is what makes the Imagen
+    // pre-generation branch below fire for a junk-image site: madbanana.com
+    // presented 9 sliced 72x81 fragments, which counted as 9 "usable" images,
+    // cleared the target of 7, and so generated ZERO real photography.
+    $usable = array_values(array_filter($scrape['images'] ?? [], fn($i) => empty($i['is_logo']) && empty($i['is_thumb']) && empty($i['is_team_card']) && empty($i['is_icon']) && empty($i['is_soft']) && empty($i['is_tiny'])));
 
     // Save the REAL scraped images so the editor can offer "use my real photos" later.
     $scrape_data_json = null;
@@ -780,22 +804,36 @@ try {
                     . "and specifics (years in business, neighborhoods, signature offerings) in the hero and copy.";
     }
 
+    // Per-variant design DNA + one client art-direction brief (private/lib/design.php).
+    // THIS PATH IS THE LIVE /try/ FUNNEL - it does not go through the worker queue, so it
+    // needs its own DNA/brief exactly like private/worker.php. build_user_prompt() defaults
+    // $dna and $brief to [], which means omitting them silently produces an EMPTY art
+    // direction, and the model falls straight back to its house style (Manrope/Fraunces).
+    $ww_brief = ww_art_direction_brief($scrape, $biz, $industry, null);
+    $ww_brief_cost = (float)($ww_brief['_cost_usd'] ?? 0);
+    ml_debug('art direction brief: ' . ($ww_brief
+        ? count($ww_brief['sections'] ?? []) . ' sections, ' . count($ww_brief['palette'] ?? []) . ' palette'
+        : 'unavailable (proceeding without)'));
+
     $reqs = [];
+    $ww_dna = [];
     for ($i = 1; $i <= $v; $i++) {
-        $user_content = build_user_prompt($scrape, $biz, $industry, $i) . $desc_block;
+        $ww_dna[$i] = ww_design_dna((string)$token, $i);
+        $user_content = build_user_prompt($scrape, $biz, $industry, $i, $ww_dna[$i], $ww_brief) . $desc_block;
         $reqs[$i] = ['system' => $system, 'messages' => [['role' => 'user', 'content' => $user_content]]];
+        ml_debug("v{$i} type: {$ww_dna[$i]['type']['display']} / {$ww_dna[$i]['type']['body']}");
     }
 
     ml_debug('anthropic begin');
     $tA = microtime(true);
-    $res = anthropic_multi('claude-sonnet-4-6', $reqs, 14000, 0.7, null, ['</html>']);
+    $res = anthropic_multi('claude-sonnet-4-6', $reqs, 14000, 1.0, null, ['</html>']);
     $gen_dt = microtime(true)-$tA;
     ml_debug(sprintf('anthropic done %.2fs', $gen_dt));
     ml_time('PHASE_2_sonnet_gen', $gen_dt, ['variants' => $v, 'industry' => $detected_industry_slug]);
     // Track the user content of the first variant for later QA regen
     $first_user_content = $reqs[1]['messages'][0]['content'] ?? '';
 
-    $htmls = []; $cost = 0.0; $rejected = [];
+    $htmls = []; $cost = $ww_brief_cost; $rejected = [];
     foreach ($reqs as $i => $_) {
         $cost += (float)($res[$i]['cost_usd'] ?? 0);
         $cand = finalize_html($res[$i]['text'] ?? '');
@@ -825,7 +863,7 @@ try {
         // Retry once -- most empty results are a transient API timeout/rate-limit.
         ml_debug('no usable site on first pass -- retrying generation once');
         try {
-            $res2 = anthropic_multi('claude-sonnet-4-6', $reqs, 14000, 0.7, null, ['</html>']);
+            $res2 = anthropic_multi('claude-sonnet-4-6', $reqs, 14000, 0.9, null, ['</html>']);
             foreach ($res2 as $ri => $_) {
                 $cost += (float)($res2[$ri]['cost_usd'] ?? 0);
                 $rc = finalize_html($res2[$ri]['text'] ?? '');
@@ -963,7 +1001,7 @@ try {
             // because ww_offer_variant_from_request() only returns it with a
             // valid ?k=, so a guessed ?offer=t can never mint a $1 job.
             $__ww_off = $persist_payload['offer_variant'] ?? null;
-            if ($__ww_off !== null && !in_array($__ww_off, ['a','b','t'], true)) { $__ww_off = null; }
+            if ($__ww_off !== null && !in_array($__ww_off, ['a','b','u','t'], true)) { $__ww_off = null; }
             if ($__ww_off !== null) {
                 try { $pdb->prepare("UPDATE jobs SET offer_variant=? WHERE id=?")->execute([$__ww_off, $jid]); }
                 catch (Throwable $e) { /* pricing falls back to default, never break generation */ }
@@ -1033,75 +1071,164 @@ try {
         }
         $genimg_urls = array_values(array_unique($genimg_urls));
         $pw_count = 0;
+        $placeholders = 0;
         if ($genimg_urls) {
-            $mh = curl_multi_init();
-            $handles = [];
-            foreach (array_slice($genimg_urls, 0, 10) as $u) {
-                $ch = curl_init($u);
-                curl_setopt_array($ch, [
-                    CURLOPT_RETURNTRANSFER => true,
-                    CURLOPT_TIMEOUT        => 9,
-                    CURLOPT_CONNECTTIMEOUT => 3,
-                    CURLOPT_HTTPHEADER     => ['user-agent: WebWiz-PreWarm/1.0'],
-                ]);
-                curl_multi_add_handle($mh, $ch);
-                $handles[] = $ch;
-            }
-            $deadline = microtime(true) + 7.0;
-            do {
-                curl_multi_exec($mh, $running);
-                if ($running > 0) curl_multi_select($mh, 0.2);
-            } while ($running > 0 && microtime(true) < $deadline);
-            foreach ($handles as $ch) {
-                $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-                if ($code === 200) $pw_count++;
-                curl_multi_remove_handle($mh, $ch);
-                curl_close($ch);
-            }
-            curl_multi_close($mh);
-        }
-        ml_time('PHASE_2_5_pre_warm', microtime(true) - $tPW, ['found' => count($genimg_urls), 'warmed' => $pw_count]);
-        ml_debug("pre-warm: found=" . count($genimg_urls) . " warmed=$pw_count");
-    } catch (Throwable $e) { ml_debug('pre-warm failed: ' . $e->getMessage()); }
-    // Async only: now that images are warmed, drop the ready marker so the
-    // poller opens the reveal on a fully-loaded page (no blank images popping in).
-    if ($async) { @file_put_contents($dir . '/ready', '1'); ml_debug('async ready marker written (post pre-warm)'); }
-
-    // ---- Phase 4: Visual QA loop (Sonnet vision check + auto-regen if fail) ----
-    $tQA = microtime(true);
-    try {
-        $variant_url = 'https://trywebwiz.com/preview/' . $token . '/v1/index.html?qa=' . time();
-        $shots = function_exists('ww_render_screenshots') ? ww_render_screenshots([1 => $variant_url], null) : [];
-        $png = $shots[1] ?? null;
-        $shot_dt = microtime(true)-$tQA;
-        ml_time('PHASE_4a_screenshot', $shot_dt, ['ok' => $png ? true : false]);
-        if ($png && function_exists('ww_visual_inspect')) {
-            $tInspect = microtime(true);
-            $verdict = ww_visual_inspect($png, $biz, null);
-            ml_time('PHASE_4b_vision_inspect', microtime(true)-$tInspect, ['pass' => !empty($verdict['pass']), 'score' => $verdict['score'] ?? null]);
-            ml_debug(sprintf('QA verdict pass=%s score=%s reason=%s',
-                empty($verdict['pass'])?'no':'yes',
-                $verdict['score'] ?? '?',
-                substr((string)($verdict['summary'] ?? ''), 0, 200)
-            ));
-            if (!$async && empty($verdict['pass']) && function_exists('ww_qa_feedback') && isset($htmls[1])) {
-                $tRegen = microtime(true);
-                $fb = ww_qa_feedback($verdict['issues'] ?? []);
-                $rreqs = [1 => ['system' => $system, 'messages' => [['role' => 'user', 'content' => $first_user_content . "\n\n" . $fb]]]];
-                $rres = anthropic_multi('claude-sonnet-4-6', $rreqs, 14000, 0.5, null, ['</html>']);
-                $rcand = finalize_html($rres[1]['text'] ?? '');
-                if ($rcand && quality_gate($rcand)['ok']) {
-                    file_put_contents($dir . '/v1/index.html', ww_polish_html($rcand, $website));
-                    $htmls[1] = $rcand;
-                    ml_time('PHASE_4c_qa_regen', microtime(true)-$tRegen, ['written' => true]);
-                    ml_debug('QA regen written to disk');
-                } else {
-                    ml_time('PHASE_4c_qa_regen', microtime(true)-$tRegen, ['written' => false]);
+            // Two passes. A 200 is NOT proof the image is real: img.php and
+            // genimg.php both answer a failure with a branded monogram SVG at
+            // HTTP 200, which is precisely the "empty image box" / "placeholder
+            // box" defect that dominates the visual-QA failures (empty 26,
+            // placeholder 16, blank 14 of 73 defect instances). Content-type is
+            // the reliable tell: a real image from these endpoints is jpeg/png,
+            // a failure is image/svg+xml. Now that failures are served no-store
+            // and genimg retries a 429 internally, simply asking again clears
+            // most of them, so the second pass is worth its couple of seconds.
+            $probe = function (array $urls) use (&$pw_count) {
+                $mh = curl_multi_init();
+                $handles = [];
+                foreach ($urls as $u) {
+                    $ch = curl_init($u);
+                    curl_setopt_array($ch, [
+                        CURLOPT_RETURNTRANSFER => true,
+                        CURLOPT_TIMEOUT        => 9,
+                        CURLOPT_CONNECTTIMEOUT => 3,
+                        CURLOPT_HTTPHEADER     => ['user-agent: WebWiz-PreWarm/1.0'],
+                    ]);
+                    curl_multi_add_handle($mh, $ch);
+                    $handles[$u] = $ch;
                 }
+                $deadline = microtime(true) + 12.0;
+                do {
+                    curl_multi_exec($mh, $running);
+                    if ($running > 0) curl_multi_select($mh, 0.2);
+                } while ($running > 0 && microtime(true) < $deadline);
+                $bad = [];
+                foreach ($handles as $u => $ch) {
+                    $code  = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                    $ctype = (string)(curl_getinfo($ch, CURLINFO_CONTENT_TYPE) ?? '');
+                    if ($code === 200 && stripos($ctype, 'svg') === false) $pw_count++;
+                    else $bad[] = $u;
+                    curl_multi_remove_handle($mh, $ch);
+                    curl_close($ch);
+                }
+                curl_multi_close($mh);
+                return $bad;
+            };
+            $first = array_slice($genimg_urls, 0, 10);
+            $bad = $probe($first);
+            if ($bad) {
+                ml_debug('pre-warm: ' . count($bad) . ' placeholder/failed image(s), retrying once');
+                $bad = $probe($bad);
             }
+            $placeholders = count($bad);
         }
+        ml_time('PHASE_2_5_pre_warm', microtime(true) - $tPW, ['found' => count($genimg_urls), 'warmed' => $pw_count, 'placeholders' => $placeholders]);
+        ml_debug("pre-warm: found=" . count($genimg_urls) . " warmed=$pw_count placeholders=$placeholders");
+    } catch (Throwable $e) { ml_debug('pre-warm failed: ' . $e->getMessage()); }
+    // ---- Phase 4: Visual QA — runs BEFORE the reveal on every path ----
+    //
+    // This used to sit AFTER the `ready` marker, and its repair branch was gated
+    // `if (!$async && ...)`. /try/ posts to magic.php?async=1, so on the only path
+    // a real self-serve visitor takes, the repair had never run since async landed
+    // in a2cbf47 (2026-07-13): PHASE_4c_qa_regen appears in the timing log from
+    // 2026-06-09 to 2026-07-14 and then stops, while QA failures continue through
+    // 2026-08-08. 53 of 128 verdicts failed (41%) and every one of them was shown
+    // to the visitor anyway, because the marker that opens the reveal had already
+    // been written. Real people saw those pages: Rod Donaciano (62), Gandona
+    // Winery (42), Misty Winter (52), Mad Banana (38).
+    //
+    // BUDGET, which dictates the design. The client polls gen_status.php every 3s
+    // with maxPolls=100 after a 4s delay, so it gives up at ~300s. A healthy build
+    // measures ~168s and pre-warm ~7s, leaving ~120s before the reveal must open.
+    // Screenshot + vision inspect fit in that (~30s). A repair regen does NOT: it
+    // measured 102-165s in PHASE_4c_qa_regen, so repair-then-reveal would land at
+    // ~350s, past the point the visitor has already been told it failed.
+    //
+    // NO REPAIR HERE. Owner's call, 2026-08-09: repair-then-reveal is not a good
+    // trade. It doubles the wait for the visitor least likely to be patient, it
+    // burns a second full Sonnet call on a page that will be rebuilt by a human
+    // anyway, and the evidence is that it does not address the actual defects -
+    // the failure mix is dominated by image problems (empty 26, placeholder 16,
+    // blank 14), and a regen is handed the same image pool that produced them.
+    // The madbanana.com page that scored 38 would have failed a regen too: all 16
+    // of its scraped images were 72x81-class slices. Fixing the image pipeline
+    // moved that same site to 82 on the FIRST attempt, with no regen involved.
+    //
+    // So: QA gates the reveal, and a FAILING page is never revealed. It holds.
+    // Holding is not a dead end - the poller keeps saying "building", the client's
+    // own 300s timeout already shows "Drop your email above and we'll send your
+    // site the moment it's ready", and the page goes to a human instead. That is
+    // the right destination for a page our own QA rejected.
+    $qa_verdict = null;
+    // In-flight marker. gen_status.php has a `$settled` safety net that declares
+    // the preview ready once index.html has simply existed for 25s, which exists
+    // so a dead background process cannot hang the poller forever. That net would
+    // silently defeat everything below by opening the reveal while QA is still
+    // running, so QA announces itself and the poller waits for it instead. The
+    // 420s stall detector remains the real backstop if this process dies here.
+    if ($async) @file_put_contents($dir . '/qa', (string)time());
+    $tQA = microtime(true);
+    $run_inspect = function (string $why) use ($token, $biz, &$qa_verdict) {
+        $url = 'https://trywebwiz.com/preview/' . $token . '/v1/index.html?qa=' . microtime(true);
+        $t0 = microtime(true);
+        $shots = function_exists('ww_render_screenshots') ? ww_render_screenshots([1 => $url], null) : [];
+        $png = $shots[1] ?? null;
+        ml_time('PHASE_4a_screenshot', microtime(true) - $t0, ['ok' => $png ? true : false, 'pass_no' => $why]);
+        if (!$png || !function_exists('ww_visual_inspect')) return null;
+        $t1 = microtime(true);
+        $v = ww_visual_inspect($png, $biz, null);
+        ml_time('PHASE_4b_vision_inspect', microtime(true) - $t1, ['pass' => !empty($v['pass']), 'score' => $v['score'] ?? null, 'round' => $why]);
+        ml_debug(sprintf('QA verdict [%s] pass=%s score=%s reason=%s', $why,
+            empty($v['pass']) ? 'no' : 'yes', $v['score'] ?? '?',
+            substr((string)($v['summary'] ?? ''), 0, 200)));
+        $qa_verdict = $v;
+        return $v;
+    };
+    try {
+        $run_inspect('first');
     } catch (Throwable $e) { ml_debug('QA phase failed: ' . $e->getMessage()); }
-    ml_time('PHASE_4_total', microtime(true)-$tQA);
+    ml_time('PHASE_4_total', microtime(true)-$tQA, ['pass' => $qa_verdict ? (int)!empty($qa_verdict['pass']) : null]);
+
+    // ---- Persist the verdict (Bug B) ----
+    // Every previews INSERT on every live path hardcoded qa_score/qa_pass/
+    // qa_issues to NULL and nothing ever updated them, so 13 of 2445 preview rows
+    // carried a score and all 13 were from private/worker.php in May. The 41%
+    // failure rate was invisible in the product because it was never written down.
+    if ($qa_verdict) {
+        try {
+            ww_qa_persist($db, $token, 1, $qa_verdict);
+        } catch (Throwable $e) { ml_debug('qa persist failed: ' . $e->getMessage()); }
+    }
+
+    // ---- The reveal decision ----
+    // Never open the reveal on a page our own QA rejected. A missing verdict
+    // (screenshot service down, vision call failed) opens as before: QA being
+    // unavailable must not take the product offline.
+    $qa_ok = (!$qa_verdict) || !empty($qa_verdict['pass']);
+    if ($async) {
+        if ($qa_ok) {
+            @file_put_contents($dir . '/ready', '1');
+            ml_debug('async ready marker written (post QA)');
+        } else {
+            // Hold. The poller keeps returning "building" until the notify email
+            // takes over, and the job is flagged so a human can see it queued
+            // rather than it silently disappearing.
+            @file_put_contents($dir . '/held', json_encode([
+                'ts'    => time(),
+                'score' => $qa_verdict['score'] ?? null,
+                'why'   => substr((string)($qa_verdict['summary'] ?? ''), 0, 300),
+            ], JSON_UNESCAPED_SLASHES));
+            ml_debug('async reveal HELD: QA failed score=' . ($qa_verdict['score'] ?? '?'));
+            try {
+                if (function_exists('ww_report')) {
+                    ww_report('generation', 'qa_failed_reveal_held',
+                        'WebWiz held a reveal because visual QA failed', [
+                            'token' => $token, 'score' => $qa_verdict['score'] ?? null,
+                        ], 'warning', null, 0);
+                }
+            } catch (Throwable $e) { /* reporting must not break generation */ }
+        }
+        @unlink($dir . '/qa'); // QA is done deciding; the safety net may apply again
+    }
 
     // ---- Phase 5: Image upscale (Real-ESRGAN via Replicate) ----
     // Run after QA so we upscale the final HTML. Replicate calls are slow HTTP

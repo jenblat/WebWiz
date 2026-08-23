@@ -108,6 +108,8 @@ try {
     $resp = anthropic_chat('claude-sonnet-4-6', $messages, $system, 800, 0.7, null);
 } catch (Throwable $e) {
     error_log('[wizzy] ' . $e->getMessage());
+    ww_report('wizzy', 'wizzy_chat_failed', 'WebWiz Wizzy chat backend failed',
+        ['token' => $token ?? null], 'error', $e);
     exit(json_encode(['reply' => "Hmm, my brain hiccupped. Try once more?"]));
 }
 

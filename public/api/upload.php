@@ -135,5 +135,7 @@ try {
             : "Got it. I'll work these in.",
     ]);
 } catch (Throwable $e) {
+    ww_report('upload', 'upload_integration_failed', 'WebWiz asset upload/integration failed',
+        ['token' => $token ?? null], 'error', $e);
     up_fail('Asset integration failed: ' . preg_replace('/[\x00-\x1F]+/', ' ', $e->getMessage()), 500);
 }

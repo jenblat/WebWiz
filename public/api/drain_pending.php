@@ -46,7 +46,7 @@ foreach ($files as $f) {
             // silently lost its offer and the visitor was priced at $500 despite
             // arriving from the $100 or free cell.
             $__ww_off = $p['offer_variant'] ?? null;
-            if ($__ww_off !== null && in_array($__ww_off, ['a','b'], true)) {
+            if ($__ww_off !== null && in_array($__ww_off, ['a','b','u'], true)) {
                 try { $db->prepare("UPDATE jobs SET offer_variant=? WHERE id=?")->execute([$__ww_off, $jid]); }
                 catch (Throwable $e) { /* pricing falls back to default, never break the drain */ }
             }
@@ -64,13 +64,23 @@ foreach ($files as $f) {
                         'website' => $p['website'] ?? '', 'token' => $tok,
                         'preview_url' => 'https://trywebwiz.com/try/?t=' . $tok, 'source' => 'try',
                     ]);
-                } catch (Throwable $ne) {}
+                } catch (Throwable $ne) {
+                    ww_report('drain', 'drain_notify_email_failed',
+                        'WebWiz drained a pending generation but the notify email failed',
+                        ['token' => $tok], 'error', $ne);
+                }
             }
             $done[] = "$tok ({$p['biz']}) email={$p['email']} jid=$jid";
         } catch (Throwable $e) {
             try { $db->exec('ROLLBACK'); } catch (Throwable $ee) {}
             $em = strtolower($e->getMessage());
-            if (strpos($em, 'lock') === false && strpos($em, 'busy') === false) { $failed[] = "$tok: " . $e->getMessage(); break; }
+            if (strpos($em, 'lock') === false && strpos($em, 'busy') === false) {
+                $failed[] = "$tok: " . $e->getMessage();
+                // Not a lock contention retry - this pending generation is genuinely stuck.
+                ww_report('drain', 'drain_item_failed', 'WebWiz pending generation could not be drained',
+                    ['token' => $tok], 'error', $e);
+                break;
+            }
             usleep($delay); $delay = (int)min(3000000, $delay * 1.5);
         }
     }

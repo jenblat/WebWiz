@@ -152,7 +152,138 @@ function ww_nurture_compute_next_send(string $created_at, int $step_just_sent, ?
  * Step 1-5 = front-loaded sequence. Step 6+ = monthly recurring,
  * alternating A (even step) and B (odd step).
  */
-function ww_nurture_template(int $step): array {
+/**
+ * Sequence for contacts who came from an /o/ FORM, not the builder.
+ *
+ * These people filled in the brief on a cell-C style offer page. They never saw
+ * a generated site, so there is no token and no preview_url. The main sequence
+ * cannot be reused: its step 1 is "The free website we made for {{company}}"
+ * with the eyebrow "YOUR FREE WEBSITE IS STILL LIVE" and a CTA pointing at
+ * {{preview_url}}, which for these contacts is untrue copy with a dead button on
+ * the end. That mismatch is why /o/ leads were enrolled PAUSED when
+ * offer_lead.php started enrolling them; this is the sequence that lets them be
+ * switched on.
+ *
+ * Two things shape the copy. First, they ASKED us for something specific, so the
+ * opening acknowledges that rather than announcing a thing they have not seen.
+ * Second, the strongest asset we have is the builder itself: a site for their
+ * business, from their own details, in about two minutes. So the CTA is "watch
+ * it get built", not "buy now" - it moves them from a form to the reveal, which
+ * is where the actual offer lives.
+ *
+ * Only {{name}} and {{company}} are merged here. {{preview_url}} is deliberately
+ * never used: for these contacts it silently falls back to /try/ and would read
+ * as a broken promise.
+ */
+function ww_nurture_template_offer_form(int $step): array {
+    $BUILD = NURTURE_DOMAIN . '/try/';
+    if ($step === 1) return [
+        'subject'         => 'Got your note about {{company}}',
+        'eyebrow'         => 'WE READ IT',
+        'hero_before'     => 'We got',
+        'hero_emphasized' => 'your brief.',
+        'paragraphs'      => [
+            "Hi <strong>{{name}}</strong>, thanks for telling us what you need for <strong>{{company}}</strong>. A real person on our team has read it, not a bot.",
+            "Here is the short version of how we work: you tell us what you want, a designer builds it, and you talk to that designer directly about every change until it is right. No logins, no dashboards, no learning a website builder.",
+            "If you want to see the shape of it first, you can watch a site for {{company}} build itself in about two minutes. It costs nothing and you do not need a card.",
+        ],
+        'cta_label'       => 'Watch it build itself',
+        'cta_url'         => $BUILD,
+        'subtext'         => 'Or just hit reply and tell me more. I read every one.',
+    ];
+    if ($step === 2) return [
+        'subject'         => 'What it actually costs',
+        'eyebrow'         => 'THE HONEST VERSION',
+        'hero_before'     => 'No',
+        'hero_emphasized' => 'surprises.',
+        'paragraphs' => [
+            "Hi <strong>{{name}}</strong>, quick and plain, because nobody likes chasing a price.",
+            "The build is free. You pay <strong>$50 a month</strong>, and that covers hosting, your domain set up for you, and unlimited changes by text or email. Cancel any time, no fee, and we send you your files.",
+            "A design studio would quote you three to five thousand for the same thing and then charge again every time you wanted a phone number changed. That is the whole difference.",
+        ],
+        'cta_label'       => 'See what we would build for {{company}}',
+        'cta_url'         => $BUILD,
+        'subtext'         => 'Questions about the price? Reply and ask me straight.',
+    ];
+    if ($step === 3) return [
+        'subject'         => 'The part people do not believe',
+        'eyebrow'         => 'A REAL DESIGNER, NOT A BOT',
+        'hero_before'     => 'A person',
+        'hero_emphasized' => 'finishes it.',
+        'paragraphs' => [
+            "Hi <strong>{{name}}</strong>, the bit people assume is marketing: a human designer on our team finishes your site properly, and you deal with them directly.",
+            "You will not be dragging blocks around at eleven at night. You email or text what you want changed, in your own words, and it gets done. That is what the monthly fee buys.",
+            "The AI gets you the first draft in two minutes so you are not staring at a blank page. The person makes it good.",
+        ],
+        'cta_label'       => 'Start with the free draft',
+        'cta_url'         => $BUILD,
+        'subtext'         => 'Want to talk to the designer first? Reply and I will set it up.',
+    ];
+    if ($step === 4) return [
+        'subject'         => 'What about your domain?',
+        'eyebrow'         => 'WE HANDLE THE FIDDLY PART',
+        'hero_before'     => 'We do the',
+        'hero_emphasized' => 'boring bits.',
+        'paragraphs' => [
+            "Hi <strong>{{name}}</strong>, the thing that stops most people is not the design, it is the plumbing.",
+            "If <strong>{{company}}</strong> already has a domain, we point it at the new site for you. If you do not have one yet, we get it and set it up. Business email too, if you want it.",
+            "You do not need to touch a nameserver or ring your old web guy. Send us the login or tell us who has it and we take it from there.",
+        ],
+        'cta_label'       => 'See your site first',
+        'cta_url'         => $BUILD,
+        'subtext'         => 'Not sure who controls your domain? Reply and we will work it out.',
+    ];
+    if ($step === 5) return [
+        'subject'         => "I'll stop crowding your inbox",
+        'eyebrow'         => 'TAKING A STEP BACK',
+        'hero_before'     => 'No',
+        'hero_emphasized' => 'pressure.',
+        'paragraphs' => [
+            "Hi <strong>{{name}}</strong>, I do not want to be a pest, so I will ease off and check in now and then instead.",
+            "Nothing expires. Whenever you are ready to sort out the website for <strong>{{company}}</strong>, reply to any of these and we will pick it straight up.",
+        ],
+        'cta_label'       => 'Build it whenever you like',
+        'cta_url'         => $BUILD,
+        'subtext'         => 'See you next month.',
+    ];
+    // Step 6+ monthly check-in, alternating so it does not read as a loop.
+    $is_a = ($step % 2) === 0;
+    if ($is_a) return [
+        // No {{name}} in this subject. The /o/ brief form does not capture a
+        // name, so it is ALWAYS empty for this sequence and merges to the
+        // fallback "there", giving "Still here when you need us, there".
+        'subject'         => 'Still here when you need us',
+        'eyebrow'         => 'MONTHLY HELLO',
+        'hero_before'     => 'Quick',
+        'hero_emphasized' => 'hello.',
+        'paragraphs' => [
+            "Hi <strong>{{name}}</strong>, quick hello from Wizzy. Still happy to build the site for <strong>{{company}}</strong> whenever the timing is right.",
+            "Free to build, $50 a month to keep, cancel any time.",
+        ],
+        'cta_label'       => 'Watch it build itself',
+        'cta_url'         => $BUILD,
+        'subtext'         => 'Reply any time.',
+    ];
+    return [
+        'subject'         => 'One question about {{company}}',
+        'eyebrow'         => 'A GENUINE QUESTION',
+        'hero_before'     => 'What is',
+        'hero_emphasized' => 'stopping you?',
+        'paragraphs' => [
+            "Hi <strong>{{name}}</strong>, honest question and I will take the answer either way: what is holding up the website for <strong>{{company}}</strong>?",
+            "If it is the money, say so and I will tell you if we can work something out. If it is timing, tell me when to come back. If you have sorted it elsewhere, tell me that and I will stop emailing.",
+        ],
+        'cta_label'       => 'Or just see what we would build',
+        'cta_url'         => $BUILD,
+        'subtext'         => 'A one line reply is plenty.',
+    ];
+}
+
+function ww_nurture_template(int $step, string $source = ''): array {
+    // Contacts captured by an /o/ offer form have no generated site, so they get
+    // a sequence that never references one. Everything else keeps the original
+    // preview-led sequence unchanged.
+    if ($source === 'offer_form') return ww_nurture_template_offer_form($step);
     if ($step === 1) return [
         'subject'         => 'The free website we made for {{company}}',
         'eyebrow'         => 'YOUR FREE WEBSITE IS STILL LIVE',
@@ -471,9 +602,18 @@ function ww_nurture_upsert_contact(PDO $db, array $data): int {
     }
 
     $next = gmdate('Y-m-d H:i:s', time() + 2 * 86400);
+    // status was hardcoded 'active' and any caller-supplied status was silently
+    // dropped. That matters now that /o/ form leads enrol: the live sequence is
+    // written for someone who HAS a generated preview ("the free website we made
+    // for you", CTA -> {{preview_url}}), and an offer-form lead has neither, so
+    // enrolling one active would send copy that is untrue with a dead button.
+    // Whitelisted rather than passed through so a bad caller cannot invent a
+    // status the cron does not understand and strand a contact forever.
+    $status = (string)($data['status'] ?? 'active');
+    if (!in_array($status, ['active', 'paused', 'unsubscribed'], true)) $status = 'active';
     $ins = $db->prepare("
         INSERT INTO nurture_contacts (name, email, company, website, token, preview_url, source, status, current_step, next_send_at, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'active', 0, ?, datetime('now'), datetime('now'))
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, datetime('now'), datetime('now'))
     ");
     $ins->execute([
         (string)($data['name'] ?? ''),
@@ -483,6 +623,7 @@ function ww_nurture_upsert_contact(PDO $db, array $data): int {
         (string)($data['token'] ?? ''),
         (string)($data['preview_url'] ?? ''),
         (string)($data['source'] ?? 'try'),
+        $status,
         $next,
     ]);
     return (int)$db->lastInsertId();
@@ -496,17 +637,65 @@ function ww_nurture_upsert_contact(PDO $db, array $data): int {
 function ww_nurture_advance_contact(PDO $db, array $contact, int $step): bool {
     $now  = gmdate('Y-m-d H:i:s');
     $next = ww_nurture_compute_next_send((string)$contact['created_at'], $step, $now);
-    for ($i = 0; $i < 6; $i++) {
-        try {
+    // Was a bespoke 6-try loop with linear 200ms backoff, i.e. ~4.2s of total
+    // patience, and it caught every Throwable and slept on it rather than only
+    // lock contention. It was not enough: the cron log carries 86 "CRITICAL:
+    // could not advance" lines, all of them alongside "database is locked", and
+    // the runs that failed measured ~5.2s, which is exactly the loop giving up.
+    // ww_db_write_retry() is the shared bounded-backoff helper (100ms doubling to
+    // 1.6s over 6 tries) already used for the INSERT below.
+    try {
+        return (bool)ww_db_write_retry(function () use ($db, $contact, $step, $now, $next) {
             $st = $db->prepare("UPDATE nurture_contacts SET current_step = ?, last_sent_at = ?, next_send_at = ?, updated_at = datetime('now') WHERE id = ?");
             $st->execute([$step, $now, $next, (int)$contact['id']]);
             return true;
-        } catch (Throwable $e) {
-            usleep(200000 * ($i + 1));
-        }
+        });
+    } catch (Throwable $e) {
+        error_log('[nurture] CRITICAL: could not advance contact ' . (int)$contact['id'] . ' past step ' . $step . ': ' . $e->getMessage());
+        return false;
     }
-    error_log('[nurture] CRITICAL: could not advance contact ' . (int)$contact['id'] . ' past step ' . $step);
-    return false;
+}
+
+/**
+ * Reconcile send rows whose email went out but whose bookkeeping was lost.
+ *
+ * A `pending` row does NOT mean "not sent". The email is handed to Brevo first
+ * and only then are two writes attempted: advance the contact, then stamp the
+ * row `sent` with its Brevo message id. When SQLite is locked, Brevo has already
+ * accepted the message and both writes are lost, leaving a delivered email
+ * recorded as pending forever. The cron log is explicit about it:
+ *   [nurture] send-row update failed (email was delivered): database is locked
+ * 68 of those, against 134 stuck rows and zero `failed:*` rows.
+ *
+ * This is why those rows must NEVER be re-sent to clear the counter: every one
+ * of them is an email a real person already received. ww_nurture_send_one()'s
+ * idempotency guard treats 'pending' as already-delivered for the same reason.
+ *
+ * Evidence that the send really happened: the contact advanced past that step.
+ * The advance only ever runs after Brevo returned success, and the duplicate
+ * guard advances too. Rows meeting that test become 'sent_unconfirmed' - it was
+ * delivered, we just lost the message id and can never attribute opens/clicks to
+ * it. Rows that do NOT meet it are left alone: they are usually minutes old and
+ * the next hourly run advances them.
+ */
+function ww_nurture_reconcile_pending(PDO $db, int $older_than_minutes = 90): int {
+    try {
+        return (int)ww_db_write_retry(function () use ($db, $older_than_minutes) {
+            $st = $db->prepare(
+                "UPDATE nurture_sends SET status = 'sent_unconfirmed'
+                  WHERE status = 'pending'
+                    AND sent_at < datetime('now', ?)
+                    AND EXISTS (SELECT 1 FROM nurture_contacts c
+                                 WHERE c.id = nurture_sends.contact_id
+                                   AND c.current_step >= nurture_sends.step)"
+            );
+            $st->execute(['-' . max(1, $older_than_minutes) . ' minutes']);
+            return $st->rowCount();
+        });
+    } catch (Throwable $e) {
+        error_log('[nurture] reconcile failed: ' . $e->getMessage());
+        return 0;
+    }
 }
 
 function ww_nurture_send_one(PDO $db, array $contact, string $brevo_key, string $hmac_secret, string $mailing_address): array {
@@ -516,7 +705,13 @@ function ww_nurture_send_one(PDO $db, array $contact, string $brevo_key, string 
     // this exact email to Brevo but died before recording it, so the recipient
     // already has it. Never send the same step twice. Genuine 'failed:*' rows
     // are excluded so real delivery failures still retry.
-    $g = $db->prepare("SELECT COUNT(*) FROM nurture_sends WHERE contact_id = ? AND step = ? AND status IN ('sent','pending')");
+    // 'sent_unconfirmed' MUST be in this list. It means Brevo accepted the email
+    // and only our bookkeeping write was lost (see ww_nurture_reconcile_pending).
+    // Omitting it would make this guard stop matching reconciled rows and re-send
+    // an email the recipient already has - the exact double-send this guard exists
+    // to prevent. Genuine 'failed:*' rows stay excluded so real delivery failures
+    // still retry.
+    $g = $db->prepare("SELECT COUNT(*) FROM nurture_sends WHERE contact_id = ? AND step = ? AND status IN ('sent','pending','sent_unconfirmed')");
     $g->execute([(int)$contact['id'], $step]);
     if ((int)$g->fetchColumn() > 0) {
         ww_nurture_advance_contact($db, $contact, $step);
@@ -524,7 +719,7 @@ function ww_nurture_send_one(PDO $db, array $contact, string $brevo_key, string 
         return ['ok' => true, 'message_id' => null, 'send_id' => null, 'error' => null, 'skipped' => 'already_sent'];
     }
 
-    $tpl = ww_nurture_template($step);
+    $tpl = ww_nurture_template($step, (string)($contact["source"] ?? ""));
     $subject_merged = ww_nurture_apply_merge($tpl['subject'], $contact);
     $unsub_url      = ww_nurture_unsub_url((int)$contact['id'], $hmac_secret);
 
@@ -606,10 +801,17 @@ function ww_nurture_send_one(PDO $db, array $contact, string $brevo_key, string 
     // lock left the contact un-advanced and spammed the recipient.)
     ww_nurture_advance_contact($db, $contact, $step);
 
-    // Bookkeeping is best effort and must never block or undo the advance.
+    // Bookkeeping is best effort and must never block or undo the advance - but
+    // it had NO retry at all, just a try/catch and a log line, while the INSERT
+    // above and the advance both retry. That asymmetry is the whole bug: 68
+    // "send-row update failed (email was delivered): database is locked" lines in
+    // the cron log, and 134 delivered emails permanently recorded as 'pending'
+    // with a NULL brevo_message_id, which also loses open and click attribution.
     try {
-        $db->prepare("UPDATE nurture_sends SET brevo_message_id = ?, status = 'sent', sent_at = ? WHERE id = ?")
-           ->execute([$msg_id, $now, $send_id]);
+        ww_db_write_retry(function () use ($db, $msg_id, $now, $send_id) {
+            return $db->prepare("UPDATE nurture_sends SET brevo_message_id = ?, status = 'sent', sent_at = ? WHERE id = ?")
+                      ->execute([$msg_id, $now, $send_id]);
+        });
     } catch (Throwable $e) {
         error_log('[nurture] send-row update failed (email was delivered): ' . $e->getMessage());
     }

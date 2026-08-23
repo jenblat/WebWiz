@@ -147,6 +147,13 @@ $VARIANTS = [
     ],
 ];
 
+// U: the TRUNCATED REVEAL cell. Economically identical to B (free build,
+// $50/month) because the variable under test is where the ask sits relative to
+// the reveal, not the price. Only the builder behaves differently: /o/u/try/
+// renders the hero and first section sharp and locks the rest.
+$VARIANTS['u'] = $VARIANTS['b'];
+$VARIANTS['u']['key'] = 'u';
+
 $V = $VARIANTS[$WW_VARIANT] ?? $VARIANTS['a'];
 
 // ---------------------------------------------------------------------------
