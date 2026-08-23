@@ -520,9 +520,62 @@ Adding a new cell means adding it to **every** whitelist:
   showcase capture, so `ww_generate_missing_showcases()` never succeeds and
   retries the same jobs forever. `private/` is 750/www-data and the worker cron
   is documented as running `sudo -u nobody`. Unrelated to generation quality.
-- `/opt/seedsite/scripts/backup.sh` line ~20 contains a **plaintext PostgreSQL
-  password**. Should move to the SeedSite secrets manager.
-- ~69G of existing local backups remain. Deleting them is Omar's call.
+- ~~`/opt/seedsite/scripts/backup.sh` contains a plaintext PostgreSQL
+  password.~~ **FIXED 2026-08-23.** It now reads `/root/.pgpass_seedsite`
+  (600) via `PGPASSFILE`.
+- ~68G of **legacy** tarballs remain in `/mnt/sites-data/backups/files/`
+  (2026-08-17, 08-18, 08-19, 08-23) plus a truncated 10G one moved to
+  `/var/backups-overflow/`. Nothing writes there any more. Deleting them is
+  Omar's call; they are the only copies of those dates, and a complete
+  encrypted copy of the CURRENT state is already on Drive.
+
+## 2026-08-23: the disk filled and took the database down
+
+`/mnt/sites-data` hit **100%, zero bytes free**, so SQLite could not write a
+journal. `db_ping.php` returned 503 `{"db":"down","rw":false}` while the
+homepage and `version.php` kept returning **200**, because neither opens the
+database. Generation, checkout, lead capture and nurture were all failing and
+nothing alerted.
+
+**Why it filled: we were backing up backups.** 12G of every 17G nightly tarball
+was `sites/nhms/public/wp-content/updraft` - 319 UpdraftPlus files, a fresh 95M
+database dump every night since 2026-05-26, never pruned. Those are already
+gzipped, so `tar -czf` could not compress them either. Add 5-day retention of
+~17G tarballs plus 20G of sites and 98G does not fit.
+
+**And nothing was going off-site.** The 2026-07-31 note in this file describing
+a GPG + rclone upload stage in `backup.sh` **did not match the code**; no such
+stage existed. Local was the only copy, which is why retention could not be
+lowered. The 08-21 and 08-22 backups simply do not exist: tar and pg_dump both
+died with "No space left on device".
+
+`/opt/seedsite/scripts/backup.sh` was rewritten (commit `b9efba4`):
+
+| Before | After |
+|---|---|
+| local only, 5 copies, ~17G each | encrypted, uploaded to Drive, **0 kept on disk** |
+| updraft/plugin backups included | backup-plugin output excluded for every site |
+| nhms nightly (17G of the 20G) | **nhms weekly, Sunday only** |
+| staged on `/mnt/sites-data` | staged on `/var` (root volume); the data volume is now source-only |
+| plaintext PG password in the script | `/root/.pgpass_seedsite` (600) via `PGPASSFILE` |
+
+Measured on a full Sunday run: db 36M, nhms 3.5G, sites 2.7G, all encrypted and
+uploaded, `staging 12K`. **~2.7G off-site nightly and nothing on disk**, against
+~17G on disk and nothing off-site before.
+
+It reuses the BusySeed agent's key and rclone config (`/opt/busyseed-backup`).
+That key is **public-key only**: this box can encrypt a backup and cannot
+decrypt one. Do not "fix" that by putting the private key here.
+
+**Excluding `updraft` does not weaken restores.** The site itself is still
+captured in full; we stopped storing a plugin's copy of the site we are already
+storing. What is lost is UpdraftPlus's own historical restore points.
+
+**`webwiz-db` was added to SeedTester** (`/opt/seedtester/targets.json` on the
+dev droplet, commit `b524702`). It is the only target that touches SQLite. Every
+other WebWiz check is served without opening the database, which is why both
+this outage and the 2026-07-31 one stayed green for hours. If it goes red while
+pages still load, check `df -h /mnt/sites-data` first.
 
 ## 2026-08-03: guarded $1 live-payment test cell (variant `t`)
 
