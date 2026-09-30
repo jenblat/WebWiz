@@ -55,7 +55,7 @@ function ww_build_batches(PDO $db): void {
     $scraped = $db->query("SELECT * FROM jobs WHERE upload_batch_id=$uid AND item_status='scraped'")->fetchAll(PDO::FETCH_ASSOC);
     if (!$scraped) { $db->prepare("UPDATE upload_batches SET status='failed' WHERE id=?")->execute([$uid]); ww_blog("upload #$uid: nothing scraped -> failed"); return; }
 
-    $model = 'claude-sonnet-4-6';
+    $model = 'claude-sonnet-5';
     $requests = [];
     foreach ($scraped as $row) {
         $jid = (int)$row['id'];
@@ -79,7 +79,7 @@ function ww_build_batches(PDO $db): void {
         }
     }
     ww_blog("upload #$uid: submitting ".count($requests)." requests (".count($scraped)." sites)");
-    $res = anthropic_batch_create($model, $requests, 14000, 0.7, ['</html>']);
+    $res = anthropic_batch_create($model, $requests, 18200, 0.7, ['</html>']);
     if (empty($res['batch_ids'])) { ww_blog("upload #$uid: batch create FAILED: ".implode('; ', $res['errors'])); return; }
 
     $db->prepare("UPDATE jobs SET item_status='generating', status='running' WHERE upload_batch_id=? AND item_status='scraped'")->execute([$uid]);
@@ -151,7 +151,7 @@ function ww_poll_batches(PDO $db): void {
         }
 
         if ($rebatch) {
-            $res = anthropic_batch_create('claude-sonnet-4-6', $rebatch, 14000, 0.6, ['</html>']);
+            $res = anthropic_batch_create('claude-sonnet-5', $rebatch, 18200, 0.6, ['</html>']);
             if (!empty($res['batch_ids'])) {
                 $bids = array_merge($bids, $res['batch_ids']);
                 $db->prepare("UPDATE upload_batches SET anthropic_batch_ids=? WHERE id=?")->execute([json_encode($bids), $uid]);

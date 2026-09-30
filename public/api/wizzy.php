@@ -105,7 +105,7 @@ RULES
 TXT;
 
 try {
-    $resp = anthropic_chat('claude-sonnet-4-6', $messages, $system, 800, 0.7, null);
+    $resp = anthropic_chat('claude-sonnet-5', $messages, $system, 1040, 0.7, null);
 } catch (Throwable $e) {
     error_log('[wizzy] ' . $e->getMessage());
     ww_report('wizzy', 'wizzy_chat_failed', 'WebWiz Wizzy chat backend failed',

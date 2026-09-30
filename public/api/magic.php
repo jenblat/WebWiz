@@ -826,7 +826,7 @@ try {
 
     ml_debug('anthropic begin');
     $tA = microtime(true);
-    $res = anthropic_multi('claude-sonnet-4-6', $reqs, 14000, 1.0, null, ['</html>']);
+    $res = anthropic_multi('claude-sonnet-5', $reqs, 18200, 1.0, null, ['</html>']);
     $gen_dt = microtime(true)-$tA;
     ml_debug(sprintf('anthropic done %.2fs', $gen_dt));
     ml_time('PHASE_2_sonnet_gen', $gen_dt, ['variants' => $v, 'industry' => $detected_industry_slug]);
@@ -863,7 +863,7 @@ try {
         // Retry once -- most empty results are a transient API timeout/rate-limit.
         ml_debug('no usable site on first pass -- retrying generation once');
         try {
-            $res2 = anthropic_multi('claude-sonnet-4-6', $reqs, 14000, 0.9, null, ['</html>']);
+            $res2 = anthropic_multi('claude-sonnet-5', $reqs, 18200, 0.9, null, ['</html>']);
             foreach ($res2 as $ri => $_) {
                 $cost += (float)($res2[$ri]['cost_usd'] ?? 0);
                 $rc = finalize_html($res2[$ri]['text'] ?? '');

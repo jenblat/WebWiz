@@ -129,7 +129,7 @@ pass MUST be false if there is at least one critical issue.
 TXT;
     $user = "Business: {$biz}. These " . count($slices) . " images are top-to-bottom slices of one homepage. Return the JSON verdict for the whole page.";
     try {
-        $r = anthropic_vision('claude-sonnet-4-6', $system, $user, $slices, 1400, 0.0, $job_id);
+        $r = anthropic_vision('claude-sonnet-5', $system, $user, $slices, 1820, 0.0, $job_id);
     } catch (Throwable $e) {
         return ['pass' => true, 'score' => -1, 'issues' => [], 'summary' => 'inspect-error'];
     }

@@ -233,7 +233,7 @@ TXT;
           . "\n\nReturn the JSON brief.";
 
     try {
-        $r = anthropic_chat('claude-sonnet-4-6', [['role' => 'user', 'content' => $user]], $system, 1600, 0.9, $job_id);
+        $r = anthropic_chat('claude-sonnet-5', [['role' => 'user', 'content' => $user]], $system, 2080, 0.9, $job_id);
     } catch (Throwable $e) {
         error_log('[design] brief failed: ' . $e->getMessage());
         return [];

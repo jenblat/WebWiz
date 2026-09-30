@@ -84,7 +84,7 @@ function process_job(PDO $db, array $row): void {
             empty($i['is_logo']) && empty($i['is_thumb']) && empty($i['is_team_card'])));
         echo "[worker]  scrape: " . count($scrape['images'] ?? []) . " live images, " . count($usable) . " usable\n";
 
-        $model  = $row['model'] ?: 'claude-sonnet-4-6';
+        $model  = $row['model'] ?: 'claude-sonnet-5';
         $system = build_system_prompt($industry, count($usable));
 
         // Client-specific art direction, written once per job and shared by all 3 variants.
@@ -108,7 +108,7 @@ function process_job(PDO $db, array $row): void {
             echo "[worker]   v{$v} type: {$dna[$v]['type']['display']} / {$dna[$v]['type']['body']}\n";
         }
         echo "[worker]  generating 3 variants in parallel -> {$model}\n";
-        $res = anthropic_multi($model, $reqs, 14000, 1.0, $job_id, ['</html>']);
+        $res = anthropic_multi($model, $reqs, 18200, 1.0, $job_id, ['</html>']);
 
         $htmls = [];
         $retry = [];
@@ -128,7 +128,7 @@ function process_job(PDO $db, array $row): void {
                         "\n\nIMPORTANT - your previous attempt failed the quality gate: {$reason}. Keep the SAME assigned art direction, but make it SHORTER and COMPLETE: end with </html>, include an <h1>, a <footer>, 4+ <section>/<article> elements, and 4+ distinct /api/img.php images. Cut the least essential section if needed to finish."]]];
             }
             echo "[worker]  retrying " . count($rreqs) . " variant(s) in parallel\n";
-            $rres = anthropic_multi($model, $rreqs, 14000, 0.9, $job_id, ['</html>']);
+            $rres = anthropic_multi($model, $rreqs, 18200, 0.9, $job_id, ['</html>']);
             foreach ($rreqs as $v => $_) {
                 $total_cost += (float)($rres[$v]['cost_usd'] ?? 0);
                 $cand = finalize_html($rres[$v]['text'] ?? '');
@@ -184,7 +184,7 @@ function process_job(PDO $db, array $row): void {
                     $rreqs[$v] = ['system'=>$system, 'messages'=>[['role'=>'user','content'=>build_user_prompt($scrape, $biz, $industry, $v, $dna[$v], $brief) . "\n\n" . $fb]]];
                 }
                 echo "[worker]  QA regenerating " . count($rreqs) . " variant(s)\n";
-                $rres = anthropic_multi($model, $rreqs, 14000, 0.9, $job_id, ['</html>']);
+                $rres = anthropic_multi($model, $rreqs, 18200, 0.9, $job_id, ['</html>']);
                 foreach ($rreqs as $v => $_) {
                     $total_cost += (float)($rres[$v]['cost_usd'] ?? 0);
                     $cand = finalize_html($rres[$v]['text'] ?? '');

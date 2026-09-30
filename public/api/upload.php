@@ -107,7 +107,7 @@ $user_content = "Here is the current HTML:\n\n<current_html>\n"
               . "\n</assets>\n\nReturn the COMPLETE updated HTML.";
 
 try {
-    $res = anthropic_chat('claude-sonnet-4-6', [['role' => 'user', 'content' => $user_content]], $system, 16000, 0.4, (int)$job['id'], ['</html>']);
+    $res = anthropic_chat('claude-sonnet-5', [['role' => 'user', 'content' => $user_content]], $system, 20800, 0.4, (int)$job['id'], ['</html>']);
     $text = (string)($res['text'] ?? '');
     if ($text === '') throw new Exception('empty model response');
     if (stripos($text, '</html>') === false) $text .= '</html>';

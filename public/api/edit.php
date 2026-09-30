@@ -343,7 +343,7 @@ try {
     // ---- Attempt 1: PARTIAL (diff) edit - fast, surgical, leaves the rest of the page untouched ----
     $text = '';
     try {
-        $pres = anthropic_chat('claude-sonnet-4-6', $messages, $partial_system, 8000, 0.2, (int)$job['id'], null);
+        $pres = anthropic_chat('claude-sonnet-5', $messages, $partial_system, 10400, 0.2, (int)$job['id'], null);
         $praw = (string)($pres['text'] ?? '');
         if ($praw !== '') {
             $pr = ee_apply_partial($current_html, $praw);
@@ -366,7 +366,7 @@ try {
         for ($attempt = 1; $attempt <= 2; $attempt++) {
             $att_start = microtime(true);
             try {
-                $res = anthropic_chat('claude-sonnet-4-6', $messages, $system, 16000, 0.4, (int)$job['id'], ['</html>']);
+                $res = anthropic_chat('claude-sonnet-5', $messages, $system, 20800, 0.4, (int)$job['id'], ['</html>']);
                 $t = (string)($res['text'] ?? '');
                 $http = (int)($res['http'] ?? 0);
                 if ($t !== '') {

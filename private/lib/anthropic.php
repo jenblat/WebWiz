@@ -6,6 +6,7 @@ declare(strict_types=1);
 
 // Pricing per million tokens (input/output) — Anthropic May 2026 list rates.
 const ANTHROPIC_PRICING = [
+    'claude-sonnet-5'        => ['in' => 2.0,  'out' => 10.0],
     'claude-sonnet-4-6'      => ['in' => 3.0,  'out' => 15.0],
     'claude-opus-4-6'        => ['in' => 15.0, 'out' => 75.0],
     'claude-haiku-4-5-20251001' => ['in' => 1.0, 'out' => 5.0],
@@ -51,7 +52,10 @@ function anthropic_chat(string $model, array $messages, ?string $system = null, 
         'messages'   => $messages,
     ];
     if ($system !== null)      $body['system'] = $system;
-    if ($temperature !== null) $body['temperature'] = $temperature;
+    // Sonnet 5 rejects non-default temperature/top_p/top_k with a 400, so $temperature is
+    // accepted for caller compatibility but no longer sent. It also runs adaptive thinking
+    // unless told otherwise. 4.6 ran with thinking off, so keep it off (same below).
+    $body['thinking'] = ['type' => 'disabled'];
     if ($stop_sequences) $body['stop_sequences'] = $stop_sequences;
 
     $ch = curl_init('https://api.anthropic.com/v1/messages');
@@ -88,7 +92,7 @@ function anthropic_chat(string $model, array $messages, ?string $system = null, 
     $pt = (int)($usage['input_tokens'] ?? 0);
     $ct = (int)($usage['output_tokens'] ?? 0);
 
-    $price = ANTHROPIC_PRICING[$model] ?? ANTHROPIC_PRICING['claude-sonnet-4-6'];
+    $price = ANTHROPIC_PRICING[$model] ?? ANTHROPIC_PRICING['claude-sonnet-5'];
     $cost = ($pt / 1_000_000) * $price['in'] + ($ct / 1_000_000) * $price['out'];
 
     // Log to api_calls. Wrapped in ww_db_write_retry because the art-direction brief added
@@ -133,7 +137,7 @@ function anthropic_multi(string $model, array $requests, int $max_tokens = 12000
             'messages'   => $r['messages'],
         ];
         if (!empty($r['system']))   $body['system'] = $r['system'];
-        if ($temperature !== null)  $body['temperature'] = $temperature;
+        $body['thinking'] = ['type' => 'disabled'];
         if ($stop_sequences)        $body['stop_sequences'] = $stop_sequences;
 
         $ch = curl_init('https://api.anthropic.com/v1/messages');
@@ -157,7 +161,7 @@ function anthropic_multi(string $model, array $requests, int $max_tokens = 12000
         if ($running) curl_multi_select($mh, 2.0);
     } while ($running && $status === CURLM_OK);
 
-    $price = ANTHROPIC_PRICING[$model] ?? ANTHROPIC_PRICING['claude-sonnet-4-6'];
+    $price = ANTHROPIC_PRICING[$model] ?? ANTHROPIC_PRICING['claude-sonnet-5'];
     $out = [];
     foreach ($handles as $k => $ch) {
         $raw  = curl_multi_getcontent($ch);
@@ -208,7 +212,7 @@ function anthropic_vision(string $model, string $system, string $user_text, arra
         'system'     => $system,
         'messages'   => [['role'=>'user','content'=>$content]],
     ];
-    if ($temperature !== null) $body['temperature'] = $temperature;
+    $body['thinking'] = ['type' => 'disabled'];
 
     $ch = curl_init('https://api.anthropic.com/v1/messages');
     curl_setopt_array($ch, [
@@ -225,7 +229,7 @@ function anthropic_vision(string $model, string $system, string $user_text, arra
     $text = '';
     foreach (($data['content'] ?? []) as $blk) { if (($blk['type'] ?? '') === 'text') $text .= $blk['text']; }
     $pt = (int)($data['usage']['input_tokens'] ?? 0); $ct = (int)($data['usage']['output_tokens'] ?? 0);
-    $price = ANTHROPIC_PRICING[$model] ?? ANTHROPIC_PRICING['claude-sonnet-4-6'];
+    $price = ANTHROPIC_PRICING[$model] ?? ANTHROPIC_PRICING['claude-sonnet-5'];
     $cost = ($pt/1_000_000)*$price['in'] + ($ct/1_000_000)*$price['out'];
     try { ww_db()->prepare("INSERT INTO api_calls (job_id, provider, model, prompt_tokens, completion_tokens, cost_usd, key_label) VALUES (?, 'anthropic', ?, ?, ?, ?, ?)")->execute([$job_id, $model.'-vision', $pt, $ct, $cost, $key_label]); } catch (Throwable $e) {}
     return ['text'=>$text, 'cost_usd'=>$cost, 'prompt_tokens'=>$pt, 'completion_tokens'=>$ct, 'model'=>$model];
@@ -256,7 +260,7 @@ function anthropic_batch_create(string $model, array $requests, int $max_tokens 
     foreach ($requests as $cid => $r) {
         $params = ['model' => $model, 'max_tokens' => $max_tokens, 'messages' => $r['messages']];
         if (!empty($r['system']))  $params['system'] = $r['system'];
-        if ($temperature !== null) $params['temperature'] = $temperature;
+        $params['thinking'] = ['type' => 'disabled'];
         if ($stop_sequences)       $params['stop_sequences'] = $stop_sequences;
         $items[] = ['custom_id' => (string)$cid, 'params' => $params];
     }
@@ -348,10 +352,10 @@ function anthropic_batch_results(string $batch_id, ?int $job_id = null): array {
             $usage = $msg['usage'] ?? [];
             $pt = (int)($usage['input_tokens'] ?? 0);
             $ct = (int)($usage['output_tokens'] ?? 0);
-            $price = ANTHROPIC_PRICING[$msg['model'] ?? ''] ?? ANTHROPIC_PRICING['claude-sonnet-4-6'];
+            $price = ANTHROPIC_PRICING[$msg['model'] ?? ''] ?? ANTHROPIC_PRICING['claude-sonnet-5'];
             $cost = ($pt / 1e6) * $price['in'] * 0.5 + ($ct / 1e6) * $price['out'] * 0.5; // 50% batch discount
             try { ww_db()->prepare("INSERT INTO api_calls (job_id, provider, model, prompt_tokens, completion_tokens, cost_usd, key_label) VALUES (?, 'anthropic', ?, ?, ?, ?, ?)")
-                ->execute([$job_id, ($msg['model'] ?? 'claude-sonnet-4-6') . '-batch', $pt, $ct, $cost, $key_label]); } catch (Throwable $e) {}
+                ->execute([$job_id, ($msg['model'] ?? 'claude-sonnet-5') . '-batch', $pt, $ct, $cost, $key_label]); } catch (Throwable $e) {}
             $out[$cid] = ['ok' => trim($text) !== '', 'text' => trim($text), 'status' => 'succeeded', 'error' => null, 'pt' => $pt, 'ct' => $ct, 'cost' => $cost];
         } else {
             $err = $res['error']['message'] ?? ($res['error']['type'] ?? $type);
