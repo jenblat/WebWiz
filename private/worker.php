@@ -314,12 +314,21 @@ function process_job(PDO $db, array $row): void {
             $q = $qa_results[$v] ?? null;
             $a = $audit_results[$v] ?? null;
             $c = $compare_results[$v] ?? null;
-            $db->prepare("INSERT INTO previews (job_id, variant_n, html_path, qa_score, qa_pass, qa_issues, audit_score, audit_verdict, audit_json, compare_verdict, compare_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-               ->execute([$job_id, $v, $rel, $q['score'] ?? null, isset($q['pass']) ? ($q['pass']?1:0) : null, $q ? json_encode($q['issues']) : null,
-                          $a ? (int)$a['score'] : null, $a ? (string)$a['verdict'] : null, ww_audit_for_db($a), $c ? (string)$c['verdict'] : null, ww_compare_for_db($c)]);
+            // Retried: these two writes land after ~10 minutes of work and the first test
+            // run lost them to a plain "database is locked" (SQLITE_BUSY under the
+            // hourly nurture tick), which threw the whole job away as failed.
+            ww_db_write_retry(function () use ($db, $job_id, $v, $rel, $q, $a, $c) {
+                $db->prepare("INSERT INTO previews (job_id, variant_n, html_path, qa_score, qa_pass, qa_issues, audit_score, audit_verdict, audit_json, compare_verdict, compare_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                   ->execute([$job_id, $v, $rel, $q['score'] ?? null, isset($q['pass']) ? ($q['pass']?1:0) : null, $q ? json_encode($q['issues']) : null,
+                              $a ? (int)$a['score'] : null, $a ? (string)$a['verdict'] : null, ww_audit_for_db($a), $c ? (string)$c['verdict'] : null, ww_compare_for_db($c)]);
+                return true;
+            }, 10);
         }
-        $db->prepare("UPDATE jobs SET status='ready', completed_at=datetime('now'), total_cost_cents=?, qa_status=? WHERE id=?")
-           ->execute([(int)round($total_cost * 100), $qa_status, $job_id]);
+        ww_db_write_retry(function () use ($db, $total_cost, $qa_status, $job_id) {
+            $db->prepare("UPDATE jobs SET status='ready', completed_at=datetime('now'), total_cost_cents=?, qa_status=? WHERE id=?")
+               ->execute([(int)round($total_cost * 100), $qa_status, $job_id]);
+            return true;
+        }, 10);
         $summary = [];
         foreach ($htmls as $v => $_) {
             $summary[] = "v{$v}" . (isset($audit_results[$v]['score']) ? " audit {$audit_results[$v]['score']}" : '') . (isset($compare_results[$v]['verdict']) ? " vs current " . ($compare_results[$v]['verdict'] === 'beats-current-site' ? 'wins' : 'loses ' . implode('/', (array)$compare_results[$v]['losing'])) : '');
@@ -759,6 +768,8 @@ TYPOGRAPHY
 
 DESIGN STANDARDS
 - Contemporary, confident, magazine-quality. High contrast. Fully responsive at 375px. 2 primary CTAs above the fold.
+- TAP TARGETS (audited at 390px): every link and button that is not a link inside a sentence must render at least 40px tall and 40px wide on a phone. Nav links, footer links, card links, pills and buttons all get padding or min-height:44px. 4 or more small targets fails the page.
+- BUTTON CONTRAST (audited): button text against its button colour needs 4.5:1. White text on a mid-tone brand colour (coral, teal, gold, light blue) fails; use the brand colour's darkest shade or dark text on the light accent.
 - COLOR CONTRAST (critical): any accent used as TEXT, numbers, small labels, wordmarks or thin UI on a DARK (navy/black/deep) background MUST be light and high-contrast - white, cream, or a bright gold. NEVER put a dark accent (dark red, maroon, burgundy, brown, navy) as TEXT on a dark background; that is unreadable. Reserve dark/saturated accents for solid-fill buttons/badges with white text, or as text on LIGHT backgrounds. Stat numbers and section labels sitting on a dark band must read clearly.
 - STRUCTURE IS YOURS TO DECIDE. There is no house skeleton. Use real landmarks - <header>, <main>, <article>, <aside>, <footer> - not an undifferentiated stack of <section> tags. Section count, order and vertical rhythm come from the assigned art direction and the client brief, not from habit.
 

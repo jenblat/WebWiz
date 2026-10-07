@@ -319,7 +319,10 @@ function collectMobileFacts() {
   out.overflow = document.documentElement.scrollWidth > window.innerWidth + 1;
   out.overflowers = q('body *').slice(0, 4000).filter((el) => { const r = el.getBoundingClientRect(); return r.right > window.innerWidth + 2 && r.width > 40 && getComputedStyle(el).position !== 'fixed'; })
     .slice(0, 6).map((el) => el.tagName.toLowerCase() + (el.id ? '#' + el.id : el.className ? '.' + String(el.className).split(' ')[0] : ''));
-  const targets = q('a[href], button, input[type=submit], [role=button]').filter(vis);
+  // a link set inline inside running text (a sentence in a <p> or <li>) is a
+  // reading link, not a tap target; buttons, nav, footer and card links all count
+  const inlineText = (el) => { if (el.tagName !== 'A') return false; if (getComputedStyle(el).display !== 'inline') return false; const par = el.parentElement; if (!par || !/^(P|LI|TD|BLOCKQUOTE|FIGCAPTION|DD|SMALL)$/.test(par.tagName)) return false; const txt = (par.textContent || '').trim().length, own = (el.textContent || '').trim().length; return txt > own + 20; };
+  const targets = q('a[href], button, input[type=submit], [role=button]').filter(vis).filter((el) => !inlineText(el));
   out.smallTargets = targets.filter((el) => { const r = el.getBoundingClientRect(); return r.height < 40 || r.width < 40; }).length;
   out.targets = targets.length;
   const textEls = q('p, li, a, span, small, label, td, b, strong').filter(vis).filter((el) => el.textContent.trim().length > 2);
@@ -383,11 +386,11 @@ async function auditUrl(url, opts = {}) {
     const consoleErrors = [];
     page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text().slice(0, 200)); });
     page.on('pageerror', (e) => consoleErrors.push(String(e.message || e).slice(0, 200)));
-    page.on('requestfailed', (r) => { if (!/beacon|analytics|gtm|facebook|doubleclick/i.test(r.url())) res.failed.push({ url: r.url().slice(0, 160), reason: (r.failure() || {}).errorText }); });
+    page.on('requestfailed', (r) => { if (!/beacon|analytics|gtm|facebook|doubleclick|\/events\?|sentry|hotjar|clarity|openai\.com/i.test(r.url())) res.failed.push({ url: r.url().slice(0, 160), reason: (r.failure() || {}).errorText }); });
     page.on('response', async (r) => {
       try {
         const req = r.request(); const type = req.resourceType();
-        if (r.status() >= 400 && !/beacon|analytics|gtm|facebook|doubleclick/i.test(r.url())) res.failed.push({ url: r.url().slice(0, 160), status: r.status() });
+        if (r.status() >= 400 && !/beacon|analytics|gtm|facebook|doubleclick|\/events\?|sentry|hotjar|clarity|openai\.com/i.test(r.url())) res.failed.push({ url: r.url().slice(0, 160), status: r.status() });
         if (r.status() >= 300 && r.status() < 400) return;
         let len = parseInt(r.headers()['content-length'] || '0', 10);
         if (!len && ['image', 'stylesheet', 'script', 'font', 'document'].includes(type)) { try { len = (await r.buffer()).length; } catch {} }
@@ -427,6 +430,7 @@ async function auditUrl(url, opts = {}) {
     facts.seoFiles = { robots: robots.status === 200 && !/<html/i.test(robots.text), sitemap: sitemap.status === 200 && /<urlset|<sitemapindex/i.test(sitemap.text), llms: llms.status === 200 && !/<html/i.test(llms.text) };
   } catch { facts.seoFiles = null; }
 
+  facts.isPreview = /\/preview\/[a-f0-9]{6,}\//i.test(facts.finalUrl || url);
   const checks = runChecks(facts, opts.facts || null);
   const summary = score(checks);
   // the page text is only needed by the truth checks; keep the stored facts small
@@ -475,9 +479,15 @@ function runChecks(f, sf) {
   add('one-h1', 'structure', 2, d.h1.length === 1 ? 'pass' : 'fail', d.h1.length === 1 ? `h1: "${d.h1[0].slice(0, 80)}"` : `${d.h1.length} h1 elements (need exactly one)`);
   add('heading-order', 'structure', 1, warn(d.headingSkips === 0), d.headingSkips ? `${d.headingSkips} heading level skips` : 'Heading levels descend in order');
   add('landmarks', 'structure', 1, warn(d.footer && d.main), `${d.main ? '<main>' : 'no <main>'}, ${d.footer ? '<footer>' : 'no <footer>'}`);
-  add('robots-txt', 'structure', 1, warn(!!(f.seoFiles && f.seoFiles.robots)), f.seoFiles && f.seoFiles.robots ? 'robots.txt served' : 'No robots.txt');
-  add('sitemap', 'structure', 1, warn(!!(f.seoFiles && f.seoFiles.sitemap)), f.seoFiles && f.seoFiles.sitemap ? 'sitemap.xml served' : 'No sitemap.xml');
-  add('llms-txt', 'structure', 1, warn(!!(f.seoFiles && f.seoFiles.llms)), f.seoFiles && f.seoFiles.llms ? 'llms.txt served (AI crawlers get a summary)' : 'No llms.txt');
+  // robots.txt, sitemap.xml and llms.txt belong to the host, not the page. A WebWiz
+  // preview lives under /preview/<token>/ where they cannot exist, and SeedSite
+  // regenerates them when the site goes live, so they are not scored for a preview.
+  // They still count for the prospect's current site, which is the real host.
+  if (!f.isPreview) {
+    add('robots-txt', 'structure', 1, warn(!!(f.seoFiles && f.seoFiles.robots)), f.seoFiles && f.seoFiles.robots ? 'robots.txt served' : 'No robots.txt');
+    add('sitemap', 'structure', 1, warn(!!(f.seoFiles && f.seoFiles.sitemap)), f.seoFiles && f.seoFiles.sitemap ? 'sitemap.xml served' : 'No sitemap.xml');
+    add('llms-txt', 'structure', 1, warn(!!(f.seoFiles && f.seoFiles.llms)), f.seoFiles && f.seoFiles.llms ? 'llms.txt served (AI crawlers get a summary)' : 'No llms.txt');
+  }
 
   // ---- content truth & copy ----
   add('no-placeholder', 'content', 4, ok(!d.placeholder || d.placeholder.length === 0), d.placeholder && d.placeholder.length ? 'Placeholder copy found: ' + d.placeholder.join(' | ') : 'No lorem, placeholder or TODO text');
