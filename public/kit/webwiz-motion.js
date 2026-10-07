@@ -1,16 +1,17 @@
-/*! WebWiz Motion Kit v1.0.0 | no dependencies | pair with webwiz-motion.css */
+/*! WebWiz Motion Kit v1.1.0 | no dependencies | pair with webwiz-motion.css */
 (function () {
   'use strict';
-  var VERSION = '1.0.0';
+  var VERSION = '1.1.0';
   var doc = document, root = doc.documentElement, win = window;
   var reduce = win.matchMedia && win.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var finePointer = win.matchMedia && win.matchMedia('(hover: hover) and (pointer: fine)').matches;
   var hasIO = 'IntersectionObserver' in win;
 
   // Only switch motion on when it can be done safely. Without this class the
   // CSS never hides anything, so a page without JS is a fully visible page.
   if (!reduce && hasIO) root.classList.add('ww-motion');
 
-  var revealSel = '[data-reveal],[data-reveal-stagger],[data-words]';
+  var revealSel = '[data-reveal],[data-reveal-stagger],[data-words],[data-highlight]';
   var revealed = false;
 
   function revealAll() {
@@ -27,8 +28,50 @@
     for (var i = 0; i < counters.length; i++) runCounter(counters[i]);
   }
 
+  // ---------- auto enhancement for WebWiz pages ----------
+  // Generated pages carry body[data-ambient] (finalize_html adds it). On those the
+  // kit adds the effects a designer would have asked for, so every existing preview
+  // gets them from a kit update without being regenerated. Everything added here is
+  // an ordinary kit attribute, so every failsafe below covers it.
+  function autoEnhance() {
+    var body = doc.body;
+    if (!body.hasAttribute('data-ambient') || body.getAttribute('data-ww-auto') === 'off') return;
+    var inRevealed = function (el) { return el.closest('[data-reveal],[data-reveal-stagger] > *,[data-parallax],[data-marquee],[data-scroll-x]'); };
+    // 1. content photographs unveil with a curtain
+    var imgs = doc.querySelectorAll('main img, section img, article img');
+    for (var i = 0; i < imgs.length; i++) {
+      var im = imgs[i];
+      if (im.closest('header,nav,footer,[data-parallax],[data-marquee],[data-no-curtain]') || im.hasAttribute('data-reveal')) continue;
+      if (im.closest('[data-reveal]')) continue;  // its block already animates
+      var r = im.getBoundingClientRect();
+      if (r.width < 220) continue;                                         // logos, icons, avatars
+      if (im.complete && im.naturalHeight && r.height < 140) continue;      // short strips and badges
+      // the settle-from-zoom only where a clipping frame hides the overscale;
+      // an unframed image would poke past its column (and past a phone's edge)
+      var po = win.getComputedStyle(im.parentElement || im).overflow;
+      if (!/hidden|clip/.test(po)) im.style.setProperty('--ww-curtain-scale', '1');
+      im.setAttribute('data-reveal', 'curtain');
+    }
+    // 2. section headlines rise when nothing else animates them
+    var hs = doc.querySelectorAll('main h2, section h2, article h2');
+    for (var h = 0; h < hs.length; h++) {
+      if (inRevealed(hs[h]) || hs[h].hasAttribute('data-words')) continue;
+      hs[h].setAttribute('data-reveal', 'rise');
+    }
+    // 3. cards tilt and catch the light
+    var cards = doc.querySelectorAll('[data-lift]');
+    for (var c = 0; c < cards.length; c++) if (!cards[c].hasAttribute('data-tilt')) cards[c].setAttribute('data-tilt', '');
+    // 4. call to action buttons pull toward the cursor
+    var btns = doc.querySelectorAll('a[class*="btn"], button[class*="btn"], a[class*="button"], a[class*="cta"], .btn, [data-cta]');
+    for (var b = 0; b < btns.length; b++) {
+      var br = btns[b].getBoundingClientRect();
+      if (br.width > 0 && br.width < 420 && !btns[b].hasAttribute('data-magnetic')) btns[b].setAttribute('data-magnetic', '');
+    }
+  }
+
   // ---------- prepare elements ----------
   function prep() {
+    autoEnhance();
     // per child delay index for staggered groups
     var groups = doc.querySelectorAll('[data-reveal-stagger]');
     for (var g = 0; g < groups.length; g++) {
@@ -41,7 +84,8 @@
     for (var d = 0; d < delayed.length; d++) {
       delayed[d].style.setProperty('--ww-delay', (parseFloat(delayed[d].getAttribute('data-reveal-delay')) / 1000) + 's');
     }
-    // word by word headlines, text only elements so markup is never broken
+    // word by word headlines, text only elements so markup is never broken.
+    // Each word is an outer mask (.ww-w) holding the moving word (.ww-wi).
     var words = doc.querySelectorAll('[data-words]');
     for (var w = 0; w < words.length; w++) {
       var el = words[w];
@@ -50,7 +94,7 @@
       for (var p = 0; p < parts.length; p++) {
         if (!parts[p]) continue;
         if (/^\s+$/.test(parts[p])) { html += parts[p]; continue; }
-        html += '<span class="ww-w" style="--ww-i:' + (idx++) + '">' + parts[p].replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</span>';
+        html += '<span class="ww-w"><span class="ww-wi" style="--ww-i:' + (idx++) + '">' + parts[p].replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</span></span>';
       }
       el.innerHTML = html;
       el.setAttribute('data-ww-split', '1');
@@ -82,6 +126,63 @@
     }
   }
 
+  // ---------- pointer effects: tilt, spotlight, magnetic, ambient follow ----------
+  // Fine pointers only (no phones), never under reduced motion, rAF throttled.
+  function pointer() {
+    if (reduce || !finePointer || root.getAttribute('data-ww-pointer')) return;
+    root.setAttribute('data-ww-pointer', '1');
+    var tilts = doc.querySelectorAll('[data-tilt]');
+    for (var t = 0; t < tilts.length; t++) bindTilt(tilts[t]);
+    var mags = doc.querySelectorAll('[data-magnetic]');
+    for (var m = 0; m < mags.length; m++) bindMagnet(mags[m]);
+    var pending = null;
+    win.addEventListener('pointermove', function (e) {
+      if (pending) return;
+      pending = win.requestAnimationFrame(function () {
+        pending = null;
+        root.style.setProperty('--ww-mx', (e.clientX / win.innerWidth).toFixed(2));
+        root.style.setProperty('--ww-my', (e.clientY / win.innerHeight).toFixed(2));
+      });
+    }, { passive: true });
+  }
+  function bindTilt(el) {
+    el.classList.add('ww-tilt', 'ww-spot');
+    if (win.getComputedStyle(el).position === 'static') el.style.position = 'relative';
+    var raf = null, ev = null;
+    el.addEventListener('pointermove', function (e) {
+      ev = e;
+      if (raf) return;
+      raf = win.requestAnimationFrame(function () {
+        raf = null;
+        var r = el.getBoundingClientRect();
+        var x = (ev.clientX - r.left) / r.width, y = (ev.clientY - r.top) / r.height;
+        // rotate around an axis perpendicular to the cursor offset, up to ~7 degrees
+        var dx = x - .5, dy = y - .5, mag = Math.min(1, Math.sqrt(dx * dx + dy * dy) * 2);
+        if (el.parentElement && !el.parentElement.style.perspective) el.parentElement.style.perspective = '1100px';
+        el.style.rotate = (-dy).toFixed(3) + ' ' + dx.toFixed(3) + ' 0 ' + (mag * 7).toFixed(2) + 'deg';
+        el.style.setProperty('--ww-px', (x * 100).toFixed(1) + '%');
+        el.style.setProperty('--ww-py2', (y * 100).toFixed(1) + '%');
+      });
+    });
+    el.addEventListener('pointerleave', function () { el.style.rotate = ''; });
+  }
+  function bindMagnet(el) {
+    el.classList.add('ww-mag');
+    var raf = null, ev = null;
+    el.addEventListener('pointermove', function (e) {
+      ev = e;
+      if (raf) return;
+      raf = win.requestAnimationFrame(function () {
+        raf = null;
+        var r = el.getBoundingClientRect();
+        var gx = (ev.clientX - (r.left + r.width / 2)) * .28, gy = (ev.clientY - (r.top + r.height / 2)) * .38;
+        el.classList.add('ww-pulling');
+        el.style.translate = gx.toFixed(1) + 'px ' + gy.toFixed(1) + 'px';
+      });
+    });
+    el.addEventListener('pointerleave', function () { el.classList.remove('ww-pulling'); el.style.translate = ''; });
+  }
+
   // ---------- counters ----------
   function runCounter(el) {
     if (el.getAttribute('data-ww-counted')) return;
@@ -89,7 +190,7 @@
     var target = parseFloat(String(el.getAttribute('data-count')).replace(/[^0-9.\-]/g, ''));
     if (isNaN(target)) return;
     var dec = parseInt(el.getAttribute('data-count-decimals') || '0', 10);
-    var dur = parseInt(el.getAttribute('data-count-duration') || '1600', 10);
+    var dur = parseInt(el.getAttribute('data-count-duration') || '1800', 10);
     var pre = el.getAttribute('data-count-prefix') || '', suf = el.getAttribute('data-count-suffix') || '';
     var sep = el.getAttribute('data-count-separator') !== 'none';
     var fmt = function (n) {
@@ -102,7 +203,7 @@
     function step(t) {
       if (!t0) t0 = t;
       var k = Math.min(1, (t - t0) / dur);
-      var e = 1 - Math.pow(1 - k, 3);
+      var e = 1 - Math.pow(1 - k, 4);
       el.textContent = fmt(target * e);
       if (k < 1) win.requestAnimationFrame(step); else el.textContent = fmt(target);
     }
@@ -132,11 +233,12 @@
     for (var c = 0; c < loose.length; c++) if (!loose[c].closest(revealSel)) cio.observe(loose[c]);
   }
 
-  // ---------- scroll driven: progress, nav, parallax, section tint ----------
-  var parallax = [], shifts = [], nav = null, ticking = false, lastProg = null, pending = [];
+  // ---------- scroll driven: progress, nav, parallax, section tint, scroll-x ----------
+  var parallax = [], shifts = [], bands = [], nav = null, ticking = false, lastProg = null, pending = [];
   function collect() {
     parallax = [].slice.call(doc.querySelectorAll('[data-parallax]'));
     shifts = [].slice.call(doc.querySelectorAll('[data-bg-shift]'));
+    bands = [].slice.call(doc.querySelectorAll('[data-scroll-x]'));
     nav = doc.querySelector('[data-nav]');
   }
   function frame() {
@@ -172,12 +274,22 @@
       var p = Math.min(1, Math.max(0, (vh - sr.top) / (vh + sr.height))).toFixed(2);
       if (se.getAttribute('data-ww-p') !== p) { se.setAttribute('data-ww-p', p); se.style.setProperty('--ww-p', p); }
     }
+    for (var b = 0; b < bands.length; b++) {
+      var be = bands[b], bor = be.getBoundingClientRect();
+      if (bor.bottom < -vh || bor.top > vh * 2) continue;
+      var bp = Math.min(1, Math.max(0, (vh - bor.top) / (vh + bor.height)));
+      var amt = parseFloat(be.getAttribute('data-scroll-x')) || 0.25;
+      // alternate direction band by band so stacked bands shear past each other
+      var dir = (b % 2) ? 1 : -1;
+      var sx = (motion ? (dir * (bp - .5) * amt * 100) : 0).toFixed(2) + '%';
+      if (be.getAttribute('data-ww-sx') !== sx) { be.setAttribute('data-ww-sx', sx); be.style.setProperty('--ww-sx', sx); }
+    }
   }
   function onScroll() { if (!ticking) { ticking = true; win.requestAnimationFrame(frame); } }
 
   // ---------- boot ----------
   function boot() {
-    prep(); collect(); observe(); frame();
+    prep(); collect(); observe(); frame(); pointer();
     win.addEventListener('scroll', onScroll, { passive: true });
     win.addEventListener('resize', onScroll);
     // Failsafes. A flaky observer, a background tab, a screenshot renderer or

@@ -561,33 +561,74 @@ function ww_of(?array $OF, string $k, string $default): string {
   body[data-view="reveal"] footer.tryfoot,body[data-view="reveal"] footer{display:none!important;}
   .view-reveal{padding:0;flex:1;display:flex;flex-direction:column;min-height:0;width:100%;}
   .reveal-layout{flex:1;display:flex;flex-direction:column;width:100%;min-height:0;}
-  /* "Your site today, and your new site": the side by side from the compare audit.
-     Sits above the preview frame, first thing after the hero of the reveal page.
-     Facts only, from compare-v1.json; hidden until that file exists and only shown
-     when the new site beat the current one. */
-  .cmp-strip{flex:none;background:#fff;border-bottom:3px solid var(--navy);padding:10px 16px 12px;}
+  /* "Your site today, and your new site": the compare audit.
+     A slim bar above the preview carries the two scores and one problem at a time
+     from their current site. "See the report" opens a scorecard that makes the gap
+     obvious at a glance: two graded scores, each site's own screenshot, one bar per
+     category, and what is wrong with their site today in plain words, each marked
+     fixed. It opens by itself once per preview. Facts only, from compare-v1.json,
+     and only when the new site won. (Omar, 2026-10-07: the first version was busy
+     and did not make the difference easy to understand.) */
+  .cmp-strip{position:relative;flex:none;display:flex;align-items:center;gap:12px;height:48px;padding:0 16px;background:#fff;border-bottom:3px solid var(--navy);z-index:30;}
   .cmp-strip[hidden]{display:none;}
-  .cmp-head{display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
-  .cmp-title{font-family:var(--display);font-weight:900;font-size:15px;color:var(--navy);letter-spacing:.01em;}
-  .cmp-scores{display:flex;align-items:baseline;gap:10px;margin-left:auto;}
-  .cmp-score b{font-family:var(--display);font-size:24px;line-height:1;font-weight:900;}
-  .cmp-score small{font-size:11px;letter-spacing:.06em;text-transform:uppercase;opacity:.65;margin-left:4px;font-weight:700;}
-  .cmp-score.theirs b{color:#8a4b1f;} .cmp-score.ours b{color:#1a7f4b;}
-  .cmp-vs{font-size:12px;opacity:.6;}
-  .cmp-hide{background:transparent;border:2px solid var(--navy);border-radius:999px;color:var(--navy);font-weight:800;font-size:12px;padding:5px 11px;cursor:pointer;}
-  .cmp-body{display:grid;grid-template-columns:minmax(0,520px) 1fr;gap:16px;align-items:start;margin-top:8px;}
-  .cmp-body a{display:block;border:2px solid var(--navy);border-radius:10px;overflow:hidden;background:var(--cream);box-shadow:4px 4px 0 var(--yellow);}
-  .cmp-body img{display:block;width:100%;height:auto;max-height:190px;object-fit:cover;object-position:top;}
-  .cmp-facts{list-style:none;margin:0;padding:0;display:grid;gap:5px;font-size:13.5px;line-height:1.35;color:var(--navy);}
-  .cmp-facts li{display:flex;gap:8px;align-items:flex-start;} .cmp-facts li::before{content:"\2713";font-weight:900;color:#1a7f4b;flex:none;}
-  .cmp-cats{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
-  .cmp-cats span{font-size:11px;font-weight:800;letter-spacing:.03em;background:#eaf7f1;color:#12603f;border:1.5px solid #bfe6d4;border-radius:999px;padding:3px 9px;}
+  .cmp-pill{display:inline-flex;align-items:baseline;gap:6px;white-space:nowrap;border-radius:999px;padding:4px 11px;font-weight:800;}
+  .cmp-pill b{font-family:var(--display);font-size:19px;line-height:1;font-weight:900;}
+  .cmp-pill small{font-size:11px;letter-spacing:.04em;font-weight:800;}
+  .cmp-pill.bad{background:#fde8e6;color:#a3221b;} .cmp-pill.good{background:#e3f6ec;color:#12603f;}
+  .cmp-arrow{font-weight:900;opacity:.45;}
+  .cmp-tick{flex:1;min-width:0;font-size:13.5px;color:#7a1f17;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:opacity .35s ease,transform .35s ease;}
+  .cmp-tick.out{opacity:0;transform:translateY(6px);}
+  .cmp-tick::before{content:"\2715  ";font-weight:900;color:#c0392b;}
+  .cmp-open{flex:none;background:var(--navy);color:var(--cream);border:2px solid var(--navy);border-radius:999px;font-weight:800;font-size:12.5px;padding:7px 15px;cursor:pointer;white-space:nowrap;}
+  .cmp-open:hover{box-shadow:3px 3px 0 var(--yellow);}
+  .cmp-x{flex:none;background:transparent;border:0;font-size:20px;line-height:1;color:var(--navy);opacity:.55;cursor:pointer;padding:4px;}
+  /* the report */
+  .cmp-back{position:fixed;inset:0;z-index:90;background:rgba(14,18,48,.55);display:none;align-items:flex-start;justify-content:center;padding:28px 16px;overflow-y:auto;}
+  .cmp-back.open{display:flex;}
+  .cmp-rep{position:relative;width:min(980px,100%);background:var(--cream);border:3px solid var(--navy);border-radius:18px;box-shadow:10px 10px 0 var(--yellow);padding:26px 28px 24px;color:var(--navy);}
+  .cmp-rep h3{font-family:var(--display);font-weight:900;font-size:26px;line-height:1.15;margin:0 40px 4px 0;}
+  .cmp-rep .sub{font-size:14px;opacity:.75;margin:0 0 18px;}
+  .cmp-close{position:absolute;top:14px;right:14px;width:36px;height:36px;border-radius:50%;border:2px solid var(--navy);background:#fff;font-size:20px;line-height:1;cursor:pointer;color:var(--navy);}
+  .cmp-sides{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
+  .cmp-side{background:#fff;border:2px solid var(--navy);border-radius:14px;padding:14px;}
+  .cmp-side.bad{border-color:#c0392b;} .cmp-side.good{border-color:#1a7f4b;}
+  .cmp-side-top{display:flex;align-items:center;gap:14px;margin-bottom:12px;}
+  .cmp-ring{--c:#1a7f4b;--v:50;flex:none;width:76px;height:76px;border-radius:50%;background:conic-gradient(var(--c) calc(var(--v)*1%),rgba(18,24,74,.1) 0);display:grid;place-items:center;}
+  .cmp-ring span{width:60px;height:60px;border-radius:50%;background:#fff;display:grid;place-items:center;font-family:var(--display);font-weight:900;font-size:26px;color:var(--c);}
+  .cmp-side-top small{display:block;font-size:12px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;opacity:.65;}
+  .cmp-side-top strong{display:block;font-family:var(--display);font-size:20px;font-weight:900;}
+  .cmp-side img{display:block;width:100%;height:auto;max-height:300px;object-fit:cover;object-position:top;border-radius:8px;border:1px solid rgba(18,24,74,.15);}
+  .cmp-h4{font-family:var(--display);font-weight:900;font-size:17px;margin:22px 0 10px;}
+  .cmp-bars{display:grid;gap:9px;}
+  .cmp-row{display:grid;grid-template-columns:170px 1fr;gap:12px;align-items:center;font-size:13.5px;}
+  .cmp-row > span{font-weight:700;}
+  .cmp-pair{display:grid;gap:3px;}
+  .cmp-bar{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:800;}
+  .cmp-bar i{display:block;height:9px;border-radius:9px;min-width:4px;transition:width 1s cubic-bezier(.16,1,.3,1);}
+  .cmp-bar.t i{background:#d9534f;} .cmp-bar.o i{background:#1a9f5f;}
+  .cmp-bar.t{color:#a3221b;} .cmp-bar.o{color:#12603f;}
+  .cmp-probs{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:1fr 1fr;gap:8px 18px;}
+  .cmp-probs li{display:flex;gap:9px;align-items:flex-start;font-size:14px;line-height:1.35;background:#fff;border:1.5px solid rgba(18,24,74,.12);border-radius:10px;padding:9px 11px;}
+  .cmp-probs li::before{content:"\2715";flex:none;font-weight:900;color:#c0392b;}
+  .cmp-probs li em{margin-left:auto;flex:none;font-style:normal;font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#12603f;background:#e3f6ec;border-radius:999px;padding:2px 8px;align-self:center;}
+  .cmp-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:20px;flex-wrap:wrap;}
+  .cmp-foot p{margin:0;font-size:13px;opacity:.7;}
+  .cmp-go{background:var(--navy);color:var(--cream);border:2px solid var(--navy);border-radius:999px;font-weight:800;font-size:14px;padding:11px 20px;cursor:pointer;box-shadow:4px 4px 0 var(--yellow);}
   @media (max-width:900px){
-    .cmp-strip{padding:8px 12px 10px;}
-    .cmp-body{grid-template-columns:1fr;gap:10px;}
-    .cmp-body img{max-height:34vh;object-fit:contain;object-position:top;background:var(--cream);}
-    .cmp-facts{font-size:13px;} .cmp-facts li:nth-child(n+4){display:none;} .cmp-cats{display:none;}
-    .cmp-score b{font-size:20px;}
+    .cmp-strip{height:44px;padding:0 10px;gap:8px;}
+    .cmp-tick{display:none;}
+    .cmp-pill small{display:none;}
+    .cmp-strip .cmp-spacer{flex:1;}
+    .cmp-back{padding:0;}
+    .cmp-rep{border-radius:0;border-width:0;box-shadow:none;padding:20px 16px 26px;min-height:100%;}
+    .cmp-rep h3{font-size:22px;}
+    .cmp-sides{grid-template-columns:1fr 1fr;gap:10px;}
+    .cmp-side{padding:9px;}
+    .cmp-ring{width:58px;height:58px;} .cmp-ring span{width:46px;height:46px;font-size:20px;}
+    .cmp-side-top{gap:8px;} .cmp-side-top strong{font-size:15px;} .cmp-side-top small{font-size:10px;}
+    .cmp-side img{max-height:260px;}
+    .cmp-row{grid-template-columns:1fr;gap:4px;}
+    .cmp-probs{grid-template-columns:1fr;}
   }
   .reveal-frame-wrap{flex:1;position:relative;background:var(--cream);min-height:0;overflow:hidden;}
   .reveal-frame-wrap.device-mobile{padding:16px;display:flex;align-items:stretch;justify-content:center;background:var(--cream);background-image:radial-gradient(rgba(18,24,74,0.07) 1.5px, transparent 1.5px);background-size:24px 24px;}
@@ -1086,22 +1127,13 @@ if ($initial_token !== '') {
 <main class="view view-reveal">
   <div class="reveal-layout">
     <section class="cmp-strip" id="cmpStrip" hidden aria-label="Your site today, and your new site">
-      <div class="cmp-head">
-        <div class="cmp-title">Your site today, and your new site</div>
-        <div class="cmp-scores">
-          <span class="cmp-score theirs"><b id="cmpTheirs">0</b><small id="cmpTheirsHost">today</small></span>
-          <span class="cmp-vs">to</span>
-          <span class="cmp-score ours"><b id="cmpOurs">0</b><small>new site</small></span>
-        </div>
-        <button type="button" class="cmp-hide" id="cmpHide" aria-label="Hide the comparison">Hide</button>
-      </div>
-      <div class="cmp-body">
-        <a id="cmpImgLink" href="#" target="_blank" rel="noopener"><img id="cmpImg" alt="Your current site on the left, your new site on the right" decoding="async"></a>
-        <div>
-          <ul class="cmp-facts" id="cmpFacts"></ul>
-          <div class="cmp-cats" id="cmpCats"></div>
-        </div>
-      </div>
+      <span class="cmp-pill bad"><small id="cmpTheirsHost">Your site today</small><b id="cmpTheirs">0</b></span>
+      <span class="cmp-arrow" aria-hidden="true">&rarr;</span>
+      <span class="cmp-pill good"><small>Your new site</small><b id="cmpOurs">0</b></span>
+      <span class="cmp-tick" id="cmpTick" aria-live="off"></span>
+      <span class="cmp-spacer"></span>
+      <button type="button" class="cmp-open" id="cmpOpen" aria-haspopup="dialog">See the report</button>
+      <button type="button" class="cmp-x" id="cmpHide" aria-label="Hide the comparison">&times;</button>
     </section>
     <div class="reveal-frame-wrap" id="revealFrameWrap">
       <div class="edit-overlay" id="editOverlay" aria-hidden="true">
@@ -1309,6 +1341,23 @@ if ($initial_token !== '') {
   </div>
 </main>
 
+<div class="cmp-back" id="cmpBack" aria-hidden="true">
+  <div class="cmp-rep" role="dialog" aria-modal="true" aria-labelledby="cmpTitle">
+    <button type="button" class="cmp-close" id="cmpClose" aria-label="Close the report">&times;</button>
+    <h3 id="cmpTitle">Your new site scores 0. Your site today scores 0.</h3>
+    <p class="sub" id="cmpSub">We tested both the same way, in a real browser on a laptop and on a phone.</p>
+    <div class="cmp-sides">
+      <div class="cmp-side bad"><div class="cmp-side-top"><div class="cmp-ring" id="cmpRingT"><span id="cmpRingTN">0</span></div><div><small id="cmpHostT">Your site today</small><strong id="cmpGradeT">Poor</strong></div></div><img id="cmpShotT" alt="Your current site" decoding="async"></div>
+      <div class="cmp-side good"><div class="cmp-side-top"><div class="cmp-ring" id="cmpRingO"><span id="cmpRingON">0</span></div><div><small>Your new site</small><strong id="cmpGradeO">Excellent</strong></div></div><img id="cmpShotO" alt="Your new site" decoding="async"></div>
+    </div>
+    <div class="cmp-h4" id="cmpProbsTitle">What we found on your site today</div>
+    <ul class="cmp-probs" id="cmpProbs"></ul>
+    <div class="cmp-h4">Score by category</div>
+    <div class="cmp-bars" id="cmpBars"></div>
+    <div class="cmp-foot"><p>Every problem above is fixed in your new site.</p><button type="button" class="cmp-go" id="cmpGo">Launch my new site &rarr;</button></div>
+  </div>
+</div>
+
 <!-- ===================== SUCCESS VIEW ===================== -->
 <main class="view view-success">
   <div class="success-wrap">
@@ -1441,26 +1490,97 @@ window.__TRY_INIT__ = {
   // after the reveal opens (it audits the prospect's current site after the page is
   // already showing), so poll for it briefly; returning visitors get it at once.
   var __cmpShown = false, __cmpTimer = null, __cmpTries = 0;
+  var __cmpTickTimer = null, __cmpData = null;
+  function wwGrade(n){ return n >= 90 ? ['Excellent','#1a7f4b'] : n >= 75 ? ['Good','#2f8f6b'] : n >= 60 ? ['Needs work','#c46a12'] : ['Poor','#c0392b']; }
   function wwRenderCompare(c){
     try {
       if (__cmpShown || !c || c.verdict !== 'beats-current-site') return;
       var strip = document.getElementById('cmpStrip'); if (!strip) return;
-      var isPhone = window.matchMedia && window.matchMedia('(max-width: 900px)').matches;
-      var img = (isPhone && c.images && c.images.mobile) ? c.images.mobile : (c.images && c.images.desktop);
-      if (!img) return;
+      __cmpData = c;
+      var host = c.theirs.host || 'Your site today';
       document.getElementById('cmpTheirs').textContent = String(c.theirs.score);
-      document.getElementById('cmpTheirsHost').textContent = c.theirs.host || 'today';
+      document.getElementById('cmpTheirsHost').textContent = host;
       document.getElementById('cmpOurs').textContent = String(c.ours.score);
-      var im = document.getElementById('cmpImg'); im.src = img;
-      document.getElementById('cmpImgLink').href = (c.images && c.images.desktop) || img;
-      var ul = document.getElementById('cmpFacts'); ul.innerHTML = '';
-      (c.facts || []).slice(0, 5).forEach(function(f){ var li = document.createElement('li'); li.textContent = f; ul.appendChild(li); });
-      var cats = document.getElementById('cmpCats'); cats.innerHTML = '';
-      (c.winning || []).forEach(function(g){ var gr = c.groups && c.groups[g]; if (!gr) return; var sp = document.createElement('span'); sp.textContent = (gr.label || g) + ' ' + gr.ours + ' to ' + gr.theirs; cats.appendChild(sp); });
+      // one problem from their site at a time in the bar
+      var probs = (c.problems || []).map(function(p){ return p.text; });
+      if (!probs.length) probs = (c.facts || []).slice();
+      var tick = document.getElementById('cmpTick'), fi = 0;
+      if (probs.length) {
+        tick.textContent = probs[0];
+        if (probs.length > 1 && !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)) {
+          __cmpTickTimer = setInterval(function(){
+            tick.classList.add('out');
+            setTimeout(function(){ fi = (fi + 1) % probs.length; tick.textContent = probs[fi]; tick.classList.remove('out'); }, 350);
+          }, 4000);
+        }
+      }
       strip.hidden = false; __cmpShown = true;
       try { track('compare_viewed', { ours: c.ours.score, theirs: c.theirs.score }); } catch(e){}
+      // open the report by itself once per preview, a moment after the site is on screen
+      var key = 'wwcmp_' + (window.__WW_TOKEN || '');
+      var seen = false; try { seen = !!localStorage.getItem(key); } catch(e){}
+      if (!seen) setTimeout(function(){ if (!document.getElementById('cmpBack').classList.contains('open')) { wwOpenReport(true); try { localStorage.setItem(key, '1'); } catch(e){} } }, 2200);
     } catch(e){}
   }
+  function wwFillReport(){
+    var c = __cmpData; if (!c) return;
+    var isPhone = window.matchMedia && window.matchMedia('(max-width: 900px)').matches;
+    var host = c.theirs.host || 'your site', t = c.theirs.score, o = c.ours.score;
+    document.getElementById('cmpTitle').textContent = 'Your new site scores ' + o + '. ' + host + ' scores ' + t + '.';
+    document.getElementById('cmpSub').textContent = 'We tested both the same way: ' + (c.checks_run || 60) + ' checks, run in a real browser on a laptop and on a phone.';
+    var gt = wwGrade(t), go = wwGrade(o);
+    var rt = document.getElementById('cmpRingT'), ro = document.getElementById('cmpRingO');
+    rt.style.setProperty('--c', gt[1]); ro.style.setProperty('--c', go[1]);
+    rt.style.setProperty('--v', 0); ro.style.setProperty('--v', 0);
+    document.getElementById('cmpRingTN').textContent = t; document.getElementById('cmpRingON').textContent = o;
+    document.getElementById('cmpGradeT').textContent = gt[0]; document.getElementById('cmpGradeO').textContent = go[0];
+    document.getElementById('cmpHostT').textContent = host + ' today';
+    var im = c.images || {};
+    var st = document.getElementById('cmpShotT'), so = document.getElementById('cmpShotO');
+    var tsrc = isPhone ? (im['theirs-mobile'] || im['theirs-desktop']) : (im['theirs-desktop'] || im.desktop);
+    var osrc = isPhone ? (im['ours-mobile'] || im['ours-desktop']) : (im['ours-desktop'] || im.desktop);
+    if (tsrc && st.getAttribute('src') !== tsrc) st.src = tsrc;
+    if (osrc && so.getAttribute('src') !== osrc) so.src = osrc;
+    var bars = document.getElementById('cmpBars'); bars.innerHTML = '';
+    var order = ['mobile','performance','design','motion','access','structure','content'];
+    order.forEach(function(g){
+      var gr = c.groups && c.groups[g]; if (!gr) return;
+      var row = document.createElement('div'); row.className = 'cmp-row';
+      row.innerHTML = '<span></span><div class="cmp-pair"><div class="cmp-bar t"><i data-w="' + gr.theirs + '"></i><b></b></div><div class="cmp-bar o"><i data-w="' + gr.ours + '"></i><b></b></div></div>';
+      row.querySelector('span').textContent = gr.label || g;
+      row.querySelectorAll('b')[0].textContent = host + ' ' + gr.theirs;
+      row.querySelectorAll('b')[1].textContent = 'new ' + gr.ours;
+      bars.appendChild(row);
+    });
+    var pl = document.getElementById('cmpProbs'); pl.innerHTML = '';
+    document.getElementById('cmpProbsTitle').textContent = 'What we found on ' + host + ' today';
+    (c.problems || []).slice(0, 8).forEach(function(p){ var li = document.createElement('li'); li.textContent = p.text; var e = document.createElement('em'); e.textContent = 'Fixed'; li.appendChild(e); pl.appendChild(li); });
+    // grow the rings and bars in once the report is on screen
+    setTimeout(function(){
+      rt.style.transition = ro.style.transition = 'none';
+      var start = null, dur = 900;
+      (function step(ts){ if (!start) start = ts; var k = Math.min(1, (ts - start) / dur), e = 1 - Math.pow(1 - k, 3);
+        rt.style.setProperty('--v', (t * e).toFixed(1)); ro.style.setProperty('--v', (o * e).toFixed(1)); if (k < 1) requestAnimationFrame(step); })(performance.now());
+      bars.querySelectorAll('i[data-w]').forEach(function(i){ i.style.width = '0%'; requestAnimationFrame(function(){ i.style.width = 'calc(' + i.getAttribute('data-w') + '% - 70px)'; }); });
+    }, 60);
+  }
+  function wwOpenReport(auto){
+    var back = document.getElementById('cmpBack'); if (!back || !__cmpData) return;
+    wwFillReport();
+    back.classList.add('open'); back.setAttribute('aria-hidden', 'false');
+    try { track('compare_opened', { auto: !!auto }); } catch(e){}
+  }
+  function wwCloseReport(){
+    var back = document.getElementById('cmpBack'); if (!back) return;
+    back.classList.remove('open'); back.setAttribute('aria-hidden', 'true');
+  }
+  (function(){
+    var b = document.getElementById('cmpOpen'); if (b) b.addEventListener('click', function(){ wwOpenReport(false); });
+    var x = document.getElementById('cmpClose'); if (x) x.addEventListener('click', wwCloseReport);
+    var back = document.getElementById('cmpBack'); if (back) back.addEventListener('click', function(e){ if (e.target === back) wwCloseReport(); });
+    document.addEventListener('keydown', function(e){ if (e.key === 'Escape') wwCloseReport(); });
+    var go = document.getElementById('cmpGo'); if (go) go.addEventListener('click', function(){ wwCloseReport(); try { track('compare_launch_click'); } catch(e){} var cta = document.getElementById('convCta'); if (cta) cta.click(); });
+  })();
   function wwPollCompare(token){
     if (!token || __cmpShown) return;
     if (__cmpTimer) clearTimeout(__cmpTimer);
@@ -1474,7 +1594,7 @@ window.__TRY_INIT__ = {
     attempt();
   }
   var __cmpHideBtn = document.getElementById('cmpHide');
-  if (__cmpHideBtn) __cmpHideBtn.addEventListener('click', function(){ var st = document.getElementById('cmpStrip'); if (st) st.hidden = true; try { track('compare_hidden'); } catch(e){} });
+  if (__cmpHideBtn) __cmpHideBtn.addEventListener('click', function(){ var st = document.getElementById('cmpStrip'); if (st) st.hidden = true; if (__cmpTickTimer) clearInterval(__cmpTickTimer); try { track('compare_hidden'); } catch(e){} });
   if (window.__WW_COMPARE) wwRenderCompare(window.__WW_COMPARE);
   else if (body.getAttribute('data-view') === 'reveal' && window.__WW_TOKEN) wwPollCompare(window.__WW_TOKEN);
   var editsChip = document.getElementById('editsChip');

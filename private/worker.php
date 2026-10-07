@@ -498,7 +498,7 @@ function finalize_html(string $text): ?string {
     $t1 = random_int(1000, 1250); $t2 = random_int(2100, 2400); $t3 = random_int(3300, 3700);
     $k1 = random_int(1200, 1400); $k2 = random_int(6300, 6800);
     $legacy = '.fade-up,.fade-in,.reveal,.animate,.scroll-reveal';
-    $kit    = '[data-reveal],[data-reveal-stagger] > *,[data-words] .ww-w';
+    $kit    = '[data-reveal],[data-reveal-stagger] > *,[data-words] .ww-w,[data-words] .ww-wi';
     $failsafe = "\n<script>(function(){"
         . "function {$fr}(){try{var {$ve}=document.querySelectorAll('{$legacy}');for(var {$vi}=0;{$vi}<{$ve}.length;{$vi}++){{$ve}[{$vi}].classList.add('visible','active','in-view','show');{$ve}[{$vi}].style.opacity='1';{$ve}[{$vi}].style.transform='none';{$ve}[{$vi}].style.visibility='visible';}}catch({$vx}){}}"
         . "function {$fk}({$vn}){try{if(!{$vn}&&window.WebWizMotion&&window.WebWizMotion.revealAll){window.WebWizMotion.revealAll();}var {$vk}=document.querySelectorAll('{$kit}'),{$ve}=window.innerHeight*1.5;for(var {$vi}=0;{$vi}<{$vk}.length;{$vi}++){if({$vn}&&({$vk}[{$vi}].getBoundingClientRect().top>{$ve}||{$vk}[{$vi}].closest('.ww-in')))continue;{$vk}[{$vi}].style.opacity='1';{$vk}[{$vi}].style.transform='none';{$vk}[{$vi}].style.clipPath='none';{$vk}[{$vi}].style.visibility='visible';}}catch({$vx}){}}"
@@ -724,44 +724,31 @@ OUTPUT
 Return ONLY a complete HTML5 document, no markdown, no commentary, no code fences. First character `<`, last character `>`. Must include <!DOCTYPE html>, <html>, <head>, <body>, end with </html>. Target ~5000 tokens.
 
 ABSOLUTE RULES
-1. ENTRANCE MOTION COMES ONLY FROM THE WEBWIZ MOTION KIT ATTRIBUTES (see MOTION IS MANDATORY below). The kit's CSS and JS are injected into your page for you; do not link them yourself. Never write your own opacity:0, visibility:hidden, transform based entrance, IntersectionObserver or @keyframes entrance. Your own CSS transitions are fine for hover states.
-2. The kit already honours prefers-reduced-motion. Any hover transition of your own must be inside @media (prefers-reduced-motion: no-preference).
-3. HTML COMPLETE - TOP PRIORITY. Close every tag and END WITH </html>. If running long, SHORTEN copy + CSS and DROP the FAQ section, but NEVER omit the <footer> or leave the document unclosed. A complete ~5000-token page beats a richer page that gets cut off. Keep CSS compact (group selectors, no redundant rules).
-4. IMAGES ARE MANDATORY. Use a MINIMUM of 4 DISTINCT images via the proxy. Every image MUST be wrapped exactly like:
-   <img src="/api/img.php?u=<URL-ENCODED-original>&l=<URL-ENCODED-short-label>" alt="...">  (do NOT add loading="lazy" - all images must load eagerly)
-5. {$img_note}
-6. EVERY image URL you use MUST come from the provided source data (images.photo / images.cutout / images.thumbnail / images.logo). All provided URLs are verified to load. Do NOT invent URLs. Do NOT reuse a URL twice.
-
-IMAGE FRAMING - clients reject cropped people:
-- LANDSCAPE PHOTOS (images.photo): scenes, offices, products. Container with aspect-ratio + overflow:hidden + object-fit:cover. Fine as hero/feature/full-bleed. CRITICAL - HEADS: if the photo contains PEOPLE, use object-position:center top (NEVER center or bottom) and keep the band tall (>=60vh for a hero, >=460px for a mid-page band) so heads are NEVER cut off at the top edge. A wide-short full-bleed band (height under ~420px) may ONLY use a photo with no faces near the top. Do NOT force a single tight head-and-shoulders portrait into a wide full-bleed band - put single portraits in a framed portrait card (aspect-ratio 3/4 or 4/5, object-fit:cover, object-position:center top) with the name/title beneath.
-- CUTOUT / PORTRAIT / PERSON images (images.cutout, or anyone on a transparent/plain background): NEVER crop. Render with object-fit:contain inside a fixed-height box (e.g. height:420px) with a soft brand-tint/neutral background and padding, so the whole person is visible. NEVER use a cutout person as a full-bleed hero. NEVER put a face in a tight 1:1 or 16/9 cover crop.
-- Hero: prefer a LANDSCAPE photo. If none exists, use a CSS gradient/SVG hero and put people photos lower in framed cards.
-
-NO EMPTY SPACE / NO EMPTY IMAGE BOXES (clients reject these instantly)
-- Every section must contain visible content. Never leave a section taller than ~40vh with nothing in it.
-- NEVER create an image slot, card thumbnail, or photo box you cannot fill with a REAL provided image URL. An empty or solid-color/gray/tinted rectangle where a photo belongs is an AUTOMATIC REJECTION.
-- If you do not have enough distinct images for a layout (e.g. a 3-card services/insights/blog grid, or an about/team photo), then REDESIGN that section to need fewer images, or make it text/icon/stat based, or drop it. Fewer cards with real images beats more cards with blank image areas.
-- Do NOT build a "latest articles / insights / blog / news" card grid with image thumbnails unless you have a distinct real image for EVERY card.
-- The founder/CEO/about photo is optional: only include a person photo if a real provided image exists for it; otherwise use a text-forward about block. Never leave a labeled-but-empty portrait frame.
-- An image wrapper carrying data-parallax MUST have its own height set (a fixed height, min-height, or aspect-ratio). The kit sizes the image to fill the wrapper, so a wrapper with no height collapses to zero and the hero photo disappears.
-
-MOTION IS MANDATORY
-Every page moves. Entrance motion, a gentle background that shifts as you scroll, and depth on the hero are what separate this page from anything a prompt tool hands back. All of it is done with the WebWiz Motion Kit data attributes below; the kit is injected for you and guarantees nothing is ever stuck hidden.
+1. ENTRANCE MOTION COMES ONLY FROM THE WEBWIZ MOTION KIT ATTRIBUTES (see MOTION IS MANDATORY, AND IT SHOULD FEEL ALIVE
+Every page moves. Entrance motion, a background that shifts as you scroll, depth on the hero and things that answer the cursor are what separate this page from anything a prompt tool hands back. All of it is done with the WebWiz Motion Kit data attributes below; the kit is injected for you, guarantees nothing is ever stuck hidden, and honours reduced motion.
 
 | Where | Attribute |
 | The h1 (text only, no child elements; if one word is coloured, wrap it in its own span and give that span data-words too) | data-words |
-| The hero image wrapper (one img inside, wrapper has a fixed height or aspect-ratio) | data-parallax="0.12" |
-| Every section's heading block, every feature row | data-reveal (one of: up, fade, left, right, scale, wipe) |
+| The hero image wrapper (one img inside, wrapper has a fixed height or aspect-ratio) | data-parallax="0.12" (it also slow-zooms) |
+| Section headlines | data-reveal="rise" |
+| Section intro blocks and feature rows | data-reveal (up, fade, left, right, scale or wipe; vary them down the page) |
+| Feature photographs that are not in a card | data-reveal="curtain" on the img, inside a wrapper with overflow:hidden |
 | Every grid of cards, services, logos, people, projects | data-reveal-stagger="90" |
+| Cards and image tiles | data-lift (cards then tilt toward the cursor under a soft light), data-zoom |
+| Primary buttons | data-magnetic |
+| ONE band of big display type built from real words on the page (their services, towns, project names), 8vw or larger, outlined or tinted, between two sections | data-scroll-x="0.3" on the band, the words in one inner <div> |
+| ONE short phrase in the hero or a key headline | data-highlight (a marker sweep paints behind it) |
+| A small badge, seal or icon | data-float |
 | Two or three light background sections | data-bg-shift |
 | body | data-ambient |
 | The sticky header | data-nav |
-| Cards and image tiles | data-lift, data-zoom |
+| A thin reading bar in the brand colour, as the first child of body | <div data-progress style="color:<brand>"></div> |
 | Real numbers from the source data only | data-count="1240" (data-count-prefix, data-count-suffix, data-count-decimals supported) |
+| A row of logos, towns or project names that repeats | data-marquee |
 
-Rules: one parallax hero only. data-words on the h1 and at most one other headline. Stagger grids, never body paragraphs. Never invent a number to have something to count. Set the colour hooks on :root from the palette you chose, soft tints only:
-  --ww-ambient-a: rgba(<brand rgb>, .07); --ww-ambient-b: rgba(<neutral rgb>, .07); --ww-shift: rgba(<brand rgb>, .09);
-Minimums the audit checks: six or more data-reveal elements, one or more data-reveal-stagger group, parallax or ambient or bg-shift present, reduced motion honoured (the kit does this), nothing hidden after load. The attributes cost almost nothing; if the page runs long, shorten copy and CSS, never drop the footer and never drop the attributes.
+Rules: one parallax hero only. data-words on the h1 and at most one other headline. Stagger grids, never body paragraphs. One scroll-x band and one marquee at most, never both in the same section. Never invent a number to have something to count. Aim for at least six different effects on the page. Set the colour hooks on :root from the palette you chose, soft tints only:
+  --ww-ambient-a: rgba(<brand rgb>, .09); --ww-ambient-b: rgba(<neutral rgb>, .08); --ww-shift: rgba(<brand rgb>, .12); --ww-hl: rgba(<accent rgb>, .35);
+Minimums the audit checks: six or more data-reveal elements, one or more data-reveal-stagger group, parallax or ambient or bg-shift present, at least six distinct effects, reduced motion honoured (the kit does this), nothing hidden after load. The attributes cost almost nothing; if the page runs long, shorten copy and CSS, never drop the footer and never drop the attributes.
 
 HEAD (audited): <title> of 15 to 70 characters naming the business, <meta name="description"> of 50 to 160 characters, og:title, og:description and og:image (the hero image URL), and a favicon as an inline SVG data URI (the business initial on the brand colour). Exactly one <h1>.
 
