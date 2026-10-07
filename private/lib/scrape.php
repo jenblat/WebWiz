@@ -490,7 +490,7 @@ function scrape_parse(string $html, string $final_url): array {
         'paragraphs' => array_slice($paras, 0, 10), 'images' => array_slice($images, 0, 16),
         'videos' => $videos, 'nav_links' => array_values(array_unique($nav_links)), 'html_length' => strlen($html),
         'emails' => $contact['emails'], 'phones' => $contact['phones'],
-        'text' => mb_substr($visible, 0, 12000),
+        'text' => mb_substr($visible, 0, 30000),
     ];
 }
 
@@ -585,7 +585,7 @@ function scrape_multi(string $url): array {
         try {
             $sub = scrape_parse($f['html'], $f['final_url']);
         } catch (Throwable $e) { continue; }
-        if (!empty($sub['text'])) $home['text'] = mb_substr(($home['text'] ?? '') . "\n" . $sub['text'], 0, 40000);
+        if (!empty($sub['text'])) $home['text'] = mb_substr(($home['text'] ?? '') . "\n" . $sub['text'], 0, 90000);
         foreach ($sub['emails'] ?? [] as $e) $emails[$e] = true;
         foreach ($sub['phones'] ?? [] as $p) { $k = substr(preg_replace('~\D+~', '', $p), -10); if (!isset($phones[$k])) $phones[$k] = $p; }
         if (empty($sub['paragraphs']) || count($sub['paragraphs']) <= 1) continue;

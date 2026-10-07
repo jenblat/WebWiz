@@ -202,7 +202,10 @@ function process_job(PDO $db, array $row): void {
                     $ok = (($a['verdict'] ?? '') === 'preview-ready') && ((int)($a['score'] ?? 0) >= $aud['min_score']);
                     echo "[worker]   v{$v}: audit " . ($ok ? 'PASS' : 'FAIL') . " score={$a['score']} ({$a['checks_run']} checks, " . round(microtime(true) - $t0) . "s)"
                        . (!$ok ? " fails=" . implode(',', (array)($a['fails'] ?? [])) : '') . " cost so far \$" . number_format($total_cost, 4) . "\n";
-                    if (!$ok) $fb = ww_audit_feedback($a, $aud['min_score']);
+                    if (!$ok) {
+                        foreach ((array)($a['checks'] ?? []) as $c) if (($c['status'] ?? '') === 'fail') echo "[worker]      fail {$c['id']}: " . mb_substr((string)$c['detail'], 0, 160) . "\n";
+                        $fb = ww_audit_feedback($a, $aud['min_score']);
+                    }
                 } else {
                     echo "[worker]   v{$v}: audit unavailable (tool error), not blocking\n";
                 }

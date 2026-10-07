@@ -505,14 +505,18 @@ function runChecks(f, sf) {
     if (badTel.length) contactProblems.push(`tel not in the scrape: ${badTel.slice(0, 3).join(', ')}` + (knownPhones.size ? ` (scraped: ${[...knownPhones].slice(0, 2).join(', ')})` : ' (the scrape found no phone at all)'));
     add('invented-contact', 'content', 4, ok(contactProblems.length === 0), contactProblems.length ? contactProblems.join('; ') : `Every mailto and tel on the page matches the scrape (${knownEmails.size} email, ${knownPhones.size} phone known)`);
 
-    const srcDigits = ' ' + String(sf.text || '').replace(/[, ]/g, '').replace(/\D+/g, ' ') + ' ';
+    // Both sides normalised the same way: thousands separators dropped, a decimal
+    // point folded into the digits, so 19.85 on the page matches 19.85 in the scrape
+    // and 10,000,000 matches 10000000 or 10,000,000.
+    const numKey = (t) => String(t).replace(/[,\u00a0]/g, '').replace(/\.(?=\d)/g, '').replace(/\D+/g, '');
+    const srcNums = new Set((String(sf.text || '').replace(/[,\u00a0]/g, '').match(/\d+(?:\.\d+)?/g) || []).map(numKey));
     const invented = [];
     const seenN = new Set();
     for (const c of (d.statClaims || [])) {
-      const n = digitsOf(String(c.n).replace(/,/g, ''));
+      const n = numKey(c.n);
       if (!n || seenN.has(n)) continue;
       seenN.add(n);
-      if (!srcDigits.includes(' ' + n + ' ')) invented.push(`"${c.ctx.trim()}"`);
+      if (!srcNums.has(n)) invented.push(`"${c.ctx.trim()}"`);
     }
     add('invented-stat', 'content', 4, ok(invented.length === 0), invented.length ? `${invented.length} number(s) not in the scrape: ` + invented.slice(0, 4).join(' | ') : `${(d.statClaims || []).length} statistic(s) on the page, all present in the scrape`);
 
