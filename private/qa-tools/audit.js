@@ -198,7 +198,8 @@ function collectDesktopFacts() {
   // identifiers are not statistics: phone numbers, licence and suite numbers, zip codes, prices, years
   const statText = text
     .replace(/(?:\+?1[\s.-]?)?\(?\b[2-9]\d{2}\)?[\s.-]\d{3}[\s.-]\d{4}\b/g, ' ')
-    .replace(/(?:#|\bno\.?|\blic(?:ense|ence)?\.?|\bsuite|\bste\.?|\bunit|\bp\.?o\.? box|\$|\bCA\s+\d*)\s*#?\s*[\dA-Za-z-]+/gi, ' ')
+    .replace(/\$\s*[\d,.]+\s*[KMB]?\b/g, ' ')
+    .replace(/(?:#|\bno\.?|\blic(?:ense|ence)?\.?|\bsuite|\bste\.?|\bunit|\bp\.?o\.? box|\bCA\s+\d*)\s*#?\s*[\dA-Za-z-]+/gi, ' ')
     .replace(/\b[A-Z]{2}\s+\d{5}(?:-\d{4})?\b/g, ' ')
     .replace(/\b(?:19|20)\d{2}\b/g, ' ');
   for (const m of statText.matchAll(/(\d[\d,.]*)\s*(\+|%|percent\b)/gi)) stats.push({ n: m[1], ctx: statText.slice(Math.max(0, m.index - 20), m.index + m[0].length + 20) });
@@ -519,7 +520,10 @@ function runChecks(f, sf) {
     // point folded into the digits, so 19.85 on the page matches 19.85 in the scrape
     // and 10,000,000 matches 10000000 or 10,000,000.
     const numKey = (t) => String(t).replace(/[,\u00a0]/g, '').replace(/\.(?=\d)/g, '').replace(/\D+/g, '');
-    const srcNums = new Set((String(sf.text || '').replace(/[,\u00a0]/g, '').match(/\d+(?:\.\d+)?/g) || []).map(numKey));
+    const srcText = String(sf.text || '').replace(/[,\u00a0]/g, '');
+    const srcNums = new Set((srcText.match(/\d+(?:\.\d+)?/g) || []).map(numKey));
+    // 10M, 2.5K, 1B on their site license 10,000,000, 2,500 and 1,000,000,000 on ours
+    for (const m of srcText.matchAll(/(\d+(?:\.\d+)?)\s*([KMB])\b/gi)) srcNums.add(numKey(String(Math.round(parseFloat(m[1]) * { K: 1e3, M: 1e6, B: 1e9 }[m[2].toUpperCase()]))));
     const invented = [];
     const seenN = new Set();
     for (const c of (d.statClaims || [])) {

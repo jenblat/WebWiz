@@ -87,6 +87,13 @@ function process_job(PDO $db, array $row): void {
             $st = $db->prepare("SELECT * FROM prospects WHERE id = ?");
             $st->execute([$row['prospect_id']]);
             $prospect = $st->fetch(PDO::FETCH_ASSOC);
+            // Finalise the cursor. A fetched-but-unfinished SELECT pins this connection's
+            // read snapshot for the whole job; once any other process writes (db_ping does
+            // every 5 minutes) every write on this connection then fails with an immediate
+            // "database is locked" that no busy_timeout or retry can clear (WEBWIZ-G). The
+            // first two full runs of the gated pipeline lost their previews insert to this
+            // after ten minutes of work.
+            $st->closeCursor(); unset($st);
         }
         $url      = $prospect['current_url'] ?? ($row['scrape_data'] ?? '');
         $biz      = $prospect['business_name'] ?? $row['business_name'] ?? 'Their Business';
@@ -755,6 +762,10 @@ Every page moves. Entrance motion, a gentle background that shifts as you scroll
 Rules: one parallax hero only. data-words on the h1 and at most one other headline. Stagger grids, never body paragraphs. Never invent a number to have something to count. Set the colour hooks on :root from the palette you chose, soft tints only:
   --ww-ambient-a: rgba(<brand rgb>, .07); --ww-ambient-b: rgba(<neutral rgb>, .07); --ww-shift: rgba(<brand rgb>, .09);
 Minimums the audit checks: six or more data-reveal elements, one or more data-reveal-stagger group, parallax or ambient or bg-shift present, reduced motion honoured (the kit does this), nothing hidden after load. The attributes cost almost nothing; if the page runs long, shorten copy and CSS, never drop the footer and never drop the attributes.
+
+HEAD (audited): <title> of 15 to 70 characters naming the business, <meta name="description"> of 50 to 160 characters, og:title, og:description and og:image (the hero image URL), and a favicon as an inline SVG data URI (the business initial on the brand colour). Exactly one <h1>.
+
+NUMBERS ARE AUDITED: every number with a plus sign, a percent sign, or near the words years, projects, clients, customers or reviews is looked up in the source text. If it is not there, the page is rejected. Before you write any such number, find it in the source data; if you cannot point to it, leave it out. A page with no statistics passes. One invented statistic fails.
 
 HEADER
 - Sticky top nav: business name/logo left, 3-5 nav links (use scraped nav_links), 1-2 right-aligned CTAs.
