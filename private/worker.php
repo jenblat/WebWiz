@@ -1,6 +1,13 @@
 <?php
 // /var/www/sites/trywebwiz/private/worker.php
-// Cron: * * * * * sudo -u nobody php8.3 /var/www/sites/trywebwiz/private/worker.php
+// Cron (/etc/crontab, NOT /etc/cron.d): * * * * * www-data /usr/bin/php8.3 \
+//   /var/www/sites/trywebwiz/private/worker.php >> .../logs/worker.log 2>&1
+// MUST run as www-data. It was `nobody` until 2026-08-06, which cannot traverse
+// private/ (750 www-data) — so php could not even open this file, cron's append
+// to logs/worker.log (750 www-data) failed first, and the worker was silently
+// dead from 2026-05-26 to 2026-08-06. Anything it writes (public/preview/*,
+// the SQLite DB, logs/) is www-data-owned, so www-data is also the only user
+// whose output the web server can serve.
 // Single-instance (flock). Drains multiple queued jobs per run within a time budget.
 // Each job generates 3 variants CONCURRENTLY (anthropic_multi), retrying only failures.
 
