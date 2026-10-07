@@ -12,13 +12,16 @@
 // Each job generates 3 variants CONCURRENTLY (anthropic_multi), retrying only failures.
 
 declare(strict_types=1);
-require_once '/var/www/sites/trywebwiz/private/webwiz_lib.php';
-require_once '/var/www/sites/trywebwiz/private/lib/anthropic.php';
-require_once '/var/www/sites/trywebwiz/private/lib/scrape.php';
-require_once '/var/www/sites/trywebwiz/private/lib/qa.php';
-require_once '/var/www/sites/trywebwiz/private/lib/replicate.php';
-require_once '/var/www/sites/trywebwiz/private/lib/batch.php';
-require_once '/var/www/sites/trywebwiz/private/lib/design.php';
+// Relative to this file, not the absolute site path: in production both resolve to
+// /var/www/sites/trywebwiz/private, and a git worktree can run the pipeline against
+// its own copy of the libraries (the data paths below stay absolute on purpose).
+require_once __DIR__ . '/webwiz_lib.php';
+require_once __DIR__ . '/lib/anthropic.php';
+require_once __DIR__ . '/lib/scrape.php';
+require_once __DIR__ . '/lib/qa.php';
+require_once __DIR__ . '/lib/replicate.php';
+require_once __DIR__ . '/lib/batch.php';
+require_once __DIR__ . '/lib/design.php';
 
 set_time_limit(0);
 
@@ -51,7 +54,21 @@ while ((time() - $run_started) < WORKER_MAX_RUN_SECONDS) {
 // Batch pipeline (all CSV uploads): build queued uploads (scrape+submit) and poll in-flight batches.
 try { ww_build_batches($db); } catch (Throwable $e) { echo "[batch] build error: ".$e->getMessage()."\n"; }
 try { ww_poll_batches($db); } catch (Throwable $e) { echo "[batch] poll error: ".$e->getMessage()."\n"; }
-try { ww_generate_missing_showcases($db, 20, 150); } catch (Throwable $e) { echo "[showcase] error: ".$e->getMessage()."\n"; }
+// A single job can now run well past WORKER_MAX_RUN_SECONDS (three variants, each
+// audited at ~35s, vision checked, then compared with the current site, plus any
+// regeneration round). The flock above keeps the next cron tick from overlapping;
+// the passes below are skipped when a long job already used the run's budget, so
+// one slow job never stretches a run past two cron windows.
+$elapsed = time() - $run_started;
+if ($elapsed < WORKER_MAX_RUN_SECONDS) {
+    try { ww_audit_missing($db, 2, max(30, min(120, WORKER_MAX_RUN_SECONDS - $elapsed))); } catch (Throwable $e) { echo "[audit] backfill error: ".$e->getMessage()."\n"; }
+}
+$elapsed = time() - $run_started;
+if ($elapsed < WORKER_MAX_RUN_SECONDS) {
+    try { ww_generate_missing_showcases($db, 20, max(30, min(150, WORKER_MAX_RUN_SECONDS - $elapsed))); } catch (Throwable $e) { echo "[showcase] error: ".$e->getMessage()."\n"; }
+} else {
+    echo "[worker] run used {$elapsed}s on jobs, skipping backfill passes this tick\n";
+}
 
 flock($lock, LOCK_UN);
 fclose($lock);
@@ -79,6 +96,7 @@ function process_job(PDO $db, array $row): void {
         echo "[worker]  scraping {$url}\n";
         $scrape = scrape_multi($url);
         $db->prepare("UPDATE jobs SET scrape_data=? WHERE id=?")->execute([json_encode($scrape), $job_id]);
+        ww_prospect_store_contacts($db, $row['prospect_id'] ? (int)$row['prospect_id'] : null, $scrape);
 
         $usable = array_values(array_filter($scrape['images'] ?? [], fn($i) =>
             empty($i['is_logo']) && empty($i['is_thumb']) && empty($i['is_team_card'])));
@@ -152,76 +170,158 @@ function process_job(PDO $db, array $row): void {
             file_put_contents($stub, "<?php\n\$_GET['t'] = basename(__DIR__);\nrequire __DIR__ . '/../index.php';\n");
         }
 
-        // ---------- VISUAL QA LOOP ----------
+        // ---------- QUALITY GATES: audit, then vision, then compare ----------
+        // 1. The audit (private/qa-tools/audit.js): 60+ checks in a real Chrome render at
+        //    1440px and 390px, plus the truth checks against the scrape. Hard gate.
+        // 2. The vision verdict (Sonnet on a full page screenshot): the second gate. It is
+        //    skipped for a round when the audit already rejected the page, because the
+        //    page is being regenerated anyway and the audit's feedback is exact.
+        // 3. The compare: the same audit on the prospect's current site. A variant ships
+        //    when it beats that site overall and loses no category. One regeneration with
+        //    the losing categories named; if it still loses it ships flagged needs_review.
         $qa_enabled    = ((string)($db->query("SELECT value FROM settings WHERE key='visual_qa_enabled'")->fetchColumn()) === '1');
         $qa_max_retries= (int)($db->query("SELECT value FROM settings WHERE key='qa_max_retries'")->fetchColumn() ?: 2);
         $qa_block      = ((string)($db->query("SELECT value FROM settings WHERE key='qa_block_on_fail'")->fetchColumn()) === '1');
-        $qa_results = [];
-        if ($qa_enabled) {
-            for ($round = 0; $round <= $qa_max_retries; $round++) {
-                $urls = [];
-                foreach ($htmls as $v => $_) {
-                    $urls[$v] = 'https://trywebwiz.com/preview/' . $row['token'] . '/v' . $v . '/index.html?qa=' . time() . $round;
-                }
-                $warm = 0; foreach ($htmls as $_v => $_html) $warm += ww_prewarm_images($_html);
-                echo "[worker]  QA round {$round}: warmed {$warm} images, rendering " . count($urls) . " variant(s)\n";
-                $shots = ww_render_screenshots($urls, $job_id);
-                $fails = [];
-                foreach ($htmls as $v => $_) {
-                    $png = $shots[$v] ?? null;
-                    if (!$png) { $qa_results[$v] = ['pass'=>true,'score'=>-1,'issues'=>[],'summary'=>'render-failed']; echo "[worker]   v{$v}: render failed, skipping QA\n"; continue; }
-                    $verdict = ww_visual_inspect($png, $biz, $job_id);
-                    $qa_results[$v] = $verdict;
-                    echo "[worker]   v{$v}: " . ($verdict['pass']?'PASS':'FAIL') . " score={$verdict['score']} - {$verdict['summary']}\n";
-                    if (!$verdict['pass']) $fails[$v] = $verdict['issues'];
-                }
-                if (!$fails) break;
-                if ($round >= $qa_max_retries) break;
-                if ($total_cost >= $cap) { echo "[worker]  QA stop: cost cap reached\n"; break; }
-                $rreqs = [];
-                foreach ($fails as $v => $issues) {
-                    $fb = ww_qa_feedback($issues);
-                    $rreqs[$v] = ['system'=>$system, 'messages'=>[['role'=>'user','content'=>build_user_prompt($scrape, $biz, $industry, $v, $dna[$v], $brief) . "\n\n" . $fb]]];
-                }
-                echo "[worker]  QA regenerating " . count($rreqs) . " variant(s)\n";
-                $rres = anthropic_multi($model, $rreqs, 14000, 0.9, $job_id, ['</html>']);
-                foreach ($rreqs as $v => $_) {
-                    $total_cost += (float)($rres[$v]['cost_usd'] ?? 0);
-                    $cand = finalize_html($rres[$v]['text'] ?? '');
-                    if ($cand && quality_gate($cand)['ok']) { $cand = ww_polish_html($cand, $url); $htmls[$v] = $cand; $write_variant($v, $cand); }
+        $aud           = ww_audit_settings($db);
+        $token         = (string)$row['token'];
+        $facts         = $aud['enabled'] ? ww_audit_facts($scrape, (string)($prospect['description'] ?? '')) : null;
+        $qa_results = []; $audit_results = []; $audit_runs = []; $compare_results = []; $gate_log = [];
+
+        // Evaluate one variant: returns '' when it passes both gates, else the feedback for a regen.
+        $evaluate = function (int $v) use (&$htmls, &$qa_results, &$audit_results, &$audit_runs, &$total_cost, $qa_enabled, $aud, $facts, $token, $biz, $job_id): string {
+            ww_prewarm_images($htmls[$v]);
+            $fb = '';
+            if ($aud['enabled']) {
+                if (isset($audit_runs[$v])) ww_audit_cleanup($audit_runs[$v]);
+                $t0 = microtime(true);
+                $run = ww_audit_variant($token, $v, $facts);
+                $audit_runs[$v] = $run;
+                $a = $run['audit'];
+                $audit_results[$v] = $a;
+                if ($a) {
+                    $ok = (($a['verdict'] ?? '') === 'preview-ready') && ((int)($a['score'] ?? 0) >= $aud['min_score']);
+                    echo "[worker]   v{$v}: audit " . ($ok ? 'PASS' : 'FAIL') . " score={$a['score']} ({$a['checks_run']} checks, " . round(microtime(true) - $t0) . "s)"
+                       . (!$ok ? " fails=" . implode(',', (array)($a['fails'] ?? [])) : '') . " cost so far \$" . number_format($total_cost, 4) . "\n";
+                    if (!$ok) $fb = ww_audit_feedback($a, $aud['min_score']);
+                } else {
+                    echo "[worker]   v{$v}: audit unavailable (tool error), not blocking\n";
                 }
             }
-            // block-on-fail: drop still-failing variants, but never drop to zero
-            if ($qa_block) {
-                $passing = [];
-                foreach ($htmls as $v => $html) { if ($qa_results[$v]['pass'] ?? true) $passing[$v] = $html; }
-                if ($passing && count($passing) < count($htmls)) {
-                    foreach ($htmls as $v => $_) {
-                        if (!($qa_results[$v]['pass'] ?? true)) {
-                            foreach ((glob($public_dir . '/v' . $v . '/*') ?: []) as $gf) @unlink($gf);
-                            @rmdir($public_dir . '/v' . $v);
-                            echo "[worker]   v{$v}: dropped (failed QA after retries)\n";
-                        }
-                    }
-                    $htmls = $passing;
+            if ($qa_enabled && $fb === '') {
+                $url = 'https://trywebwiz.com/preview/' . $token . '/v' . $v . '/index.html?qa=' . microtime(true);
+                $shots = ww_render_screenshots([$v => $url], $job_id);
+                $png = $shots[$v] ?? null;
+                if (!$png) { $qa_results[$v] = ['pass'=>true,'score'=>-1,'issues'=>[],'summary'=>'render-failed']; echo "[worker]   v{$v}: vision render failed, skipping\n"; }
+                else {
+                    $verdict = ww_visual_inspect($png, $biz, $job_id);
+                    $qa_results[$v] = $verdict;
+                    echo "[worker]   v{$v}: vision " . ($verdict['pass']?'PASS':'FAIL') . " score={$verdict['score']} - {$verdict['summary']}\n";
+                    if (!$verdict['pass']) $fb = ww_qa_feedback($verdict['issues']);
                 }
+            } elseif ($qa_enabled) {
+                $qa_results[$v] = ['pass'=>false,'score'=>-1,'issues'=>[],'summary'=>'audit failed first; vision skipped this round'];
+            }
+            return $fb;
+        };
+        // Regenerate the listed variants with their feedback. Writes the ones that pass the structural gate.
+        $regen = function (array $fails, string $why) use (&$htmls, &$total_cost, $system, $scrape, $biz, $industry, $dna, $brief, $model, $job_id, $url, $write_variant): array {
+            $rreqs = [];
+            foreach ($fails as $v => $fb) {
+                $rreqs[$v] = ['system'=>$system, 'messages'=>[['role'=>'user','content'=>build_user_prompt($scrape, $biz, $industry, $v, $dna[$v], $brief) . "\n\n" . $fb]]];
+            }
+            echo "[worker]  {$why}: regenerating " . count($rreqs) . " variant(s)\n";
+            $rres = anthropic_multi($model, $rreqs, 14000, 0.9, $job_id, ['</html>']);
+            $written = [];
+            foreach ($rreqs as $v => $_) {
+                $total_cost += (float)($rres[$v]['cost_usd'] ?? 0);
+                $cand = finalize_html($rres[$v]['text'] ?? '');
+                $g = $cand ? quality_gate($cand) : ['ok' => false, 'reason' => 'no usable HTML'];
+                if ($g['ok']) { $cand = ww_polish_html($cand, $url); $htmls[$v] = $cand; $write_variant($v, $cand); $written[] = $v; }
+                else echo "[worker]   v{$v}: regen failed the structural gate ({$g['reason']}), keeping the previous render\n";
+            }
+            return $written;
+        };
+
+        if ($qa_enabled || $aud['enabled']) {
+            for ($round = 0; $round <= $qa_max_retries; $round++) {
+                echo "[worker]  QA round {$round}: " . count($htmls) . " variant(s)\n";
+                $fails = [];
+                foreach ($htmls as $v => $_) { $fb = $evaluate($v); if ($fb !== '') $fails[$v] = $fb; }
+                if (!$fails) break;
+                if ($round >= $qa_max_retries) break;
+                if ($total_cost >= $cap) { echo "[worker]  QA stop: cost cap \${$cap} reached\n"; break; }
+                $regen($fails, 'QA round ' . $round);
+            }
+            // block-on-fail: drop still-failing variants, but never drop to zero
+            $passes = function (int $v) use (&$qa_results, &$audit_results, $qa_enabled, $qa_block, $aud): bool {
+                if ($qa_enabled && $qa_block && !($qa_results[$v]['pass'] ?? true)) return false;
+                $a = $audit_results[$v] ?? null;
+                if ($aud['enabled'] && $aud['block'] && $a && ((($a['verdict'] ?? '') !== 'preview-ready') || (int)($a['score'] ?? 0) < $aud['min_score'])) return false;
+                return true;
+            };
+            $passing = [];
+            foreach ($htmls as $v => $html) { if ($passes($v)) $passing[$v] = $html; }
+            if ($passing && count($passing) < count($htmls)) {
+                foreach ($htmls as $v => $_) {
+                    if (!isset($passing[$v])) {
+                        foreach ((glob($public_dir . '/v' . $v . '/*') ?: []) as $gf) @unlink($gf);
+                        @rmdir($public_dir . '/v' . $v);
+                        echo "[worker]   v{$v}: dropped (failed the gate after retries)\n";
+                    }
+                }
+                $htmls = $passing;
             }
         }
 
+        // ---------- COMPARE against the prospect's current site ----------
+        $compare_lost = [];
+        if ($aud['enabled'] && $aud['compare'] && $url !== '' && !empty($htmls)) {
+            foreach ($htmls as $v => $_) {
+                $t0 = microtime(true);
+                $cmp = ww_compare_variant($token, $v, $url, $facts, $audit_runs[$v] ?? null);
+                $compare_results[$v] = $cmp;
+                if (!$cmp) { echo "[worker]   v{$v}: compare unavailable\n"; continue; }
+                echo "[worker]   v{$v}: compare {$cmp['verdict']} ours={$cmp['ours']['score']} theirs={$cmp['theirs']['score']}" . (!empty($cmp['losing']) ? " loses=" . implode(',', $cmp['losing']) : '') . " (" . round(microtime(true) - $t0) . "s)\n";
+                if (($cmp['verdict'] ?? '') === 'beats-current-site') continue;
+                if (empty($cmp['losing']) || $total_cost >= $cap) { $compare_lost[$v] = $cmp; continue; }
+                // One regeneration with the losing categories named, then re-run both gates and the compare.
+                $written = $regen([$v => ww_compare_feedback($cmp)], 'compare v' . $v);
+                if (!in_array($v, $written, true)) { $compare_lost[$v] = $cmp; continue; }
+                $fb = $evaluate($v);
+                $cmp2 = ww_compare_variant($token, $v, $url, $facts, $audit_runs[$v] ?? null);
+                $compare_results[$v] = $cmp2 ?: $cmp;
+                if ($cmp2) echo "[worker]   v{$v}: compare after regen {$cmp2['verdict']} ours={$cmp2['ours']['score']} theirs={$cmp2['theirs']['score']}" . (!empty($cmp2['losing']) ? " loses=" . implode(',', $cmp2['losing']) : '') . "\n";
+                if (!$cmp2 || ($cmp2['verdict'] ?? '') !== 'beats-current-site' || $fb !== '') $compare_lost[$v] = $cmp2 ?: $cmp;
+            }
+        }
+        foreach ($audit_runs as $r) ww_audit_cleanup($r);
+
         $any_fail = false;
-        foreach ($htmls as $v => $_) { if (!($qa_results[$v]['pass'] ?? true)) $any_fail = true; }
-        $qa_status = !$qa_enabled ? 'disabled' : ($any_fail ? 'needs_review' : 'passed');
+        foreach ($htmls as $v => $_) {
+            if ($qa_enabled && !($qa_results[$v]['pass'] ?? true)) $any_fail = true;
+            $a = $audit_results[$v] ?? null;
+            if ($a && ((($a['verdict'] ?? '') !== 'preview-ready') || (int)($a['score'] ?? 0) < $aud['min_score'])) $any_fail = true;
+            if (isset($compare_lost[$v])) $any_fail = true;
+        }
+        $qa_status = (!$qa_enabled && !$aud['enabled']) ? 'disabled' : ($any_fail ? 'needs_review' : 'passed');
 
         ksort($htmls);
         foreach ($htmls as $v => $html) {
             $rel = '/preview/' . $row['token'] . '/v' . $v . '/index.html';
             $q = $qa_results[$v] ?? null;
-            $db->prepare("INSERT INTO previews (job_id, variant_n, html_path, qa_score, qa_pass, qa_issues) VALUES (?, ?, ?, ?, ?, ?)")
-               ->execute([$job_id, $v, $rel, $q['score'] ?? null, isset($q['pass']) ? ($q['pass']?1:0) : null, $q ? json_encode($q['issues']) : null]);
+            $a = $audit_results[$v] ?? null;
+            $c = $compare_results[$v] ?? null;
+            $db->prepare("INSERT INTO previews (job_id, variant_n, html_path, qa_score, qa_pass, qa_issues, audit_score, audit_verdict, audit_json, compare_verdict, compare_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+               ->execute([$job_id, $v, $rel, $q['score'] ?? null, isset($q['pass']) ? ($q['pass']?1:0) : null, $q ? json_encode($q['issues']) : null,
+                          $a ? (int)$a['score'] : null, $a ? (string)$a['verdict'] : null, ww_audit_for_db($a), $c ? (string)$c['verdict'] : null, ww_compare_for_db($c)]);
         }
         $db->prepare("UPDATE jobs SET status='ready', completed_at=datetime('now'), total_cost_cents=?, qa_status=? WHERE id=?")
            ->execute([(int)round($total_cost * 100), $qa_status, $job_id]);
-        echo "[worker] job #{$job_id} ready ({$qa_status}), " . count($htmls) . " variant(s), cost \$" . number_format($total_cost, 4) . "\n";
+        $summary = [];
+        foreach ($htmls as $v => $_) {
+            $summary[] = "v{$v}" . (isset($audit_results[$v]['score']) ? " audit {$audit_results[$v]['score']}" : '') . (isset($compare_results[$v]['verdict']) ? " vs current " . ($compare_results[$v]['verdict'] === 'beats-current-site' ? 'wins' : 'loses ' . implode('/', (array)$compare_results[$v]['losing'])) : '');
+        }
+        echo "[worker] job #{$job_id} ready ({$qa_status}), " . count($htmls) . " variant(s), cost \$" . number_format($total_cost, 4) . ", " . implode('; ', $summary) . "\n";
 
     } catch (Throwable $e) {
         $msg = $e->getMessage();
@@ -231,6 +331,122 @@ function process_job(PDO $db, array $row): void {
     }
 }
 
+/** Public URL of the WebWiz Motion Kit, served from public/kit/. */
+const WW_KIT_ORIGIN = 'https://trywebwiz.com';
+const WW_KIT_DIR    = '/var/www/sites/trywebwiz/public/kit';
+
+/**
+ * The two kit tags, with a ?v=<filemtime> cache buster. The buster matters: a kit
+ * update must reach every existing preview on the next load, and the 2026-05-24
+ * stale-cache bug (browsers heuristically caching variant HTML) showed what happens
+ * when an in-place file change does not change its URL. Falls back to the version
+ * string when the files cannot be stat'ed (worktree checkout, fresh box).
+ */
+function ww_kit_tags(): string {
+    $css = WW_KIT_DIR . '/webwiz-motion.css';
+    $js  = WW_KIT_DIR . '/webwiz-motion.js';
+    $vc  = (string)(@filemtime($css) ?: '1');
+    $vj  = (string)(@filemtime($js) ?: '1');
+    return '<link rel="stylesheet" href="' . WW_KIT_ORIGIN . '/kit/webwiz-motion.css?v=' . $vc . '">'
+         . '<script defer src="' . WW_KIT_ORIGIN . '/kit/webwiz-motion.js?v=' . $vj . '"></script>';
+}
+
+/**
+ * Derive the ambient colour hooks from the page's own CSS when the generator did not
+ * set them. Picks the two most used saturated colours (a near-white page background
+ * is always the most used colour and is invisible as a tint, so neutrals are skipped
+ * unless nothing else exists) and emits them at 7% and 9% alpha, the same soft
+ * values the prompt asks for.
+ */
+function ww_kit_ambient_vars(string $html): string {
+    if (!preg_match_all('~<style\b[^>]*>(.*?)</style>~is', $html, $sm)) return '';
+    $css = implode("\n", $sm[1]);
+    $css = preg_replace('~/\*.*?\*/~s', '', $css) ?? $css;
+    $counts = [];
+    if (preg_match_all('/#([0-9a-f]{6}|[0-9a-f]{3})\b/i', $css, $hm)) {
+        foreach ($hm[1] as $h) {
+            if (strlen($h) === 3) $h = $h[0] . $h[0] . $h[1] . $h[1] . $h[2] . $h[2];
+            $counts[strtolower($h)] = ($counts[strtolower($h)] ?? 0) + 1;
+        }
+    }
+    if (preg_match_all('/rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})/i', $css, $rm, PREG_SET_ORDER)) {
+        foreach ($rm as $r) {
+            $h = sprintf('%02x%02x%02x', min(255, (int)$r[1]), min(255, (int)$r[2]), min(255, (int)$r[3]));
+            $counts[$h] = ($counts[$h] ?? 0) + 1;
+        }
+    }
+    if (!$counts) return '';
+    arsort($counts);
+    // array_keys() hands back an int for an all-digit hex like 123456, so normalise
+    $rgb = function ($h): array { $h = str_pad((string)$h, 6, '0', STR_PAD_LEFT); return [hexdec(substr($h, 0, 2)), hexdec(substr($h, 2, 2)), hexdec(substr($h, 4, 2))]; };
+    $sat = function (array $c): float {
+        $mx = max($c); $mn = min($c);
+        return $mx === 0 ? 0.0 : ($mx - $mn) / $mx;
+    };
+    $lum = fn(array $c) => (0.2126 * $c[0] + 0.7152 * $c[1] + 0.0722 * $c[2]) / 255;
+    $brand = null; $second = null; $dark = null;
+    foreach (array_keys($counts) as $h) {
+        $h = str_pad((string)$h, 6, '0', STR_PAD_LEFT);
+        $c = $rgb($h);
+        $l = $lum($c);
+        if ($l > 0.93 || $l < 0.04) continue;           // paper and ink are not tints
+        if ($sat($c) >= 0.2) {
+            if ($brand === null) { $brand = $c; continue; }
+            if ($second === null && $h !== $brand) { $second = $c; }
+        } elseif ($dark === null && $l < 0.45) {
+            $dark = $c;
+        }
+        if ($brand !== null && $second !== null) break;
+    }
+    if ($brand === null) $brand = $dark ?? [0, 0, 0];
+    if ($second === null) $second = $dark ?? $brand;
+    $f = fn(array $c, string $a) => "rgba({$c[0]},{$c[1]},{$c[2]},{$a})";
+    return '<style>:root{--ww-ambient-a:' . $f($brand, '.07') . ';--ww-ambient-b:' . $f($second, '.07') . ';--ww-shift:' . $f($brand, '.09') . ';}</style>';
+}
+
+/**
+ * Inject the WebWiz Motion Kit into a generated document. Idempotent.
+ *
+ *  - The kit link and script go right after <head> opens, with absolute URLs because
+ *    variants are served from several paths.
+ *  - If <body> has no data-ambient, add it, so every page gets the soft brand field
+ *    that moves with scroll even when the model forgot.
+ *  - If :root does not define the three colour hooks, derive them from the page's own
+ *    palette (ww_kit_ambient_vars). The generator is asked to set them itself; this is
+ *    the safety net.
+ *  - If the h1 has no data-words and is text only (no child elements), add it. The kit
+ *    splits text-only headlines safely; one with child markup is left alone.
+ */
+function ww_inject_motion_kit(string $html): string {
+    if (stripos($html, '/kit/webwiz-motion.css') === false) {
+        $tags = ww_kit_tags();
+        if (preg_match('~<head\b[^>]*>~i', $html, $m, PREG_OFFSET_CAPTURE)) {
+            $at = $m[0][1] + strlen($m[0][0]);
+            $html = substr($html, 0, $at) . $tags . substr($html, $at);
+        } elseif (preg_match('~<html\b[^>]*>~i', $html, $m, PREG_OFFSET_CAPTURE)) {
+            $at = $m[0][1] + strlen($m[0][0]);
+            $html = substr($html, 0, $at) . '<head>' . $tags . '</head>' . substr($html, $at);
+        }
+    }
+    if (!preg_match('~--ww-ambient-a\s*:~i', $html) || !preg_match('~--ww-ambient-b\s*:~i', $html) || !preg_match('~--ww-shift\s*:~i', $html)) {
+        $vars = ww_kit_ambient_vars($html);
+        if ($vars !== '' && stripos($html, '</head>') !== false) {
+            $html = preg_replace('~</head>~i', $vars . '</head>', $html, 1) ?? $html;
+        }
+    }
+    $html = preg_replace_callback('~<body\b([^>]*)>~i', function ($m) {
+        return stripos($m[1], 'data-ambient') !== false ? $m[0] : '<body' . rtrim($m[1]) . ' data-ambient>';
+    }, $html, 1) ?? $html;
+    $html = preg_replace_callback('~<h1\b([^>]*)>(.*?)</h1>~is', function ($m) {
+        if (stripos($m[1], 'data-words') !== false) return $m[0];
+        if (stripos($m[2], 'data-words') !== false) return $m[0];
+        if (preg_match('~<[a-z]~i', $m[2])) return $m[0];          // has child markup, leave it
+        if (trim(strip_tags($m[2])) === '') return $m[0];
+        return '<h1' . rtrim($m[1]) . ' data-words>' . $m[2] . '</h1>';
+    }, $html, 1) ?? $html;
+    return $html;
+}
+
 function finalize_html(string $text): ?string {
     $cand = extract_html($text);
     if (!$cand || stripos($cand, '<html') === false) return null;
@@ -238,19 +454,40 @@ function finalize_html(string $text): ?string {
     // Force EAGER image loading: screenshot renderers (and full-page screenshots) do not scroll,
     // so loading="lazy" leaves below-the-fold images unloaded = blank boxes. Strip it.
     $cand = preg_replace('/\s*loading\s*=\s*([\x27"])lazy\1/i', '', $cand);
-    // FAILSAFE REVEAL: generated pages use IntersectionObserver entrance animations
-    // (.fade-up/.fade-in start at opacity:0). The observer is unreliable - in screenshots,
-    // inside the preview iframe, and for users who don't scroll - leaving whole sections
-    // permanently invisible (the "empty section" / blank-box defect). Inject a guaranteed
-    // reveal so no content is ever stuck hidden. The observer still gives the staggered
-    // effect for users who scroll within the first ~1.1s; this only rescues the rest.
+    // The motion kit: entrance motion, parallax, the ambient field. Every variant gets it.
+    $cand = ww_inject_motion_kit($cand);
+    // FAILSAFE REVEAL: belt and braces under the kit's own failsafes. Older generated pages
+    // used their own IntersectionObserver entrance animations (.fade-up/.fade-in starting at
+    // opacity:0), and the observer is unreliable - in screenshots, inside the preview iframe,
+    // and for users who don't scroll - leaving whole sections permanently invisible (the
+    // "empty section" / blank-box defect). The prompt now bans hand-rolled reveals, and the
+    // kit guarantees nothing stays hidden (no JS = nothing hidden; with JS a 1.2s near
+    // viewport reveal, a 6s full reveal, a print reveal and a scroll fallback). This script
+    // stays as the last line of defence and now covers the kit's elements too.
+    //
+    // Timing matters. Legacy selectors are forced visible ~1s after load, as before. Kit
+    // elements are handled on the kit's own schedule: near the viewport at ~1.2s, everything
+    // at ~6.5s (via WebWizMotion.revealAll() when the kit loaded, inline styles if it did
+    // not). Forcing every [data-reveal] visible at 1s would quietly delete the scroll
+    // reveals for anyone who starts scrolling after that, which is the motion the whole
+    // kit exists to deliver.
     // Identifiers are randomised per build. The previous version emitted a byte-identical
     // script (including a /*ww-reveal-failsafe*/ marker) into every page, so any two WebWiz
-    // sites could be matched to each other by a single grep. Behaviour is unchanged.
+    // sites could be matched to each other by a single grep.
     $id = fn() => substr(str_shuffle('abcdefghijkmnopqrstuvwxyz'), 0, random_int(2, 4));
-    [$fr, $fg, $ve, $vi, $vd, $vx] = [$id(), $id(), $id(), $id(), $id(), $id()];
+    [$fr, $fg, $ve, $vi, $vd, $vx, $fk, $vk, $vn] = [$id(), $id(), $id(), $id(), $id(), $id(), $id(), $id(), $id()];
     $t1 = random_int(1000, 1250); $t2 = random_int(2100, 2400); $t3 = random_int(3300, 3700);
-    $failsafe = "\n<script>(function(){function {$fr}(){try{var {$ve}=document.querySelectorAll('.fade-up,.fade-in,.reveal,[data-reveal],.animate,.scroll-reveal');for(var {$vi}=0;{$vi}<{$ve}.length;{$vi}++){{$ve}[{$vi}].classList.add('visible','active','in-view','show');{$ve}[{$vi}].style.opacity='1';{$ve}[{$vi}].style.transform='none';{$ve}[{$vi}].style.visibility='visible';}}catch({$vx}){}}var {$vd}=false;function {$fg}(){if({$vd})return;{$vd}=true;{$fr}();}window.addEventListener('load',function(){setTimeout({$fg},{$t1});});document.addEventListener('DOMContentLoaded',function(){setTimeout({$fg},{$t2});});setTimeout({$fg},{$t3});})();</script>\n";
+    $k1 = random_int(1200, 1400); $k2 = random_int(6300, 6800);
+    $legacy = '.fade-up,.fade-in,.reveal,.animate,.scroll-reveal';
+    $kit    = '[data-reveal],[data-reveal-stagger] > *,[data-words] .ww-w';
+    $failsafe = "\n<script>(function(){"
+        . "function {$fr}(){try{var {$ve}=document.querySelectorAll('{$legacy}');for(var {$vi}=0;{$vi}<{$ve}.length;{$vi}++){{$ve}[{$vi}].classList.add('visible','active','in-view','show');{$ve}[{$vi}].style.opacity='1';{$ve}[{$vi}].style.transform='none';{$ve}[{$vi}].style.visibility='visible';}}catch({$vx}){}}"
+        . "function {$fk}({$vn}){try{if(!{$vn}&&window.WebWizMotion&&window.WebWizMotion.revealAll){window.WebWizMotion.revealAll();}var {$vk}=document.querySelectorAll('{$kit}'),{$ve}=window.innerHeight*1.5;for(var {$vi}=0;{$vi}<{$vk}.length;{$vi}++){if({$vn}&&({$vk}[{$vi}].getBoundingClientRect().top>{$ve}||{$vk}[{$vi}].closest('.ww-in')))continue;{$vk}[{$vi}].style.opacity='1';{$vk}[{$vi}].style.transform='none';{$vk}[{$vi}].style.clipPath='none';{$vk}[{$vi}].style.visibility='visible';}}catch({$vx}){}}"
+        . "var {$vd}=false;function {$fg}(){if({$vd})return;{$vd}=true;{$fr}();}"
+        . "window.addEventListener('load',function(){setTimeout({$fg},{$t1});setTimeout(function(){{$fk}(true);},{$k1});});"
+        . "document.addEventListener('DOMContentLoaded',function(){setTimeout({$fg},{$t2});});"
+        . "setTimeout({$fg},{$t3});setTimeout(function(){{$fk}(false);},{$k2});"
+        . "})();</script>\n";
     if (stripos($cand, '</body>') !== false) {
         $cand = preg_replace('/<\/body>/i', $failsafe . '</body>', $cand, 1);
     } else {
@@ -275,6 +512,11 @@ function quality_gate(string $html): array {
     // (400/400 shipped pages used it, none used <article>/<main>).
     $sections = preg_match_all('/<(?:section|article)[\s>]/i', $html);
     if ($sections < 4) return ['ok' => false, 'reason' => "only {$sections} content sections (need 4+ <section>/<article>)"];
+    // Motion is mandatory. The kit attributes cost nothing to write, and a page with
+    // fewer than six reveal hooks reads as static next to one that unfolds. Counted
+    // here, before the expensive render, so a bare page is retried on the cheap round.
+    $reveals = preg_match_all('/\sdata-reveal(?:-stagger)?(?:=|\s|>)/i', $html);
+    if ($reveals < 6) return ['ok' => false, 'reason' => "only {$reveals} data-reveal / data-reveal-stagger elements (need 6+; the motion kit attributes are mandatory)"];
     return ['ok' => true, 'reason' => ''];
 }
 
@@ -463,8 +705,8 @@ OUTPUT
 Return ONLY a complete HTML5 document, no markdown, no commentary, no code fences. First character `<`, last character `>`. Must include <!DOCTYPE html>, <html>, <head>, <body>, end with </html>. Target ~5000 tokens.
 
 ABSOLUTE RULES
-1. ALL CONTENT VISIBLE AT FIRST PAINT. No opacity:0 or visibility:hidden without a guaranteed CSS-only reveal. No JS-gated reveals.
-2. ENTRANCE ANIMATIONS WRAPPED IN @media (prefers-reduced-motion: no-preference). Outside that, elements at final state.
+1. ENTRANCE MOTION COMES ONLY FROM THE WEBWIZ MOTION KIT ATTRIBUTES (see MOTION IS MANDATORY below). The kit's CSS and JS are injected into your page for you; do not link them yourself. Never write your own opacity:0, visibility:hidden, transform based entrance, IntersectionObserver or @keyframes entrance. Your own CSS transitions are fine for hover states.
+2. The kit already honours prefers-reduced-motion. Any hover transition of your own must be inside @media (prefers-reduced-motion: no-preference).
 3. HTML COMPLETE - TOP PRIORITY. Close every tag and END WITH </html>. If running long, SHORTEN copy + CSS and DROP the FAQ section, but NEVER omit the <footer> or leave the document unclosed. A complete ~5000-token page beats a richer page that gets cut off. Keep CSS compact (group selectors, no redundant rules).
 4. IMAGES ARE MANDATORY. Use a MINIMUM of 4 DISTINCT images via the proxy. Every image MUST be wrapped exactly like:
    <img src="/api/img.php?u=<URL-ENCODED-original>&l=<URL-ENCODED-short-label>" alt="...">  (do NOT add loading="lazy" - all images must load eagerly)
@@ -482,6 +724,25 @@ NO EMPTY SPACE / NO EMPTY IMAGE BOXES (clients reject these instantly)
 - If you do not have enough distinct images for a layout (e.g. a 3-card services/insights/blog grid, or an about/team photo), then REDESIGN that section to need fewer images, or make it text/icon/stat based, or drop it. Fewer cards with real images beats more cards with blank image areas.
 - Do NOT build a "latest articles / insights / blog / news" card grid with image thumbnails unless you have a distinct real image for EVERY card.
 - The founder/CEO/about photo is optional: only include a person photo if a real provided image exists for it; otherwise use a text-forward about block. Never leave a labeled-but-empty portrait frame.
+- An image wrapper carrying data-parallax MUST have its own height set (a fixed height, min-height, or aspect-ratio). The kit sizes the image to fill the wrapper, so a wrapper with no height collapses to zero and the hero photo disappears.
+
+MOTION IS MANDATORY
+Every page moves. Entrance motion, a gentle background that shifts as you scroll, and depth on the hero are what separate this page from anything a prompt tool hands back. All of it is done with the WebWiz Motion Kit data attributes below; the kit is injected for you and guarantees nothing is ever stuck hidden.
+
+| Where | Attribute |
+| The h1 (text only, no child elements; if one word is coloured, wrap it in its own span and give that span data-words too) | data-words |
+| The hero image wrapper (one img inside, wrapper has a fixed height or aspect-ratio) | data-parallax="0.12" |
+| Every section's heading block, every feature row | data-reveal (one of: up, fade, left, right, scale, wipe) |
+| Every grid of cards, services, logos, people, projects | data-reveal-stagger="90" |
+| Two or three light background sections | data-bg-shift |
+| body | data-ambient |
+| The sticky header | data-nav |
+| Cards and image tiles | data-lift, data-zoom |
+| Real numbers from the source data only | data-count="1240" (data-count-prefix, data-count-suffix, data-count-decimals supported) |
+
+Rules: one parallax hero only. data-words on the h1 and at most one other headline. Stagger grids, never body paragraphs. Never invent a number to have something to count. Set the colour hooks on :root from the palette you chose, soft tints only:
+  --ww-ambient-a: rgba(<brand rgb>, .07); --ww-ambient-b: rgba(<neutral rgb>, .07); --ww-shift: rgba(<brand rgb>, .09);
+Minimums the audit checks: six or more data-reveal elements, one or more data-reveal-stagger group, parallax or ambient or bg-shift present, reduced motion honoured (the kit does this), nothing hidden after load. The attributes cost almost nothing; if the page runs long, shorten copy and CSS, never drop the footer and never drop the attributes.
 
 HEADER
 - Sticky top nav: business name/logo left, 3-5 nav links (use scraped nav_links), 1-2 right-aligned CTAs.
@@ -516,9 +777,9 @@ Prose gives away a generated page faster than the layout does. These are hard ru
 - Prefer concrete nouns and real specifics from the source data (place names, services, numbers, hours, neighbourhoods) over adjectives. One true detail beats three confident adjectives.
 
 FORBIDDEN
-- Chatbots, popups, cookie banners. Fake testimonials. Lorem Ipsum. External JS frameworks. Links to URLs not in source data. "Sign In" on non-SaaS sites. Any opacity:0 reveal without CSS-only animation. Empty sections. Cropped faces/bodies. Reusing an image URL.
+- Chatbots, popups, cookie banners. Fake testimonials. Lorem Ipsum. External JS frameworks. Links to URLs not in source data. "Sign In" on non-SaaS sites. Hand-rolled entrance animation of any kind (opacity:0, IntersectionObserver, keyframe entrances) - the kit attributes are the only way in. Empty sections. Cropped faces/bodies. Reusing an image URL. A mailto: or tel: that is not in the source data. Any phone, email, address, licence number, year or count that the source data does not contain.
 
-QUALITY GATE (auto-checked): an <h1>, a <footer>, 4+ <section>/<article> elements, 4+ DISTINCT /api/img.php?u= image URLs.
+QUALITY GATE (auto-checked): an <h1> with data-words, a <footer>, 4+ <section>/<article> elements, 4+ DISTINCT proxied images, 6+ data-reveal elements, data-ambient on body. The page is then rendered in Chrome at desktop and phone widths and audited by more than 60 checks (structure, copy, motion, mobile, performance, accessibility, and whether every contact detail, number and image traces back to the source data), and compared against the prospect's current site. It ships only when it passes and wins.
 
 Industry: {$industry}
 TXT;
@@ -544,6 +805,7 @@ function build_user_prompt(array $scrape, string $biz, string $industry, int $va
         'business_name' => $biz, 'industry' => $industry ?: 'unknown', 'current_url' => $scrape['url'] ?? '',
         'page_title' => $scrape['title'] ?? '', 'meta_desc' => $scrape['description'] ?? '',
         'logo_url' => $scrape['logo'] ?? null, 'brand_colors' => array_slice($scrape['colors'] ?? [], 0, 5),
+        'contact_emails' => array_slice($scrape['emails'] ?? [], 0, 6), 'contact_phones' => array_slice($scrape['phones'] ?? [], 0, 6),
         'h1' => $scrape['h1'] ?? [], 'h2' => $scrape['h2'] ?? [], 'h3' => $scrape['h3'] ?? [],
         'paragraphs' => $scrape['paragraphs'] ?? [],
         'images' => [
@@ -596,7 +858,9 @@ REQUIREMENTS
 IMAGE TAG FORMAT - copy exactly:
 <img src="/api/img.php?u=<urlencoded-URL>&l=<urlencoded-label>" alt="...">  (NO loading="lazy")
 
-QUALITY GATE: <h1>, <footer>, 4+ <section>/<article> elements, 4+ DISTINCT /api/img.php URLs, no empty sections, no cropped people, no broken images.
+CONTACT DETAILS: the source data carries contact_emails and contact_phones. A mailto: or tel: link may ONLY use one of those. If the list is empty, do not write a mailto: or tel: at all; link the contact CTA to a #contact section or the current_url instead. An invented email address on a prospect's own homepage has already cost a sale.
+
+QUALITY GATE: <h1> with data-words, <footer>, 4+ <section>/<article> elements, 4+ DISTINCT /api/img.php URLs, 6+ data-reveal elements, data-ambient on body, no empty sections, no cropped people, no broken images, no contact detail or number that is not in the source data.
 
 REMEMBER: output ONLY the HTML document. First character `<`, last character `>`. No commentary. END WITH </html>.
 TXT;

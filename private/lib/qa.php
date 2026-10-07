@@ -278,3 +278,353 @@ function ww_generate_missing_showcases(PDO $db, int $limit = 20, int $time_budge
         else echo "[showcase] job #{$r['id']} capture failed\n";
     }
 }
+
+/* =====================================================================================
+ * The audit gate (2026-10-07): private/qa-tools/audit.js renders a variant in headless
+ * Chrome at 1440px and 390px, scrolls it one step per painted frame, and runs 60+
+ * checks (structure, copy truth, design, motion, mobile, performance, accessibility)
+ * plus the four WebWiz truth checks that need the prospect's scrape: invented-contact,
+ * invented-stat, image-source, kit-present. compareSites() runs the same audit on the
+ * prospect's current site and composes the side by side JPEGs the reveal page shows.
+ *
+ * Everything here shells out to node. One Chrome at a time is enforced inside the
+ * tools (qa-tools/chromelock.js), so the worker, the live build and an admin run can
+ * all call this without saturating the two cores.
+ * ===================================================================================== */
+
+const WW_AUDIT_TOOL      = __DIR__ . '/../qa-tools/audit.js';   // resolves inside whichever checkout is running
+const WW_AUDIT_CACHE_DIR = '/var/www/sites/trywebwiz/data/audit-cache';
+const WW_PREVIEW_DIR     = '/var/www/sites/trywebwiz/public/preview';
+
+/** Settings for the gate, defaults applied. */
+function ww_audit_settings(PDO $db): array {
+    return [
+        'enabled'   => ww_setting($db, 'audit_enabled', '1') === '1',
+        'min_score' => max(0, min(100, (int)ww_setting($db, 'audit_min_score', '85'))),
+        'block'     => ww_setting($db, 'audit_block_on_fail', '1') === '1',
+        'compare'   => ww_setting($db, 'compare_enabled', '1') === '1',
+    ];
+}
+
+function ww_audit_node(): string {
+    static $node = null;
+    if ($node === null) $node = trim((string)@shell_exec('command -v node')) ?: '/usr/bin/node';
+    return $node;
+}
+
+/**
+ * The facts the truth checks compare the page against: every email, phone, image URL
+ * and piece of text the scrape produced, plus anything the owner typed (describe mode),
+ * which is the other authoritative source.
+ */
+function ww_audit_facts(array $scrape, string $owner_text = ''): array {
+    $text = [];
+    foreach (['title', 'description'] as $k) if (!empty($scrape[$k])) $text[] = (string)$scrape[$k];
+    foreach (['h1', 'h2', 'h3', 'paragraphs', 'nav_links', 'emails', 'phones'] as $k) foreach ((array)($scrape[$k] ?? []) as $t) $text[] = (string)$t;
+    foreach ((array)($scrape['extra_pages'] ?? []) as $pg) {
+        foreach (['title'] as $k) if (!empty($pg[$k])) $text[] = (string)$pg[$k];
+        foreach (['h1', 'h2', 'paragraphs'] as $k) foreach ((array)($pg[$k] ?? []) as $t) $text[] = (string)$t;
+    }
+    foreach ((array)($scrape['images'] ?? []) as $i) if (!empty($i['alt'])) $text[] = (string)$i['alt'];
+    if (!empty($scrape['text'])) $text[] = (string)$scrape['text'];
+    if ($owner_text !== '') $text[] = $owner_text;
+    $images = []; $logo = [];
+    foreach ((array)($scrape['images'] ?? []) as $i) {
+        if (empty($i['url'])) continue;
+        $images[] = (string)$i['url'];
+        if (!empty($i['is_logo'])) $logo[] = (string)$i['url'];
+    }
+    if (!empty($scrape['logo'])) { $logo[] = (string)$scrape['logo']; $images[] = (string)$scrape['logo']; }
+    return [
+        'emails' => array_values((array)($scrape['emails'] ?? [])),
+        'phones' => array_values((array)($scrape['phones'] ?? [])),
+        'text'   => implode("\n", $text),
+        'images' => array_values(array_unique($images)),
+        'logo'   => array_values(array_unique($logo)),
+        'url'    => (string)($scrape['url'] ?? ''),
+    ];
+}
+
+/** Write the scrape's contact details onto the prospect row so the audit of any later variant has them. */
+function ww_prospect_store_contacts(PDO $db, ?int $prospect_id, array $scrape): void {
+    if (!$prospect_id) return;
+    try {
+        ww_db_write_retry(function () use ($db, $prospect_id, $scrape) {
+            $db->prepare("UPDATE prospects SET contact_emails = ?, contact_phones = ? WHERE id = ?")
+               ->execute([json_encode(array_values((array)($scrape['emails'] ?? []))), json_encode(array_values((array)($scrape['phones'] ?? []))), $prospect_id]);
+            return true;
+        });
+    } catch (Throwable $e) { error_log('[ww_prospect_store_contacts] ' . $e->getMessage()); }
+}
+
+function ww_audit_tmp_dir(string $tag): string {
+    $d = sys_get_temp_dir() . '/wwaudit_' . getmypid() . '_' . preg_replace('~[^A-Za-z0-9]~', '', $tag) . '_' . mt_rand(1000, 9999);
+    @mkdir($d, 0700, true);
+    return $d;
+}
+
+/**
+ * Audit one URL. Returns the decoded audit (no screenshots) or null when the tool
+ * could not run. $shots_dir receives audit-desktop.jpg / audit-mobile.jpg so a compare
+ * right after can reuse them instead of rendering the page again.
+ */
+function ww_audit_run(string $url, ?array $facts = null, ?string $shots_dir = null, int $timeout = 170): ?array {
+    if (!is_file(WW_AUDIT_TOOL)) { echo "[audit] tool missing: " . WW_AUDIT_TOOL . "\n"; return null; }
+    $tmp = $shots_dir ?: ww_audit_tmp_dir('a');
+    @mkdir($tmp, 0755, true);
+    $json = $tmp . '/audit.json';   // the tool's full output stays here for a compare to reuse
+    $cmd = 'timeout ' . (int)$timeout . ' ' . escapeshellarg(ww_audit_node()) . ' ' . escapeshellarg(WW_AUDIT_TOOL) . ' ' . escapeshellarg($url) . ' --json ' . escapeshellarg($json);
+    if ($facts) { file_put_contents($tmp . '/facts.json', json_encode($facts, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)); $cmd .= ' --facts ' . escapeshellarg($tmp . '/facts.json'); }
+    if ($shots_dir) { $cmd .= ' --shots ' . escapeshellarg($shots_dir); }
+    $out = []; $rc = 0;
+    @exec($cmd . ' 2>&1', $out, $rc);
+    $res = is_file($json) ? json_decode((string)file_get_contents($json), true) : null;
+    if ($shots_dir === null) { @unlink($json); @unlink($tmp . '/facts.json'); @rmdir($tmp); }
+    if (!is_array($res) || !isset($res['checks'])) {
+        echo "[audit] failed rc={$rc}: " . substr(trim(implode(' ', $out)), 0, 300) . "\n";
+        return null;
+    }
+    // keep the page facts out of the DB column; the checks carry the detail
+    unset($res['facts']);
+    return $res;
+}
+
+/**
+ * Audit a variant on disk by its public URL. Writes shots next to the json in a temp
+ * dir and returns ['audit'=>array|null, 'json'=>path, 'shots'=>dir] for the compare.
+ */
+function ww_audit_variant(string $token, int $v, ?array $facts): array {
+    $url = 'https://trywebwiz.com/preview/' . $token . '/v' . $v . '/index.html?audit=' . time();
+    $dir = ww_audit_tmp_dir($token . 'v' . $v);
+    $audit = ww_audit_run($url, $facts, $dir);
+    return ['audit' => $audit, 'json' => $dir . '/audit.json', 'shots' => $dir, 'url' => $url];
+}
+
+function ww_audit_cleanup(array $run): void {
+    foreach ((glob(($run['shots'] ?? '/nonexistent') . '/*') ?: []) as $f) @unlink($f);
+    if (!empty($run['shots'])) @rmdir($run['shots']);
+}
+
+/**
+ * Compare a variant with the prospect's current site. The current site's audit is
+ * cached per URL for seven days (WW_AUDIT_CACHE_DIR) so three variants of one job do
+ * not render it three times. Composites are saved as
+ * public/preview/<token>/compare-v<N>-desktop.jpg and -mobile.jpg, and a small
+ * compare-v<N>.json the reveal page and the nurture email read.
+ */
+function ww_compare_variant(string $token, int $v, string $their_url, ?array $facts, ?array $ours_run = null, int $timeout = 200): ?array {
+    if (!is_file(WW_AUDIT_TOOL)) return null;
+    if (!preg_match('~^https?://~i', $their_url)) $their_url = 'https://' . $their_url;
+    $pdir = WW_PREVIEW_DIR . '/' . $token;
+    if (!is_dir($pdir . '/v' . $v)) return null;
+    @mkdir(WW_AUDIT_CACHE_DIR, 0750, true);
+    $our_url = 'https://trywebwiz.com/preview/' . $token . '/v' . $v . '/index.html?audit=' . time();
+    $tmp = ww_audit_tmp_dir('c' . $v);
+    $json = $tmp . '/compare.json';
+    $cache = WW_AUDIT_CACHE_DIR . '/' . sha1(strtolower(preg_replace('~^https?://(www\.)?~i', '', rtrim($their_url, '/')))) . '.json';
+    $cmd = 'timeout ' . (int)$timeout . ' ' . escapeshellarg(ww_audit_node()) . ' ' . escapeshellarg(WW_AUDIT_TOOL) . ' --compare ' . escapeshellarg($our_url) . ' ' . escapeshellarg($their_url)
+         . ' --json ' . escapeshellarg($json) . ' --shots ' . escapeshellarg($tmp) . ' --their-cache ' . escapeshellarg($cache);
+    if ($facts) { file_put_contents($tmp . '/facts.json', json_encode($facts, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)); $cmd .= ' --facts ' . escapeshellarg($tmp . '/facts.json'); }
+    if ($ours_run && !empty($ours_run['audit']) && is_file($ours_run['json']) && is_file($ours_run['shots'] . '/audit-desktop.jpg')) {
+        $cmd .= ' --ours-json ' . escapeshellarg($ours_run['json']) . ' --ours-shots ' . escapeshellarg($ours_run['shots']);
+    }
+    $out = []; $rc = 0;
+    @exec($cmd . ' 2>&1', $out, $rc);
+    $res = is_file($json) ? json_decode((string)file_get_contents($json), true) : null;
+    if (!is_array($res) || empty($res['verdict'])) {
+        echo "[compare] failed rc={$rc}: " . substr(trim(implode(' ', $out)), 0, 300) . "\n";
+        foreach ((glob($tmp . '/*') ?: []) as $f) @unlink($f); @rmdir($tmp);
+        return null;
+    }
+    // move the composites into the preview dir (same owner as showcase.jpg: whoever runs this)
+    $saved = [];
+    foreach (['desktop', 'mobile'] as $k) {
+        $src = $tmp . '/compare-' . $k . '.jpg';
+        $dst = $pdir . '/compare-v' . $v . '-' . $k . '.jpg';
+        if (is_file($src) && @rename($src, $dst)) { @chmod($dst, 0644); $saved[$k] = '/preview/' . $token . '/compare-v' . $v . '-' . $k . '.jpg?v=' . (@filemtime($dst) ?: time()); }
+    }
+    foreach ((glob($tmp . '/*') ?: []) as $f) @unlink($f); @rmdir($tmp);
+    unset($res['files']);
+    if (isset($res['ours_audit']['facts'])) unset($res['ours_audit']['facts']);
+    $res['images'] = $saved;
+    $res['at'] = gmdate('c');
+    // the reveal page's copy of the result: scores, categories, plain facts, images
+    $public = [
+        'ours'    => ['score' => $res['ours']['score'] ?? null, 'verdict' => $res['ours']['verdict'] ?? null],
+        'theirs'  => ['score' => $res['theirs']['score'] ?? null, 'url' => $their_url, 'host' => preg_replace('~^www\.~', '', (string)parse_url($their_url, PHP_URL_HOST))],
+        'groups'  => $res['groups'] ?? [], 'winning' => $res['winning'] ?? [], 'losing' => $res['losing'] ?? [], 'tied' => $res['tied'] ?? [],
+        'facts'   => array_slice((array)($res['facts'] ?? []), 0, 6),
+        'verdict' => $res['verdict'], 'verdict_reason' => $res['verdict_reason'] ?? '',
+        'images'  => $saved, 'at' => $res['at'], 'variant' => $v,
+    ];
+    @file_put_contents($pdir . '/compare-v' . $v . '.json', json_encode($public, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    @chmod($pdir . '/compare-v' . $v . '.json', 0644);
+    return $res;
+}
+
+/** Hard rules per failing check id, appended to the regeneration feedback. */
+function ww_audit_fix_hint(string $id): string {
+    static $h = [
+        'invented-contact'    => 'Use ONLY the addresses in contact_emails and the numbers in contact_phones from the source data, exactly as given. If those lists are empty, write no mailto: and no tel: at all and point the contact CTA at #contact or the current_url.',
+        'invented-stat'       => 'Delete every number that is not in the source text. Do not round, estimate or "improve" a figure. A page with no statistics is fine; a page with one invented statistic is rejected.',
+        'image-source'        => 'Copy image URLs verbatim from the images lists in the source data, use each URL once, and use /api/genimg.php for anything the source does not contain.',
+        'kit-present'         => 'Do not remove or rewrite the <head>. The kit tags are injected for you.',
+        'no-dashes'           => 'Replace every em dash and en dash in visible copy with a comma, a full stop or brackets. None may remain.',
+        'no-template-phrases' => 'Rewrite those headlines so they say something only this business could say.',
+        'no-placeholder'      => 'Remove placeholder text; every sentence must be real copy about this business.',
+        'phone-link'          => 'If contact_phones has a number, render it as <a href="tel:...">. If it is empty, this check is satisfied by a contact form or a mailto to a scraped address.',
+        'contact-path'        => 'Add a real way to contact the business: a mailto: to a scraped address or a short contact form.',
+        'anchors-resolve'     => 'Every href="#id" must point at an element with that id on this page.',
+        'no-empty-links'      => 'No href="#" and no javascript: links. Link to a real section id, the current_url, a tel: or a mailto:.',
+        'no-dead-sections'    => 'Every section taller than 280px needs visible text or an image. Remove the empty band or fill it.',
+        'images-load'         => 'Remove or replace every image that failed to load; never leave a broken image.',
+        'real-imagery'        => 'Use at least four distinct real images from the source data.',
+        'body-size'           => 'Body text must be 16px or larger.',
+        'cta-above-fold'      => 'Put a visible, styled call to action in the first screen on desktop.',
+        'contrast'            => 'Fix the listed text/background pairs to at least 4.5:1 (3:1 for 24px+ headings).',
+        'motion-kit'          => 'Do not touch the kit tags in <head>.',
+        'scroll-reveals'      => 'Add data-reveal to every section heading block and feature row, six or more in total.',
+        'depth'               => 'Keep data-ambient on body, put data-parallax="0.12" on the hero image wrapper and data-bg-shift on two or three light sections.',
+        'reduced-motion'      => 'Wrap any transition of your own in @media (prefers-reduced-motion: no-preference).',
+        'nothing-stuck-hidden'=> 'Remove every opacity:0, visibility:hidden and hand-rolled entrance animation. Entrance motion comes only from the kit attributes.',
+        'no-horizontal-scroll'=> 'Nothing may be wider than the viewport at 390px: no fixed widths, grids collapse to one column, images max-width:100%, long words wrap.',
+        'tap-targets'         => 'Every link and button must be at least 40px tall and wide on a phone (padding, min-height).',
+        'mobile-nav'          => 'Keep navigation reachable on a phone: visible nav links or a labelled menu button.',
+        'mobile-cta'          => 'A call to action must be visible in the first phone screen (390x844) without scrolling.',
+        'mobile-images-fit'   => 'Images must not exceed the phone width; give them max-width:100% inside a clipped wrapper.',
+        'page-weight'         => 'Cut page weight: fewer images, no duplicate fonts, no base64 images.',
+        'largest-image'       => 'Do not inline or reference an image heavier than 500 KB; pick a different source image.',
+        'no-failed-requests'  => 'Remove every reference that fails to load (fonts, images, links to files that do not exist).',
+        'alt-text'            => 'Every <img> needs a descriptive alt attribute.',
+        'link-names'          => 'Every link needs visible text or an aria-label.',
+        'one-h1'              => 'Exactly one <h1> on the page.',
+        'title'               => 'Give the page a <title> of 15 to 70 characters naming the business.',
+        'meta-description'    => 'Add a meta description of 50 to 160 characters.',
+        'viewport'            => 'Include <meta name="viewport" content="width=device-width, initial-scale=1">.',
+        'lang'                => 'Set lang="en" on <html>.',
+        'doctype'             => 'Start with <!DOCTYPE html>.',
+    ];
+    return $h[$id] ?? '';
+}
+
+/** Regeneration feedback from a failed audit, each failing check id and detail verbatim. */
+function ww_audit_feedback(?array $audit, int $min_score = 85): string {
+    if (!$audit) return '';
+    $lines = [];
+    foreach ((array)($audit['checks'] ?? []) as $c) {
+        if (($c['status'] ?? '') !== 'fail') continue;
+        $lines[] = '- ' . $c['id'] . ': ' . $c['detail'];
+        $hint = ww_audit_fix_hint((string)$c['id']);
+        if ($hint !== '') $lines[] = '    FIX: ' . $hint;
+    }
+    $warns = [];
+    foreach ((array)($audit['checks'] ?? []) as $c) if (($c['status'] ?? '') === 'warn') $warns[] = $c['id'] . ' (' . $c['detail'] . ')';
+    $score = (int)($audit['score'] ?? 0);
+    $txt = "AUTOMATED AUDIT of your previous render: score {$score}/100, needs {$min_score} or more with ZERO failing checks. It was rendered in Chrome at 1440px and 390px and scrolled.";
+    if ($lines) $txt .= "\nFAILING CHECKS, fix every one:\n" . implode("\n", $lines);
+    elseif ($score < $min_score) $txt .= "\nNo check failed outright but the score is below {$min_score}. Clear the warnings below to raise it.";
+    if ($warns) $txt .= "\nWARNINGS (each earns half marks, clear as many as you can): " . implode('; ', array_slice($warns, 0, 12));
+    $txt .= "\nKeep the SAME assigned art direction, the same images and the same source facts. Fix the defects, change nothing else, and output the complete document ending with </html>.";
+    return $txt;
+}
+
+/** Regeneration feedback when the variant loses a category to the prospect's current site. */
+function ww_compare_feedback(?array $cmp): string {
+    if (!$cmp || empty($cmp['losing'])) return '';
+    $their = (string)($cmp['theirs']['url'] ?? 'their current site');
+    $os = (int)($cmp['ours']['score'] ?? 0); $ts = (int)($cmp['theirs']['score'] ?? 0);
+    $txt = "COMPARED WITH THE PROSPECT'S CURRENT SITE ({$their}, score {$ts}) your page scored {$os} and LOSES these categories. It must win or tie every one:";
+    foreach ((array)($cmp['what_theirs_does_better'] ?? []) as $g) {
+        $grp = $cmp['groups'][$g['group']] ?? null;
+        $txt .= "\n- " . ($g['label'] ?? $g['group']) . ($grp ? " (ours {$grp['ours']}, theirs {$grp['theirs']})" : '');
+        foreach ((array)($g['their_passes'] ?? []) as $c) {
+            $id = is_array($c) ? (string)$c['id'] : (string)$c;
+            $ours = is_array($c) ? (string)($c['ours'] ?? '') : '';
+            $txt .= "\n    their site passes " . $id . ($ours !== '' ? " and yours shows: " . $ours : '');
+            $hint = ww_audit_fix_hint($id);
+            if ($hint !== '') $txt .= "\n    FIX: " . $hint;
+        }
+    }
+    $txt .= "\nKeep the SAME art direction, images and source facts. Fix those checks without regressing anything else.";
+    return $txt;
+}
+
+/** Audit JSON for the DB: the checks and scores, never screenshots or page facts. */
+function ww_audit_for_db(?array $audit): ?string {
+    if (!$audit) return null;
+    $keep = [
+        'score' => $audit['score'] ?? null, 'verdict' => $audit['verdict'] ?? null, 'verdict_reason' => $audit['verdict_reason'] ?? null,
+        'checks_run' => $audit['checks_run'] ?? count($audit['checks'] ?? []), 'fails' => $audit['fails'] ?? [], 'warns' => $audit['warns'] ?? [],
+        'groups' => array_map(fn($g) => is_array($g) ? ($g['score'] ?? null) : $g, (array)($audit['groups'] ?? [])),
+        'checks' => array_map(fn($c) => ['id' => $c['id'], 'group' => $c['group'], 'status' => $c['status'], 'detail' => mb_substr((string)$c['detail'], 0, 300)], (array)($audit['checks'] ?? [])),
+        'duration_ms' => $audit['duration_ms'] ?? null, 'at' => gmdate('c'),
+    ];
+    return json_encode($keep, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+}
+
+function ww_compare_for_db(?array $cmp): ?string {
+    if (!$cmp) return null;
+    $keep = [
+        'verdict' => $cmp['verdict'] ?? null, 'verdict_reason' => $cmp['verdict_reason'] ?? null,
+        'ours' => $cmp['ours']['score'] ?? null, 'theirs' => $cmp['theirs']['score'] ?? null, 'their_url' => $cmp['theirs']['url'] ?? null,
+        'groups' => $cmp['groups'] ?? [], 'winning' => $cmp['winning'] ?? [], 'losing' => $cmp['losing'] ?? [], 'tied' => $cmp['tied'] ?? [],
+        'facts' => $cmp['facts'] ?? [], 'images' => $cmp['images'] ?? [], 'their_fails' => array_slice((array)($cmp['their_fails'] ?? []), 0, 20),
+        'at' => $cmp['at'] ?? gmdate('c'),
+    ];
+    return json_encode($keep, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+}
+
+/** Persist audit and compare results on the previews row, keyed by job token like ww_qa_persist(). */
+function ww_audit_persist(PDO $db, string $token, int $variant_n, ?array $audit, ?array $cmp = null): bool {
+    if ($token === '' || (!$audit && !$cmp)) return false;
+    $sets = []; $vals = [];
+    if ($audit) { $sets[] = 'audit_score = ?'; $vals[] = (int)($audit['score'] ?? 0); $sets[] = 'audit_verdict = ?'; $vals[] = (string)($audit['verdict'] ?? ''); $sets[] = 'audit_json = ?'; $vals[] = ww_audit_for_db($audit); }
+    if ($cmp)   { $sets[] = 'compare_verdict = ?'; $vals[] = (string)($cmp['verdict'] ?? ''); $sets[] = 'compare_json = ?'; $vals[] = ww_compare_for_db($cmp); }
+    $vals[] = $variant_n; $vals[] = $token;
+    try {
+        return (bool)ww_db_write_retry(function () use ($db, $sets, $vals) {
+            $st = $db->prepare("UPDATE previews SET " . implode(', ', $sets) . " WHERE variant_n = ? AND job_id = (SELECT id FROM jobs WHERE token = ? ORDER BY id DESC LIMIT 1)");
+            $st->execute($vals);
+            return $st->rowCount() > 0;
+        });
+    } catch (Throwable $e) { error_log('[ww_audit_persist] ' . $e->getMessage()); return false; }
+}
+
+/**
+ * Backfill for paths that cannot afford the audit inline (the batch pipeline writes
+ * every row of a CSV upload inside one worker run). Audits ready previews that have no
+ * audit yet, newest first, within a time budget, and flags the job needs_review when a
+ * variant is not ready or loses to the current site. Nothing is regenerated here; a
+ * human decides before a batch preview is emailed. Only jobs created after the gate
+ * shipped are considered: older previews predate the kit and would all fail motion.
+ */
+function ww_audit_missing(PDO $db, int $limit = 2, int $time_budget_sec = 120): void {
+    $s = ww_audit_settings($db);
+    if (!$s['enabled']) return;
+    $rows = $db->query(
+        "SELECT p.id pid, p.variant_n, j.id jid, j.token, j.scrape_data, j.prospect_id, pr.current_url, pr.description
+           FROM previews p JOIN jobs j ON j.id = p.job_id LEFT JOIN prospects pr ON pr.id = j.prospect_id
+          WHERE p.audit_score IS NULL AND j.status IN ('ready','sent') AND j.qa_status = 'batch'
+            AND j.created_at >= '2026-10-07' AND p.archived = 0
+          ORDER BY p.id DESC LIMIT 40"
+    )->fetchAll(PDO::FETCH_ASSOC);
+    $n = 0; $start = time();
+    foreach ($rows as $r) {
+        if ($n >= $limit) break;
+        if (time() - $start > $time_budget_sec) { echo "[audit] backfill time budget hit at {$n}\n"; break; }
+        $token = (string)$r['token']; $v = (int)$r['variant_n'];
+        if (!is_file(WW_PREVIEW_DIR . "/{$token}/v{$v}/index.html")) continue;
+        $scrape = json_decode((string)($r['scrape_data'] ?? ''), true) ?: [];
+        $facts = ww_audit_facts($scrape, (string)($r['description'] ?? ''));
+        $run = ww_audit_variant($token, $v, $facts);
+        $audit = $run['audit'];
+        $cmp = null;
+        if ($audit && $s['compare'] && !empty($r['current_url'])) $cmp = ww_compare_variant($token, $v, (string)$r['current_url'], $facts, $run);
+        ww_audit_cleanup($run);
+        if ($audit) ww_audit_persist($db, $token, $v, $audit, $cmp);
+        $bad = ($audit && (($audit['verdict'] ?? '') !== 'preview-ready' || (int)$audit['score'] < $s['min_score'])) || ($cmp && ($cmp['verdict'] ?? '') !== 'beats-current-site');
+        if ($bad) { try { $db->prepare("UPDATE jobs SET qa_status='needs_review' WHERE id=?")->execute([(int)$r['jid']]); } catch (Throwable $e) {} }
+        echo "[audit] backfill job #{$r['jid']} v{$v}: " . ($audit ? "{$audit['verdict']} {$audit['score']}" : 'audit failed') . ($cmp ? ", compare {$cmp['verdict']}" : '') . "\n";
+        $n++;
+    }
+}

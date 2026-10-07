@@ -1,10 +1,13 @@
 // shot.js — full-page screenshot via puppeteer. Crashpad-safe args (matches showcase.js).
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
+// One Chrome at a time across the worker, the live build and the audit (see chromelock.js).
+const chromelock = require('./chromelock');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 (async () => {
   const url = process.argv[2], out = process.argv[3];
+  const releaseLock = await chromelock.acquire();
   const ud = fs.mkdtempSync('/tmp/wwshot-');
   // Critical: HOME must be writable and crash subsystem fully disabled —
   // otherwise Chrome's crashpad child fails with "--database is required".
@@ -67,5 +70,6 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   } finally {
     try { await browser.close(); } catch(e){}
     try { fs.rmSync(ud, { recursive: true, force: true }); } catch(e){}
+    releaseLock();
   }
 })();

@@ -476,13 +476,79 @@ function scrape_parse(string $html, string $final_url): array {
         if (count($nav_links) >= 12) break;
     }
 
+    $contact = ww_scrape_contacts($xp, $html);
+    // Visible text of the page (scripts and styles removed by ww_scrape_contacts),
+    // capped. Not shown to the model; it is what the audit's invented-stat check
+    // treats as the truth, so a licence number in their footer counts as sourced.
+    $body_node = $xp->query('//body')->item(0);
+    $visible = $body_node ? trim(preg_replace('~\s+~u', ' ', html_entity_decode((string)$body_node->textContent, ENT_QUOTES | ENT_HTML5, 'UTF-8')) ?? '') : '';
+
     return [
         'url' => $final_url, 'origin' => $origin, 'title' => $title, 'description' => $desc,
         'logo' => $logo, 'colors' => $colors, 'h1' => $h1,
         'h2' => array_slice($h2, 0, 12), 'h3' => array_slice($h3, 0, 12),
         'paragraphs' => array_slice($paras, 0, 10), 'images' => array_slice($images, 0, 16),
         'videos' => $videos, 'nav_links' => array_values(array_unique($nav_links)), 'html_length' => strlen($html),
+        'emails' => $contact['emails'], 'phones' => $contact['phones'],
+        'text' => mb_substr($visible, 0, 12000),
     ];
+}
+
+/**
+ * Every email and phone number the prospect publishes, so the generator can only
+ * use those and the audit can prove it did. mailto: and tel: links first (they are
+ * unambiguous), then a regex over the visible text. The AI build for MRC invented
+ * info@mrcbuilt.com when the real address was info@michaelrobertsconstruction.com;
+ * this is the data that check runs against.
+ *
+ * Phones are kept as written (for display) and compared by their last ten digits
+ * downstream, so (408) 374-3662, 408.374.3662 and +1 408 374 3662 all agree.
+ */
+function ww_scrape_contacts(DOMXPath $xp, string $html): array {
+    $emails = []; $phones = [];
+    $add_email = function (string $e) use (&$emails) {
+        $e = strtolower(trim($e));
+        $e = preg_replace('~[?#].*$~', '', $e) ?? $e;
+        if ($e === '' || !filter_var($e, FILTER_VALIDATE_EMAIL)) return;
+        if (preg_match('~@(example\.|sentry|wixpress|squarespace|w3\.org|schema\.org)~', $e)) return;
+        if (preg_match('~\.(png|jpe?g|gif|svg|webp|css|js)$~', $e)) return;
+        $emails[$e] = true;
+    };
+    $add_phone = function (string $p) use (&$phones) {
+        $raw = trim($p);
+        $digits = preg_replace('~\D+~', '', $raw) ?? '';
+        if (strlen($digits) < 10 || strlen($digits) > 15) return;
+        $key = strlen($digits) > 10 ? substr($digits, -10) : $digits;
+        if (preg_match('~^(\d)\1{9}$~', $key)) return;       // 0000000000 and friends
+        if (!isset($phones[$key])) $phones[$key] = $raw;
+    };
+    foreach ($xp->query('//a[starts-with(translate(@href,"MAILTO","mailto"),"mailto:")]') as $a) {
+        $add_email(substr((string)$a->getAttribute('href'), 7));
+    }
+    foreach ($xp->query('//a[starts-with(translate(@href,"TEL","tel"),"tel:")]') as $a) {
+        $add_phone(substr((string)$a->getAttribute('href'), 4));
+    }
+    // Visible text: body without script/style/noscript.
+    $body = $xp->query('//body')->item(0);
+    $text = '';
+    if ($body) {
+        foreach ($xp->query('.//script | .//style | .//noscript | .//template', $body) as $n) { $n->parentNode->removeChild($n); }
+        $text = (string)$body->textContent;
+    }
+    $text = html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    if (preg_match_all('~[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}~', $text, $em)) {
+        foreach ($em[0] as $e) $add_email($e);
+    }
+    // Also catch "info [at] domain [dot] com" style obfuscation? Deliberately not:
+    // a guess here becomes a wrong address on the prospect's own site.
+    if (preg_match_all('~(?:\+?1[\s.-]?)?\(?\b[2-9]\d{2}\)?[\s.-]\d{3}[\s.-]\d{4}\b~', $text, $pm)) {
+        foreach ($pm[0] as $p) $add_phone($p);
+    }
+    // Schema.org / microdata often carries the canonical values.
+    if (preg_match_all('~"(?:telephone|email)"\s*:\s*"([^"]{5,80})"~i', $html, $sm, PREG_SET_ORDER)) {
+        foreach ($sm as $m) { strpos($m[1], '@') !== false ? $add_email($m[1]) : $add_phone($m[1]); }
+    }
+    return ['emails' => array_slice(array_keys($emails), 0, 10), 'phones' => array_slice(array_values($phones), 0, 10)];
 }
 
 function scrape_homepage(string $url, int $timeout = 25): array {
@@ -497,7 +563,9 @@ function scrape_homepage(string $url, int $timeout = 25): array {
 function scrape_multi(string $url): array {
     $home = scrape_homepage($url);
     $origin = rtrim($home['origin'], '/');
-    $extra_paths = ['/about','/services','/products','/work','/case-studies','/portfolio','/team'];
+    // /contact and /contact-us are fetched for their emails and phones only; they
+    // rarely carry paragraphs so they never become an extra_pages entry.
+    $extra_paths = ['/about','/services','/products','/work','/case-studies','/portfolio','/team','/contact','/contact-us'];
 
     $seen_images = [];
     foreach ($home['images'] ?? [] as $i) $seen_images[ww_normalize_image_url($i['url'])] = true;
@@ -506,6 +574,10 @@ function scrape_multi(string $url): array {
     $urls = array_map(fn($p) => $origin . $p, $extra_paths);
     $fetched = ww_http_get_many($urls, 10);
 
+    $emails = array_fill_keys($home['emails'] ?? [], true);
+    $phones = [];
+    foreach ($home['phones'] ?? [] as $p) { $phones[substr(preg_replace('~\D+~', '', $p), -10)] = $p; }
+
     $extras = [];
     foreach ($urls as $u) {
         $f = $fetched[$u] ?? null;
@@ -513,6 +585,9 @@ function scrape_multi(string $url): array {
         try {
             $sub = scrape_parse($f['html'], $f['final_url']);
         } catch (Throwable $e) { continue; }
+        if (!empty($sub['text'])) $home['text'] = mb_substr(($home['text'] ?? '') . "\n" . $sub['text'], 0, 40000);
+        foreach ($sub['emails'] ?? [] as $e) $emails[$e] = true;
+        foreach ($sub['phones'] ?? [] as $p) { $k = substr(preg_replace('~\D+~', '', $p), -10); if (!isset($phones[$k])) $phones[$k] = $p; }
         if (empty($sub['paragraphs']) || count($sub['paragraphs']) <= 1) continue;
         foreach ($sub['images'] ?? [] as $img) {
             $key = ww_normalize_image_url($img['url']);
@@ -526,6 +601,8 @@ function scrape_multi(string $url): array {
         if (count($extras) >= 3) break;
     }
     $home['extra_pages'] = $extras;
+    $home['emails'] = array_slice(array_keys($emails), 0, 10);
+    $home['phones'] = array_slice(array_values($phones), 0, 10);
 
     usort($home['images'], function($a, $b) {
         $score = fn($x) => (!empty($x['is_logo'])?5:0) + (!empty($x['is_thumb'])?2:0) + (!empty($x['is_team_card'])?4:0);

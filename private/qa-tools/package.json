@@ -1,1 +1,1 @@
-{"name":"qa-tools","private":true,"dependencies":{"puppeteer-core":"^23.11.1"}}
+{"name":"qa-tools","private":true,"dependencies":{"puppeteer-core":"^23.11.1","sharp":"0.34.5"}}

@@ -66,8 +66,10 @@ try { $db->exec('PRAGMA busy_timeout = 30000'); } catch (Throwable $e) {}
         if (!is_array($p) || empty($p['token'])) { @unlink($f); continue; }
         try {
             $db->exec('BEGIN IMMEDIATE');
-            $st = $db->prepare("INSERT INTO prospects (email, name, business_name, current_url, source, description) VALUES (?, ?, ?, ?, 'magic', ?)");
-            $st->execute([$p['email'] ?? '', $p['name'] ?? '', $p['biz'] ?? '', (!empty($p['describe']) ? null : ($p['website'] ?? '')), (!empty($p['describe']) ? ($p['description'] ?? '') : null)]);
+            $psd = json_decode((string)($p['scrape_data'] ?? ''), true) ?: [];
+            $st = $db->prepare("INSERT INTO prospects (email, name, business_name, current_url, source, description, contact_emails, contact_phones) VALUES (?, ?, ?, ?, 'magic', ?, ?, ?)");
+            $st->execute([$p['email'] ?? '', $p['name'] ?? '', $p['biz'] ?? '', (!empty($p['describe']) ? null : ($p['website'] ?? '')), (!empty($p['describe']) ? ($p['description'] ?? '') : null),
+                json_encode(array_values((array)($psd['emails'] ?? []))), json_encode(array_values((array)($psd['phones'] ?? [])))]);
             $pid = (int)$db->lastInsertId();
             $st = $db->prepare("INSERT INTO jobs (type, prospect_id, customer_email, business_name, scrape_data, status, scheduled_for, token, generation_mode, item_status, total_cost_cents, completed_at, qa_status) VALUES ('outbound', ?, ?, ?, ?, 'ready', datetime('now'), ?, ?, 'done', ?, datetime('now'), 'magic')");
             $st->execute([$pid, $p['email'] ?? '', $p['biz'] ?? '', ($p['scrape_data'] ?? null), $p['token'], ($p['generation_mode'] ?? 'magic'), (int)round(((float)($p['cost'] ?? 0)) * 100)]);
@@ -547,7 +549,8 @@ try {
             $sd_imgs[] = ['url' => $u, 'alt' => mb_substr((string)($im['alt'] ?? ''), 0, 120), 'logo' => !empty($im['is_logo']), 'portrait' => (!empty($im['is_portrait']) || !empty($im['is_cutout']) || !empty($im['is_team_card']))];
             if (count($sd_imgs) >= 40) break;
         }
-        $scrape_data_json = json_encode(['url' => $website, 'title' => mb_substr((string)($scrape['title'] ?? ''), 0, 200), 'logo' => $scrape['logo'] ?? null, 'images' => $sd_imgs], JSON_UNESCAPED_SLASHES);
+        $scrape_data_json = json_encode(['url' => $website, 'title' => mb_substr((string)($scrape['title'] ?? ''), 0, 200), 'logo' => $scrape['logo'] ?? null, 'images' => $sd_imgs,
+            'emails' => array_slice((array)($scrape['emails'] ?? []), 0, 10), 'phones' => array_slice((array)($scrape['phones'] ?? []), 0, 10)], JSON_UNESCAPED_SLASHES);
     }
 
     // ---- Proactive Imagen pre-generation ----
@@ -967,8 +970,9 @@ try {
             // per attempt so a poisoned handle is never retried.
             $pdb = ww_db_fresh();
             $pdb->exec('BEGIN IMMEDIATE');
-            $st = $pdb->prepare("INSERT INTO prospects (email, name, business_name, current_url, source, description) VALUES (?, ?, ?, ?, 'magic', ?)");
-            $st->execute([$email, $name, $biz, ($describe ? null : $website), ($describe ? $description : null)]);
+            $st = $pdb->prepare("INSERT INTO prospects (email, name, business_name, current_url, source, description, contact_emails, contact_phones) VALUES (?, ?, ?, ?, 'magic', ?, ?, ?)");
+            $st->execute([$email, $name, $biz, ($describe ? null : $website), ($describe ? $description : null),
+                json_encode(array_values((array)($scrape['emails'] ?? []))), json_encode(array_values((array)($scrape['phones'] ?? [])))]);
             $pid = (int)$pdb->lastInsertId();
             // Fold in the loading-screen Q&A answers if the visitor answered them.
             // qa.json existing implies /api/qa.php already created the qa_answers column,
@@ -1183,8 +1187,35 @@ try {
         $qa_verdict = $v;
         return $v;
     };
+    // ---- Phase 4.0: the audit gate (private/qa-tools/audit.js) ----
+    // 60+ checks in a real Chrome render at 1440px and 390px, plus the truth checks
+    // against the scrape (invented-contact, invented-stat, image-source, kit-present).
+    // Runs BEFORE the vision verdict: when it rejects the page the vision call is
+    // skipped (the page holds either way) and the verdict is written to previews.
+    // Measured ~35s on this box, which keeps a healthy build under the ~300s the
+    // client polls for (gen ~170s + pre-warm ~7s + audit ~35s + vision ~30s).
+    $audit_result = null; $audit_ok = true; $audit_run = null; $audit_facts = null;
+    $aud = function_exists('ww_audit_settings') ? ww_audit_settings($db) : ['enabled' => false, 'min_score' => 85, 'block' => true, 'compare' => false];
+    if ($aud['enabled'] && function_exists('ww_audit_variant')) {
+        $tAu = microtime(true);
+        try {
+            $audit_facts = ww_audit_facts($scrape, (string)$description);
+            $audit_run = ww_audit_variant($token, 1, $audit_facts);
+            $audit_result = $audit_run['audit'];
+            if ($audit_result) {
+                $audit_ok = (($audit_result['verdict'] ?? '') === 'preview-ready') && ((int)($audit_result['score'] ?? 0) >= $aud['min_score']);
+                ml_debug(sprintf('audit verdict %s score=%s fails=%s', $audit_result['verdict'] ?? '?', $audit_result['score'] ?? '?', implode(',', (array)($audit_result['fails'] ?? []))));
+                try { ww_audit_persist($db, $token, 1, $audit_result); } catch (Throwable $e) { ml_debug('audit persist failed: ' . $e->getMessage()); }
+            } else {
+                ml_debug('audit unavailable (tool error), not blocking');
+            }
+        } catch (Throwable $e) { ml_debug('audit phase failed: ' . $e->getMessage()); }
+        ml_time('PHASE_4_0_audit', microtime(true) - $tAu, ['score' => $audit_result['score'] ?? null, 'verdict' => $audit_result['verdict'] ?? null, 'ok' => (int)$audit_ok]);
+        if (!$aud['block']) $audit_ok = true;
+    }
     try {
-        $run_inspect('first');
+        if ($audit_ok) $run_inspect('first');
+        else $qa_verdict = ['pass' => false, 'score' => (int)($audit_result['score'] ?? 0), 'issues' => array_map(fn($id) => ['type' => 'audit:' . $id, 'severity' => 'critical', 'where' => 'audit', 'fix' => ''], (array)($audit_result['fails'] ?? [])), 'summary' => 'audit: ' . (string)($audit_result['verdict_reason'] ?? 'not ready')];
     } catch (Throwable $e) { ml_debug('QA phase failed: ' . $e->getMessage()); }
     ml_time('PHASE_4_total', microtime(true)-$tQA, ['pass' => $qa_verdict ? (int)!empty($qa_verdict['pass']) : null]);
 
@@ -1229,6 +1260,29 @@ try {
         }
         @unlink($dir . '/qa'); // QA is done deciding; the safety net may apply again
     }
+
+    // ---- Phase 4.5: compare with the prospect's current site ----
+    // Runs AFTER the reveal decision so it never delays the visitor: the reveal page
+    // picks up /preview/<token>/compare-v1.json when it lands (it polls for it for a
+    // couple of minutes after opening) and returning visitors see it immediately.
+    // The current site's audit is cached per URL for a week. There is no regen on this
+    // path (owner's call, 2026-08-09), so a losing variant is flagged needs_review for
+    // a human rather than rebuilt here.
+    if ($aud['enabled'] && !empty($aud['compare']) && !$describe && $website !== '' && function_exists('ww_compare_variant')) {
+        $tCmp = microtime(true);
+        try {
+            $cmp = ww_compare_variant($token, 1, $website, $audit_facts, $audit_run);
+            if ($cmp) {
+                ml_debug(sprintf('compare %s ours=%s theirs=%s losing=%s', $cmp['verdict'], $cmp['ours']['score'] ?? '?', $cmp['theirs']['score'] ?? '?', implode(',', (array)($cmp['losing'] ?? []))));
+                try { ww_audit_persist($db, $token, 1, null, $cmp); } catch (Throwable $e) { ml_debug('compare persist failed: ' . $e->getMessage()); }
+                if (($cmp['verdict'] ?? '') !== 'beats-current-site') {
+                    try { $db->prepare("UPDATE jobs SET qa_status='needs_review' WHERE token=?")->execute([$token]); } catch (Throwable $e) {}
+                }
+            } else ml_debug('compare unavailable');
+        } catch (Throwable $e) { ml_debug('compare phase failed: ' . $e->getMessage()); }
+        ml_time('PHASE_4_5_compare', microtime(true) - $tCmp, ['verdict' => $cmp['verdict'] ?? null]);
+    }
+    if ($audit_run) { try { ww_audit_cleanup($audit_run); } catch (Throwable $e) {} }
 
     // ---- Phase 5: Image upscale (Real-ESRGAN via Replicate) ----
     // Run after QA so we upscale the final HTML. Replicate calls are slow HTTP

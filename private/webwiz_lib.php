@@ -160,6 +160,53 @@ function ww_migrate(PDO $pdo): void {
         "CREATE INDEX IF NOT EXISTS idx_api_calls_provider ON api_calls(provider)",
         "CREATE INDEX IF NOT EXISTS idx_prospects_created ON prospects(created_at, id)",
     ] as $sql) { @$pdo->exec($sql); }
+    ww_migrate_audit($pdo);
+}
+
+/**
+ * Columns and settings for the motion kit audit and the compare gate (2026-10-07).
+ *
+ *   previews.audit_score / audit_verdict / audit_json   the 60+ check audit of the variant
+ *   previews.compare_verdict / compare_json             the variant against the prospect's current site
+ *   prospects.contact_emails / contact_phones           JSON lists from the scrape, the truth
+ *                                                       the invented-contact check runs against
+ *
+ * Settings (all read with ww_setting(), defaults applied when the row is missing):
+ *   audit_enabled=1  audit_min_score=85  audit_block_on_fail=1  compare_enabled=1
+ *
+ * Guarded by a static so it costs one PRAGMA per process; ALTERs run outside any
+ * transaction because SQLite cannot ALTER inside one that another writer holds.
+ */
+function ww_migrate_audit(PDO $pdo): void {
+    static $done = false;
+    if ($done) return;
+    $done = true;
+    try {
+        $have = fn(string $table) => array_column($pdo->query("PRAGMA table_info($table)")->fetchAll(PDO::FETCH_ASSOC), 'name');
+        $pv = $have('previews');
+        foreach (['audit_score' => 'INTEGER', 'audit_verdict' => 'TEXT', 'audit_json' => 'TEXT', 'compare_verdict' => 'TEXT', 'compare_json' => 'TEXT'] as $col => $type) {
+            if (!in_array($col, $pv, true)) @$pdo->exec("ALTER TABLE previews ADD COLUMN $col $type");
+        }
+        $pr = $have('prospects');
+        foreach (['contact_emails' => 'TEXT', 'contact_phones' => 'TEXT'] as $col => $type) {
+            if (!in_array($col, $pr, true)) @$pdo->exec("ALTER TABLE prospects ADD COLUMN $col $type");
+        }
+        foreach (['audit_enabled' => '1', 'audit_min_score' => '85', 'audit_block_on_fail' => '1', 'compare_enabled' => '1'] as $k => $v) {
+            @$pdo->prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)")->execute([$k, $v]);
+        }
+    } catch (Throwable $e) {
+        error_log('[ww_migrate_audit] ' . $e->getMessage());
+    }
+}
+
+/** Read one settings row with a default. '0' is a real value here, never truthy-tested. */
+function ww_setting(PDO $db, string $key, string $default = ''): string {
+    try {
+        $st = $db->prepare("SELECT value FROM settings WHERE key = ?");
+        $st->execute([$key]);
+        $v = $st->fetchColumn();
+        return $v === false ? $default : (string)$v;
+    } catch (Throwable $e) { return $default; }
 }
 
 /**

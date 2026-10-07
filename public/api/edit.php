@@ -395,7 +395,67 @@ try {
     @mkdir($snap_dir, 0755, true);
     $prior_snap = $snap_dir . '/v' . ($used + 1) . '-prior.html';
     @copy($index, $prior_snap);
+    // Every version the editor writes goes through the same finalize step as a fresh
+    // build, so the motion kit, the ambient hooks and the reveal failsafe survive an edit.
+    if (function_exists('ww_inject_motion_kit')) { $text = ww_inject_motion_kit($text); }
     if (file_put_contents($index, $text) === false) throw new Exception('could not save updated preview');
+
+    // ---- Audit gate on the edited page (2026-10-07) ----
+    // An edit may not introduce a failing check that the previous version did not have
+    // (em dashes, a hidden section, a lost tel: link, an invented number). Audit the new
+    // file; if it adds a fail, restore the snapshot, tell the model what broke in one
+    // sentence and let it try again once. A second failure keeps the prior version and
+    // the customer is told what was wrong instead of being shown a worse page.
+    if (function_exists('ww_audit_variant')) {
+        $gate_facts = null;
+        try {
+            $sd = json_decode((string)($job['scrape_data'] ?? ''), true) ?: [];
+            if ($sd) { require_once '/var/www/sites/trywebwiz/private/lib/qa.php'; $gate_facts = ww_audit_facts($sd, (string)($job['description'] ?? '')); }
+        } catch (Throwable $e) { $gate_facts = null; }
+        $prior_fails = [];
+        try {
+            $pst = $db->prepare("SELECT audit_json FROM previews WHERE job_id = ? AND variant_n = 1 ORDER BY id DESC LIMIT 1");
+            $pst->execute([(int)$job['id']]);
+            $pj = json_decode((string)$pst->fetchColumn(), true);
+            $prior_fails = is_array($pj) ? (array)($pj['fails'] ?? []) : [];
+        } catch (Throwable $e) { $prior_fails = []; }
+        $edit_audit = null;
+        for ($gate_try = 1; $gate_try <= 2; $gate_try++) {
+            $run = ww_audit_variant($token, 1, $gate_facts);
+            $edit_audit = $run['audit'];
+            ww_audit_cleanup($run);
+            if (!$edit_audit) break; // the tool is down: do not block the edit on it
+            $new_fails = array_values(array_diff((array)($edit_audit['fails'] ?? []), $prior_fails));
+            if (!$new_fails) break;
+            $broken = [];
+            foreach ((array)$edit_audit['checks'] as $c) if (in_array($c['id'], $new_fails, true)) $broken[] = $c['id'] . ': ' . $c['detail'];
+            error_log('[edit] audit gate: edit introduced ' . implode(' | ', $broken));
+            @copy($prior_snap, $index); // never leave the worse page on disk
+            if ($gate_try === 2) {
+                ee_log_finish($db, $log_id, 'fail', 'audit gate: ' . mb_substr(implode('; ', $broken), 0, 400), (int)round((microtime(true) - $t0) * 1000));
+                echo json_encode(['ok' => false, 'needs_input' => true, 'reply' => 'That change would have broken something I will not ship (' . mb_substr($broken[0], 0, 140) . '). I kept your current version. Tell me the change a different way and I will try again.']);
+                exit;
+            }
+            // one automatic retry with the failing checks named
+            try {
+                $fix_msg = "Your previous edit introduced these failures on the automated audit, which the previous version did not have:\n- " . implode("\n- ", $broken)
+                         . "\nApply the customer's request again WITHOUT introducing these. Keep every tel:, mailto:, image and number exactly as it was unless the request changes it; no em or en dashes; nothing hidden.";
+                $retry_messages = $messages;
+                $retry_messages[] = ['role' => 'assistant', 'content' => '(previous attempt rejected by the audit)'];
+                $retry_messages[] = ['role' => 'user', 'content' => $fix_msg];
+                $rres = anthropic_chat('claude-sonnet-4-6', $retry_messages, $system, 16000, 0.3, (int)$job['id'], ['</html>']);
+                $rt = (string)($rres['text'] ?? '');
+                if ($rt !== '' && preg_match('~<!doctype html|<html~i', $rt, $mm, PREG_OFFSET_CAPTURE)) {
+                    if ((int)$mm[0][1] > 0) $rt = substr($rt, (int)$mm[0][1]);
+                    if (stripos($rt, '</html>') === false) $rt .= '</html>';
+                    if (function_exists('ww_inject_motion_kit')) $rt = ww_inject_motion_kit($rt);
+                    $text = $rt;
+                    file_put_contents($index, $text);
+                } else { break; }
+            } catch (Throwable $e) { error_log('[edit] audit gate retry failed: ' . $e->getMessage()); break; }
+        }
+        if ($edit_audit) { try { ww_audit_persist($db, $token, 1, $edit_audit); } catch (Throwable $e) {} }
+    }
 
     // ---- Post-edit image quality pass ----
     // Three layers:

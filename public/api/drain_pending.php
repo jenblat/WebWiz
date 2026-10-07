@@ -34,8 +34,10 @@ foreach ($files as $f) {
         try {
             $db->exec('PRAGMA busy_timeout = 15000');
             $db->exec('BEGIN IMMEDIATE');
-            $st = $db->prepare("INSERT INTO prospects (email, name, business_name, current_url, source, description) VALUES (?, ?, ?, ?, 'magic', ?)");
-            $st->execute([$p['email'] ?? '', $p['name'] ?? '', $p['biz'] ?? '', (!empty($p['describe']) ? null : ($p['website'] ?? '')), (!empty($p['describe']) ? ($p['description'] ?? '') : null)]);
+            $psd = json_decode((string)($p['scrape_data'] ?? ''), true) ?: [];
+            $st = $db->prepare("INSERT INTO prospects (email, name, business_name, current_url, source, description, contact_emails, contact_phones) VALUES (?, ?, ?, ?, 'magic', ?, ?, ?)");
+            $st->execute([$p['email'] ?? '', $p['name'] ?? '', $p['biz'] ?? '', (!empty($p['describe']) ? null : ($p['website'] ?? '')), (!empty($p['describe']) ? ($p['description'] ?? '') : null),
+                json_encode(array_values((array)($psd['emails'] ?? []))), json_encode(array_values((array)($psd['phones'] ?? [])))]);
             $pid = (int)$db->lastInsertId();
             $st = $db->prepare("INSERT INTO jobs (type, prospect_id, customer_email, business_name, scrape_data, status, scheduled_for, token, generation_mode, item_status, total_cost_cents, completed_at, qa_status) VALUES ('outbound', ?, ?, ?, ?, 'ready', datetime('now'), ?, ?, 'done', ?, datetime('now'), 'magic')");
             $st->execute([$pid, $p['email'] ?? '', $p['biz'] ?? '', ($p['scrape_data'] ?? null), $tok, ($p['generation_mode'] ?? 'magic'), (int)round(((float)($p['cost'] ?? 0)) * 100)]);
