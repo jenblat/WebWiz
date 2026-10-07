@@ -201,7 +201,8 @@ function collectDesktopFacts() {
     .replace(/\$\s*[\d,.]+\s*[KMB]?\b/g, ' ')
     .replace(/(?:#|\bno\.?|\blic(?:ense|ence)?\.?|\bsuite|\bste\.?|\bunit|\bp\.?o\.? box|\bCA\s+\d*)\s*#?\s*[\dA-Za-z-]+/gi, ' ')
     .replace(/\b[A-Z]{2}\s+\d{5}(?:-\d{4})?\b/g, ' ')
-    .replace(/\b(?:19|20)\d{2}\b/g, ' ');
+    .replace(/\b(?:19|20)\d{2}\b/g, ' ')
+    .replace(/\b0\d+\b/g, ' ');   // 01, 02, 05: section numerals, not counts
   for (const m of statText.matchAll(/(\d[\d,.]*)\s*(\+|%|percent\b)/gi)) stats.push({ n: m[1], ctx: statText.slice(Math.max(0, m.index - 20), m.index + m[0].length + 20) });
   for (const m of statText.matchAll(/(\d[\d,.]*)\+?(?:\s+[a-z]+){0,2}\s+(years?|yrs?|projects?|clients?|customers?|reviews?)\b/gi)) stats.push({ n: m[1], ctx: statText.slice(Math.max(0, m.index - 20), m.index + m[0].length + 20) });
   for (const el of q('[data-count]')) stats.push({ n: el.getAttribute('data-count') || '', ctx: 'data-count on ' + (el.textContent || '').trim().slice(0, 40) });
