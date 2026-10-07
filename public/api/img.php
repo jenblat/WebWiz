@@ -6,6 +6,11 @@ $label = trim((string)($_GET['l'] ?? ''));
 
 const IMG_CACHE_DIR = '/var/www/sites/trywebwiz/data/imgcache';
 const IMG_MAX_W     = 2880;
+// GD decodes to raw RGBA: a 4887x4997 PNG (busyseed.com, 406 KB on the wire) is ~98 MB
+// decoded plus the resize buffer, which blew the 128M web limit and answered a 500 for a
+// perfectly good image on every request until a CLI run cached it. The audit then fails
+// the variant for a broken image. One request, short lived, so a higher ceiling is safe.
+@ini_set('memory_limit', '384M');
 
 
 /**
