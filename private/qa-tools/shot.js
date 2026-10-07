@@ -1,10 +1,13 @@
 // shot.js — full-page screenshot via puppeteer. Crashpad-safe args (matches showcase.js).
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
+// One Chrome at a time across the worker, the live build and the audit (see chromelock.js).
+const chromelock = require('./chromelock');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 (async () => {
   const url = process.argv[2], out = process.argv[3];
+  const releaseLock = await chromelock.acquire();
   const ud = fs.mkdtempSync('/tmp/wwshot-');
   // Critical: HOME must be writable and crash subsystem fully disabled —
   // otherwise Chrome's crashpad child fails with "--database is required".
@@ -48,9 +51,17 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       window.scrollTo(0, 0); await sleep(150);
     });
     await page.evaluate(() => {
-      const e = document.querySelectorAll('.fade-up,.fade-in,.reveal,[data-reveal],.animate,.scroll-reveal');
-      e.forEach(el => { el.classList.add('visible','active','in-view','show'); el.style.opacity='1'; el.style.transform='none'; el.style.visibility='visible'; });
+      // The vision verdict must see the finished page. The timer paced scroll above
+      // outruns headless Chrome's frames, so kit reveals may not have fired; ask the
+      // kit to reveal everything, then force the legacy selectors AND the kit's own
+      // (stagger children and split words included). Missing those two photographed
+      // empty grids under real headings and the vision model failed good pages for
+      // "empty sections" (job 1086, 2026-10-07).
+      try { if (window.WebWizMotion && window.WebWizMotion.revealAll) window.WebWizMotion.revealAll(); } catch (e) {}
+      const e = document.querySelectorAll('.fade-up,.fade-in,.reveal,.animate,.scroll-reveal,[data-reveal],[data-reveal-stagger] > *,[data-words] .ww-w');
+      e.forEach(el => { el.classList.add('visible','active','in-view','show'); el.style.opacity='1'; el.style.transform='none'; el.style.clipPath='none'; el.style.visibility='visible'; });
     });
+    await sleep(400);
     await page.evaluate(async () => {
       const imgs = Array.from(document.images);
       await Promise.all(imgs.map(img => (img.complete && img.naturalWidth > 0)
@@ -67,5 +78,6 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   } finally {
     try { await browser.close(); } catch(e){}
     try { fs.rmSync(ud, { recursive: true, force: true }); } catch(e){}
+    releaseLock();
   }
 })();

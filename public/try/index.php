@@ -561,6 +561,34 @@ function ww_of(?array $OF, string $k, string $default): string {
   body[data-view="reveal"] footer.tryfoot,body[data-view="reveal"] footer{display:none!important;}
   .view-reveal{padding:0;flex:1;display:flex;flex-direction:column;min-height:0;width:100%;}
   .reveal-layout{flex:1;display:flex;flex-direction:column;width:100%;min-height:0;}
+  /* "Your site today, and your new site": the side by side from the compare audit.
+     Sits above the preview frame, first thing after the hero of the reveal page.
+     Facts only, from compare-v1.json; hidden until that file exists and only shown
+     when the new site beat the current one. */
+  .cmp-strip{flex:none;background:#fff;border-bottom:3px solid var(--navy);padding:10px 16px 12px;}
+  .cmp-strip[hidden]{display:none;}
+  .cmp-head{display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
+  .cmp-title{font-family:var(--display);font-weight:900;font-size:15px;color:var(--navy);letter-spacing:.01em;}
+  .cmp-scores{display:flex;align-items:baseline;gap:10px;margin-left:auto;}
+  .cmp-score b{font-family:var(--display);font-size:24px;line-height:1;font-weight:900;}
+  .cmp-score small{font-size:11px;letter-spacing:.06em;text-transform:uppercase;opacity:.65;margin-left:4px;font-weight:700;}
+  .cmp-score.theirs b{color:#8a4b1f;} .cmp-score.ours b{color:#1a7f4b;}
+  .cmp-vs{font-size:12px;opacity:.6;}
+  .cmp-hide{background:transparent;border:2px solid var(--navy);border-radius:999px;color:var(--navy);font-weight:800;font-size:12px;padding:5px 11px;cursor:pointer;}
+  .cmp-body{display:grid;grid-template-columns:minmax(0,520px) 1fr;gap:16px;align-items:start;margin-top:8px;}
+  .cmp-body a{display:block;border:2px solid var(--navy);border-radius:10px;overflow:hidden;background:var(--cream);box-shadow:4px 4px 0 var(--yellow);}
+  .cmp-body img{display:block;width:100%;height:auto;max-height:190px;object-fit:cover;object-position:top;}
+  .cmp-facts{list-style:none;margin:0;padding:0;display:grid;gap:5px;font-size:13.5px;line-height:1.35;color:var(--navy);}
+  .cmp-facts li{display:flex;gap:8px;align-items:flex-start;} .cmp-facts li::before{content:"\2713";font-weight:900;color:#1a7f4b;flex:none;}
+  .cmp-cats{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
+  .cmp-cats span{font-size:11px;font-weight:800;letter-spacing:.03em;background:#eaf7f1;color:#12603f;border:1.5px solid #bfe6d4;border-radius:999px;padding:3px 9px;}
+  @media (max-width:900px){
+    .cmp-strip{padding:8px 12px 10px;}
+    .cmp-body{grid-template-columns:1fr;gap:10px;}
+    .cmp-body img{max-height:34vh;object-fit:contain;object-position:top;background:var(--cream);}
+    .cmp-facts{font-size:13px;} .cmp-facts li:nth-child(n+4){display:none;} .cmp-cats{display:none;}
+    .cmp-score b{font-size:20px;}
+  }
   .reveal-frame-wrap{flex:1;position:relative;background:var(--cream);min-height:0;overflow:hidden;}
   .reveal-frame-wrap.device-mobile{padding:16px;display:flex;align-items:stretch;justify-content:center;background:var(--cream);background-image:radial-gradient(rgba(18,24,74,0.07) 1.5px, transparent 1.5px);background-size:24px 24px;}
   /* Edit-in-progress overlay (shown over iframe while Wizzy is updating the site) */
@@ -799,6 +827,15 @@ function ww_of(?array $OF, string $k, string $default): string {
   <script src="/api/sentry.js.php"></script>
 </head>
 <body data-view="<?= htmlspecialchars($initial_view, ENT_QUOTES) ?>" data-cap="<?= $initial_edits === 0 ? 'hit' : 'ok' ?>">
+<?php
+// The compare result for a returning visitor (/try/?t=): the strip renders at once
+// instead of waiting on the poll. Only ever the public summary file, never the DB row.
+if ($initial_token !== '') {
+    $__cmpf = '/var/www/sites/trywebwiz/public/preview/' . $initial_token . '/compare-v1.json';
+    $__cmp = is_file($__cmpf) ? json_decode((string)@file_get_contents($__cmpf), true) : null;
+    echo '<script>window.__WW_TOKEN=' . json_encode($initial_token) . ';window.__WW_COMPARE=' . (is_array($__cmp) ? json_encode($__cmp, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP) : 'null') . ';</script>' . "\n";
+}
+?>
 
 <div class="net-banner" id="netBanner" role="alert">You appear to be offline. Reconnect and we’ll keep going.</div>
 
@@ -1048,6 +1085,24 @@ function ww_of(?array $OF, string $k, string $default): string {
 <!-- ===================== REVEAL + EDIT CHAT ===================== -->
 <main class="view view-reveal">
   <div class="reveal-layout">
+    <section class="cmp-strip" id="cmpStrip" hidden aria-label="Your site today, and your new site">
+      <div class="cmp-head">
+        <div class="cmp-title">Your site today, and your new site</div>
+        <div class="cmp-scores">
+          <span class="cmp-score theirs"><b id="cmpTheirs">0</b><small id="cmpTheirsHost">today</small></span>
+          <span class="cmp-vs">to</span>
+          <span class="cmp-score ours"><b id="cmpOurs">0</b><small>new site</small></span>
+        </div>
+        <button type="button" class="cmp-hide" id="cmpHide" aria-label="Hide the comparison">Hide</button>
+      </div>
+      <div class="cmp-body">
+        <a id="cmpImgLink" href="#" target="_blank" rel="noopener"><img id="cmpImg" alt="Your current site on the left, your new site on the right" decoding="async"></a>
+        <div>
+          <ul class="cmp-facts" id="cmpFacts"></ul>
+          <div class="cmp-cats" id="cmpCats"></div>
+        </div>
+      </div>
+    </section>
     <div class="reveal-frame-wrap" id="revealFrameWrap">
       <div class="edit-overlay" id="editOverlay" aria-hidden="true">
         <div class="edit-overlay-avatar"><video autoplay muted playsinline loop preload="auto" poster="/preview/wizzy-processing-poster.jpg"><source src="/preview/wizzy-processing.webm" type="video/webm"><source src="/preview/wizzy-processing.mp4" type="video/mp4"></video></div>
@@ -1380,6 +1435,48 @@ window.__TRY_INIT__ = {
   var backToForm = document.getElementById('backToForm');
 
   var previewFrame = document.getElementById('previewFrame');
+
+  // ---------- compare strip ----------
+  // /preview/<token>/compare-v1.json is written by the compare step a minute or two
+  // after the reveal opens (it audits the prospect's current site after the page is
+  // already showing), so poll for it briefly; returning visitors get it at once.
+  var __cmpShown = false, __cmpTimer = null, __cmpTries = 0;
+  function wwRenderCompare(c){
+    try {
+      if (__cmpShown || !c || c.verdict !== 'beats-current-site') return;
+      var strip = document.getElementById('cmpStrip'); if (!strip) return;
+      var isPhone = window.matchMedia && window.matchMedia('(max-width: 900px)').matches;
+      var img = (isPhone && c.images && c.images.mobile) ? c.images.mobile : (c.images && c.images.desktop);
+      if (!img) return;
+      document.getElementById('cmpTheirs').textContent = String(c.theirs.score);
+      document.getElementById('cmpTheirsHost').textContent = c.theirs.host || 'today';
+      document.getElementById('cmpOurs').textContent = String(c.ours.score);
+      var im = document.getElementById('cmpImg'); im.src = img;
+      document.getElementById('cmpImgLink').href = (c.images && c.images.desktop) || img;
+      var ul = document.getElementById('cmpFacts'); ul.innerHTML = '';
+      (c.facts || []).slice(0, 5).forEach(function(f){ var li = document.createElement('li'); li.textContent = f; ul.appendChild(li); });
+      var cats = document.getElementById('cmpCats'); cats.innerHTML = '';
+      (c.winning || []).forEach(function(g){ var gr = c.groups && c.groups[g]; if (!gr) return; var sp = document.createElement('span'); sp.textContent = (gr.label || g) + ' ' + gr.ours + ' to ' + gr.theirs; cats.appendChild(sp); });
+      strip.hidden = false; __cmpShown = true;
+      try { track('compare_viewed', { ours: c.ours.score, theirs: c.theirs.score }); } catch(e){}
+    } catch(e){}
+  }
+  function wwPollCompare(token){
+    if (!token || __cmpShown) return;
+    if (__cmpTimer) clearTimeout(__cmpTimer);
+    var attempt = function(){
+      if (__cmpShown || __cmpTries++ > 18) return;
+      fetch('/preview/' + encodeURIComponent(token) + '/compare-v1.json?x=' + Date.now(), { cache: 'no-store' })
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(c){ if (c) wwRenderCompare(c); else __cmpTimer = setTimeout(attempt, 10000); })
+        .catch(function(){ __cmpTimer = setTimeout(attempt, 10000); });
+    };
+    attempt();
+  }
+  var __cmpHideBtn = document.getElementById('cmpHide');
+  if (__cmpHideBtn) __cmpHideBtn.addEventListener('click', function(){ var st = document.getElementById('cmpStrip'); if (st) st.hidden = true; try { track('compare_hidden'); } catch(e){} });
+  if (window.__WW_COMPARE) wwRenderCompare(window.__WW_COMPARE);
+  else if (body.getAttribute('data-view') === 'reveal' && window.__WW_TOKEN) wwPollCompare(window.__WW_TOKEN);
   var editsChip = document.getElementById('editsChip');
   // Seed the share URL when the page is hydrated with an existing token (?t=<token>).
   try { var __seed = <?= json_encode($initial_token ?: '') ?>; if (__seed) { window.__wwShareUrl = window.location.origin + '/try/?t=' + encodeURIComponent(__seed); } } catch(e){}
@@ -1670,6 +1767,7 @@ window.__TRY_INIT__ = {
       track('gen_completed', { duration_ms: Date.now() - __genT0 });
       setTimeout(function(){ previewFrame.src = previewUrl; setView('reveal'); track('reveal_viewed');
         try { window.history.replaceState({t: token}, '', '/try/?t=' + encodeURIComponent(token)); window.__wwShareUrl = window.location.origin + '/try/?t=' + encodeURIComponent(token); } catch(e){}
+        try { wwPollCompare(token); } catch(e){}
       }, 500);
     };
     // Carry the offer into generation so it lands on the job row and the reveal

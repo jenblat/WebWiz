@@ -392,6 +392,27 @@ function ww_nurture_showcase_url(string $token): ?string {
 }
 
 /**
+ * One plain sentence with the two audit scores, when the compare ran for this
+ * token. Facts only, from compare-v1.json; silently empty otherwise, and empty when
+ * the new site did not beat the current one (we do not email a losing score).
+ */
+function ww_nurture_compare_para(array $contact): string {
+    $token = preg_replace('~[^a-zA-Z0-9_-]~', '', (string)($contact['token'] ?? ''));
+    if ($token === '') return '';
+    $f = '/var/www/sites/trywebwiz/public/preview/' . $token . '/compare-v1.json';
+    if (!is_file($f)) return '';
+    $c = json_decode((string)@file_get_contents($f), true);
+    if (!is_array($c) || ($c['verdict'] ?? '') !== 'beats-current-site') return '';
+    $ours = (int)($c['ours']['score'] ?? 0); $theirs = (int)($c['theirs']['score'] ?? 0);
+    if ($ours <= 0 || $theirs <= 0) return '';
+    $url = trim((string)($contact['preview_url'] ?? ''));
+    if ($url === '') $url = NURTURE_DOMAIN . '/try/?t=' . $token;
+    $u = htmlspecialchars($url, ENT_QUOTES);
+    return "We also measured both sites the same way, on " . count((array)($c['groups'] ?? [])) . " points from speed to how they work on a phone: the new one scores <strong>{$ours} out of 100</strong> and your current site scores <strong>{$theirs}</strong>. "
+         . "<a href=\"{$u}\" style=\"color:#12184A;font-weight:700;\">See them side by side</a>.";
+}
+
+/**
  * Image card block: clickable screenshot of the generated site with a
  * "Made for {company} for free" yellow badge below. Renders the same brand
  * chrome (navy border + yellow shadow + cream backing) as the order-summary card.
@@ -522,6 +543,11 @@ function ww_nurture_render_html(array $tpl, array $contact, string $unsub_url, s
             $p_para = ww_nurture_edits_para($contact);
             if ($p_para === '') $p_para = ww_nurture_qa_para($contact);
             if ($p_para !== '') $body .= ww_email_para($p_para, 16);
+            // The side by side score, steps 1 and 2 only, so it reads as news once and not as nagging.
+            if (((int)($contact['current_step'] ?? 0) + 1) <= 2 && ($contact['source'] ?? '') !== 'offer_form') {
+                $c_para = ww_nurture_compare_para($contact);
+                if ($c_para !== '') $body .= ww_email_para($c_para, 16);
+            }
         }
     }
     if ($cta_label !== '' && $cta_url !== '') {
@@ -559,6 +585,10 @@ function ww_nurture_render_text(array $tpl, array $contact, string $unsub_url, s
         $p_para = ww_nurture_edits_para($contact);
         if ($p_para === '') $p_para = ww_nurture_qa_para($contact);
         if ($p_para !== '') $out .= trim(html_entity_decode(strip_tags($p_para), ENT_QUOTES)) . "\n\n";
+        if (((int)($contact['current_step'] ?? 0) + 1) <= 2 && ($contact['source'] ?? '') !== 'offer_form') {
+            $c_para = ww_nurture_compare_para($contact);
+            if ($c_para !== '') $out .= trim(html_entity_decode(strip_tags($c_para), ENT_QUOTES)) . "\n\n";
+        }
     }
     $cta_url   = ww_nurture_apply_merge($tpl['cta_url']   ?? NURTURE_DOMAIN . '/try/', $contact);
     $cta_label = ww_nurture_apply_merge($tpl['cta_label'] ?? 'See your website', $contact);

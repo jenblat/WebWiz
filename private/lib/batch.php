@@ -42,6 +42,7 @@ function ww_build_batches(PDO $db): void {
             if (!$url) throw new Exception('no current_url');
             $scrape = scrape_multi($url);
             $db->prepare("UPDATE jobs SET scrape_data=?, item_status='scraped' WHERE id=?")->execute([json_encode($scrape), $jid]);
+            ww_prospect_store_contacts($db, $row['prospect_id'] ? (int)$row['prospect_id'] : null, $scrape);
             ww_blog("scraped job #$jid ($url)");
         } catch (Throwable $e) {
             $db->prepare("UPDATE jobs SET item_status='failed', status='failed', error=? WHERE id=?")->execute([substr('scrape: '.$e->getMessage(),0,500), $jid]);
@@ -189,6 +190,10 @@ function ww_poll_batches(PDO $db): void {
             if (!is_file($stub)) file_put_contents($stub, "<?php\n\$_GET['t'] = basename(__DIR__);\nrequire __DIR__ . '/../index.php';\n");
             foreach ($htmls as $v => $html) {
                 $rel = '/preview/' . $row['token'] . '/v' . $v . '/index.html';
+                // audit_score stays NULL here on purpose: this loop covers every row of an
+                // upload inside one worker run and an audit is ~35s of Chrome per variant.
+                // ww_audit_missing() (worker.php, every tick) audits and compares these
+                // within its own budget and flags needs_review before anyone emails them.
                 $db->prepare("INSERT INTO previews (job_id, variant_n, html_path, qa_score, qa_pass, qa_issues) VALUES (?, ?, ?, NULL, NULL, NULL)")
                    ->execute([$jid, $v, $rel]);
             }

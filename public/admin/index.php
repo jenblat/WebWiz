@@ -1745,9 +1745,19 @@ if ($tab === 'jobs') {
     echo '</div>';
 
     $rows = ww_db()->query('SELECT j.*, p.business_name AS biz, p.current_url FROM jobs j LEFT JOIN prospects p ON p.id = j.prospect_id ORDER BY j.id DESC LIMIT 200')->fetchAll(PDO::FETCH_ASSOC);
+    // Audit and compare verdicts per variant (2026-10-07). One query for the page.
+    $audits = [];
+    if ($rows) {
+        $ids = implode(',', array_map('intval', array_column($rows, 'id')));
+        try {
+            foreach (ww_db()->query("SELECT job_id, variant_n, audit_score, audit_verdict, compare_verdict, compare_json FROM previews WHERE archived = 0 AND job_id IN ($ids) ORDER BY variant_n") as $pv) {
+                $audits[(int)$pv['job_id']][] = $pv;
+            }
+        } catch (Throwable $e) { /* columns missing on an old DB: show nothing */ }
+    }
     if (!$rows) { echo '<div class="empty">No jobs yet. Upload prospects to start generating.</div>'; }
     else {
-        echo '<table class="t"><thead><tr><th>#</th><th>Type</th><th>Target</th><th>Status</th><th>Scheduled</th><th>Cost</th><th>Actions</th></tr></thead><tbody>';
+        echo '<table class="t"><thead><tr><th>#</th><th>Type</th><th>Target</th><th>Status</th><th>Audit</th><th>Scheduled</th><th>Cost</th><th>Actions</th></tr></thead><tbody>';
         foreach ($rows as $r) {
             $st = $r['status'];
             $cls = ['queued'=>'muted','running'=>'warn','ready'=>'ok','sent'=>'ok','picked'=>'ok','failed'=>'err','archived'=>'muted'][$st] ?? 'muted';
@@ -1755,7 +1765,26 @@ if ($tab === 'jobs') {
             echo '<td>' . ww_h($r['type']) . '</td>';
             echo '<td><strong>' . ww_h($r['biz'] ?? $r['business_name'] ?? '-') . '</strong><br><small style="opacity:0.6;">' . ww_h($r['customer_email']) . '</small></td>';
             echo '<td><span class="pill ' . $cls . '">' . ww_h($st) . '</span>';
+            if (($r['qa_status'] ?? '') === 'needs_review') echo '<br><span class="pill warn" title="A gate failed or the variant lost a category to the current site">needs review</span>';
             if ($r['error']) echo '<br><small style="opacity:0.7;color:#a01;">' . ww_h(substr($r['error'],0,80)) . '</small>';
+            echo '</td>';
+            echo '<td style="font-size:12px;line-height:1.5;white-space:nowrap;">';
+            foreach (($audits[(int)$r['id']] ?? []) as $pv) {
+                if ($pv['audit_score'] === null && $pv['compare_verdict'] === null) continue;
+                $v = (int)$pv['variant_n'];
+                $ok = ($pv['audit_verdict'] ?? '') === 'preview-ready';
+                echo 'v' . $v . ' ';
+                if ($pv['audit_score'] !== null) echo '<span class="pill ' . ($ok ? 'ok' : 'err') . '" title="' . ww_h((string)$pv['audit_verdict']) . '">' . (int)$pv['audit_score'] . '</span> ';
+                if ($pv['compare_verdict'] !== null) {
+                    $cj = json_decode((string)$pv['compare_json'], true) ?: [];
+                    $wins = $pv['compare_verdict'] === 'beats-current-site';
+                    $lbl = $wins ? 'wins ' . (int)($cj['ours'] ?? 0) . ' to ' . (int)($cj['theirs'] ?? 0) : 'loses ' . ww_h(implode(', ', array_map(fn($g) => $cj['groups'][$g]['label'] ?? $g, (array)($cj['losing'] ?? []))));
+                    $img = (string)($cj['images']['desktop'] ?? '');
+                    echo '<span class="pill ' . ($wins ? 'ok' : 'warn') . '">' . $lbl . '</span> ';
+                    if ($img !== '') echo '<a href="' . ww_h($img) . '" target="_blank" title="Side by side">side by side</a>';
+                }
+                echo '<br>';
+            }
             echo '</td>';
             echo '<td>' . ww_h($r['scheduled_for']) . '</td>';
             echo '<td>$' . number_format(($r['total_cost_cents']??0)/100, 2) . '</td>';

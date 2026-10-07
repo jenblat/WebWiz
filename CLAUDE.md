@@ -686,3 +686,100 @@ For the record, so it is not rediscovered as a bug:
 until the 2026-08-03 "production CAPI" change emptied it. Empty means events go
 to production ad-optimisation data instead of the Test Events tab
 (`ww_meta_test_code()` in `public/api/_meta.php`). Do not "fix" it.
+
+## 2026-10-07: every variant ships motion, and an audit proves it beats the current site
+
+Omar: these sites must be like nothing anybody can generate out of AI. Every one
+moves, and by default it is better than the prospect's current site. The hand built
+MRC preview (`/try/?t=41b4c121b746096596a1986f`) is the bar: it audits 99 against
+mrcbuilt.com's 55.
+
+### The kit: `public/kit/webwiz-motion.css` + `.js`
+Served at `https://trywebwiz.com/kit/` with `Cache-Control: public, max-age=31536000,
+immutable` (a `/kit/` context in `/usr/local/lsws/conf/vhosts/trywebwiz.com/vhconf.conf`,
+NOT in the repo; the server's expires rule does not cover `text/javascript`, which is
+why it needed its own context). Gotcha: a context level `expires {}` block is ignored by
+this OpenLiteSpeed, and a plain `extraHeaders Cache-Control: ...` is ADDED to the server
+level one (two Cache-Control headers on the css). The form that works is
+`extraHeaders set Cache-Control public, max-age=31536000, immutable`. Every reference carries `?v=<filemtime>`, so a kit
+change reaches every existing preview on the next load. **Bump the version comment
+at the top of both files when they change.**
+
+`ww_inject_motion_kit()` in `private/worker.php` is called by `finalize_html()` and so
+runs on all three generation paths (worker, `magic.php`, `batch.php`) and in the editor.
+It puts the two tags right after `<head>`, adds `data-ambient` to `<body>` if missing,
+derives `--ww-ambient-a/-b` and `--ww-shift` from the page's own two most used
+saturated colours when the model did not set them, and adds `data-words` to a
+text-only `<h1>`. Idempotent. The old reveal failsafe script stays, now covering the kit
+selectors too, **on the kit's own schedule** (near viewport at 1.2s, everything at
+6.5s): forcing every `[data-reveal]` visible at 1s would silently delete the scroll
+reveals for anyone who starts scrolling late.
+
+Two engine lessons, do not relearn them: a fixed full screen layer with `filter:blur()`
+re-rasterises every frame and froze a real Chrome tab (the ambient layer is soft
+gradients, no filter); scroll writes are throttled (progress and tint only update when
+the value changes).
+
+### The prompt
+Rule 1 is now "entrance motion ONLY through the kit attributes"; hand rolled
+`opacity:0` / IntersectionObserver / keyframe entrances are forbidden. A MOTION IS
+MANDATORY table assigns the attributes. `quality_gate()` additionally requires 6+
+`data-reveal`/`data-reveal-stagger` so a bare page is retried on the cheap round.
+The source data now carries `contact_emails` / `contact_phones` and the prompt says a
+`mailto:`/`tel:` may only use those.
+
+### The audit: `private/qa-tools/audit.js`
+Port of SeedSite's site-audit.js (commit c0a725b). Headless Chrome at 1440 and 390,
+scrolled **one step per requestAnimationFrame** (a timer based scroll outruns headless
+Chrome's frame rate, sections pass unpainted, reveals never fire, screenshots show blank
+bands; that was the "empty section" defect in a second disguise). 58 checks on any page;
+62 with `--facts` (the WebWiz truth checks: `invented-contact`, `invented-stat`,
+`image-source`, `kit-present`). Pass earns the weight, warn half, fail nothing;
+`preview-ready` = no fails and 85+. `--compare <ours> <theirs>` audits both, returns
+per category scores and writes the side by side JPEGs. Needs `sharp` (pinned 0.34.5 in
+`qa-tools/package.json`; **run `npm ci` in `private/qa-tools` as www-data after a
+pull**, node_modules is gitignored). ~33s per audit on this box.
+
+`qa-tools/chromelock.js` serialises Chrome across processes (audit.js and shot.js both
+take it); two concurrent Chromes saturate the two cores. A lock older than 4 minutes is
+treated as abandoned.
+
+`invented-stat` false positive to remember: the licence number "#835608" followed by a
+"CLIENTS" heading read as a statistic. Fixed two ways: the scrape now stores each
+page's visible `text` (so a number in their footer counts as sourced) and the check
+strips phone numbers, `#`/licence/suite numbers, zips, prices and years first.
+
+### The gates (`private/lib/qa.php`, `ww_audit_*`, `ww_compare_variant()`)
+Order per variant: audit, then vision (skipped for the round when the audit already
+rejected), then compare. Worker: regenerates with each failing check id and detail
+verbatim as feedback, respects `qa_max_retries` and the cost cap, drops a still failing
+variant (never to zero), one regen when a category is lost, otherwise ships flagged
+`needs_review`. `magic.php` (the live `/try/` path): audit before the vision verdict, a
+failing audit HOLDS the reveal exactly like a failing vision verdict (no repair there,
+owner's call 2026-08-09), and the compare runs AFTER the `ready` marker so it never
+delays the visitor; the reveal page polls for `compare-v1.json` for ~3 minutes.
+`batch.php` cannot afford ~35s of Chrome per row inside one worker run, so
+`ww_audit_missing()` (every worker tick, 2 previews, time budgeted) audits and
+compares batch previews afterwards and flags `needs_review`.
+
+Results: `previews.audit_score / audit_verdict / audit_json / compare_verdict /
+compare_json`, plus `public/preview/<token>/compare-v<N>.json` and
+`compare-v<N>-desktop.jpg` / `-mobile.jpg` (what the reveal page and nurture read). The
+current site's audit is cached 7 days in `data/audit-cache/`. Settings:
+`audit_enabled`, `audit_min_score` (85), `audit_block_on_fail`, `compare_enabled`.
+
+The rule the business depends on: **nothing on a prospect's page that the scrape did
+not provide.** The audit enforces it; the prompt only asks for it.
+
+### The reveal page and the rest
+`/try/` shows "Your site today, and your new site" above the preview: the desktop
+composite (phone composite under 900px), both scores, the plain facts the audit measured
+("Loads in 0.3 seconds, yours loads in 1.4"), one chip per category won. Only when the
+verdict is `beats-current-site`. Nurture steps 1 and 2 get one sentence with the two
+scores. Admin Jobs has an Audit column with the verdicts and a link to the composite.
+`docs/build-standard.md` is the rulebook for a hand build. The retired editor
+(`edit.php`, 410) carries the post-edit audit gate in its dead code so it is there if
+the chat ever comes back.
+
+Private `require`s in `worker.php` are now `__DIR__` relative so a worktree can run the
+pipeline against its own libraries; data paths stay absolute.
