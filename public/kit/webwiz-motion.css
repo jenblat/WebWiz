@@ -1,7 +1,11 @@
-/*! WebWiz Motion Kit v1.0.0 | injected into every WebWiz variant by finalize_html() | pair with webwiz-motion.js */
+/*! WebWiz Motion Kit v1.1.0 | injected into every WebWiz variant by finalize_html() | pair with webwiz-motion.js */
 /*
   Everything here is opt in through data attributes, so a page without the
-  attributes renders exactly as the builder wrote it.
+  attributes renders exactly as the builder wrote it. From v1.1 the JS also
+  auto enhances WebWiz pages (body[data-ambient]): content images get a curtain
+  reveal, section headlines rise, cards tilt toward the cursor under a soft
+  spotlight, primary buttons pull toward the cursor. body[data-ww-auto="off"]
+  turns the auto layer off.
 
   Two guarantees the kit makes, learned the hard way on WebWiz previews:
     1. Nothing is ever hidden unless the JS is running AND the visitor has not
@@ -11,13 +15,18 @@
        IntersectionObserver can never leave a section blank.
 
   Attributes
-    data-reveal="up|fade|left|right|scale|wipe"   entrance when scrolled into view
+    data-reveal="up|fade|left|right|scale|wipe|rise|curtain"  entrance when scrolled into view
     data-reveal-delay="120"                       ms, optional
     data-reveal-stagger="90"                      children enter one after another, ms apart
-    data-words                                    headline enters word by word
-    data-parallax="0.12"                          image drifts slower than the page (0.04 to 0.3)
+    data-words                                    headline rises word by word from behind a mask
+    data-parallax="0.12"                          image drifts slower than the page, with a slow zoom (0.04 to 0.3)
     data-bg-shift                                 gentle tint that travels across a section as it scrolls past
-    data-ambient            (on body)             soft colour field behind the whole page that moves with scroll
+    data-ambient            (on body)             colour field behind the whole page that moves with scroll and cursor
+    data-scroll-x="0.25"                          a band of big text that slides sideways as the page scrolls
+    data-highlight                                a marker sweep paints in behind a phrase when it is revealed
+    data-float                                    a badge or icon bobs gently
+    data-tilt                                     card tilts toward the cursor (data-lift implies it on WebWiz pages)
+    data-magnetic                                 button drifts toward the cursor
     data-count="1240"                             number counts up when revealed (real numbers only)
     data-lift                                     card lifts on hover
     data-zoom                                     image inside zooms on hover
@@ -27,19 +36,22 @@
 
   Colour hooks the builder sets from the client's own palette
     --ww-ambient-a, --ww-ambient-b    two soft tints for the ambient field
-    --ww-shift                        the tint used by data-bg-shift
+    --ww-shift                        the tint used by data-bg-shift and the card spotlight
+    --ww-hl                           the highlight marker colour (defaults to --ww-shift)
 */
 
 :root {
-  --ww-ease: cubic-bezier(.2, .7, .2, 1);
-  --ww-dur: .9s;
-  --ww-dist: 28px;
+  --ww-ease: cubic-bezier(.16, 1, .3, 1);
+  --ww-dur: 1.05s;
+  --ww-dist: 44px;
   --ww-stagger: .09s;
   --ww-progress: 0;
   --ww-ambient-a: rgba(0, 0, 0, .05);
   --ww-ambient-b: rgba(0, 0, 0, .03);
   --ww-ambient-opacity: 1;
   --ww-shift: rgba(0, 0, 0, .06);
+  --ww-mx: .5;
+  --ww-my: .5;
 }
 
 /* ---------- entrance reveals (only while JS runs and motion is welcome) ---------- */
@@ -50,19 +62,23 @@
     transition:
       opacity var(--ww-dur) var(--ww-ease) var(--ww-delay, 0s),
       transform var(--ww-dur) var(--ww-ease) var(--ww-delay, 0s),
-      clip-path 1.1s var(--ww-ease) var(--ww-delay, 0s);
+      clip-path 1.25s var(--ww-ease) var(--ww-delay, 0s);
     will-change: opacity, transform;
   }
   html.ww-motion [data-reveal="fade"]  { transform: none; }
-  html.ww-motion [data-reveal="left"]  { transform: translate3d(calc(var(--ww-dist) * -1.4), 0, 0); }
-  html.ww-motion [data-reveal="right"] { transform: translate3d(calc(var(--ww-dist) * 1.4), 0, 0); }
-  html.ww-motion [data-reveal="scale"] { transform: scale(.94); }
+  html.ww-motion [data-reveal="left"]  { transform: translate3d(calc(var(--ww-dist) * -1.6), 0, 0); }
+  html.ww-motion [data-reveal="right"] { transform: translate3d(calc(var(--ww-dist) * 1.6), 0, 0); }
+  html.ww-motion [data-reveal="scale"] { transform: scale(.9); }
   html.ww-motion [data-reveal="wipe"]  { transform: none; opacity: 1; clip-path: inset(0 100% 0 0); }
+  /* rise: a headline that lifts and straightens, the way a printed line is laid down */
+  html.ww-motion [data-reveal="rise"]  { transform: translate3d(0, 60px, 0) skewY(2.5deg); transform-origin: 0 100%; }
+  /* curtain: an image unveiled from the bottom edge while it settles from a slight zoom */
+  html.ww-motion [data-reveal="curtain"] { opacity: 1; transform: scale(var(--ww-curtain-scale, 1.12)); clip-path: inset(100% 0 0 0); transition-duration: 1.35s; }
   html.ww-motion [data-reveal].ww-in   { opacity: 1; transform: none; clip-path: inset(0 0 0 0); }
 
   html.ww-motion [data-reveal-stagger] > * {
     opacity: 0;
-    transform: translate3d(0, var(--ww-dist), 0);
+    transform: translate3d(0, var(--ww-dist), 0) scale(.97);
     transition:
       opacity var(--ww-dur) var(--ww-ease) calc(var(--ww-stagger) * var(--ww-i, 0)),
       transform var(--ww-dur) var(--ww-ease) calc(var(--ww-stagger) * var(--ww-i, 0));
@@ -70,21 +86,35 @@
   }
   html.ww-motion [data-reveal-stagger].ww-in > * { opacity: 1; transform: none; }
 
-  html.ww-motion [data-words] .ww-w {
+  /* words rise from behind a mask, one after another */
+  html.ww-motion [data-words] .ww-w { display: inline-block; overflow: hidden; vertical-align: bottom; padding-bottom: .08em; margin-bottom: -.08em; }
+  html.ww-motion [data-words] .ww-wi {
     display: inline-block;
-    opacity: 0;
-    transform: translate3d(0, .5em, 0);
-    transition:
-      opacity .7s var(--ww-ease) calc(.05s * var(--ww-i, 0)),
-      transform .7s var(--ww-ease) calc(.05s * var(--ww-i, 0));
+    transform: translate3d(0, 108%, 0) rotate(4deg);
+    transform-origin: 0 100%;
+    transition: transform 1s var(--ww-ease) calc(.065s * var(--ww-i, 0));
   }
-  html.ww-motion [data-words].ww-in .ww-w { opacity: 1; transform: none; }
+  html.ww-motion [data-words].ww-in .ww-wi { transform: none; }
+
+  /* marker sweep behind a phrase */
+  html.ww-motion [data-highlight] { background-size: 0% 38%; }
+  html.ww-motion .ww-in[data-highlight], html.ww-motion .ww-in [data-highlight], html.ww-motion [data-highlight].ww-in { background-size: 100% 38%; }
 
   /* once revealed, release the compositor hint */
   html.ww-motion .ww-in, html.ww-motion .ww-in > * { will-change: auto; }
 }
 
-/* ---------- parallax ---------- */
+/* the marker itself is visible without JS too: no JS means a painted highlight */
+[data-highlight] {
+  background-image: linear-gradient(var(--ww-hl, var(--ww-shift)), var(--ww-hl, var(--ww-shift)));
+  background-repeat: no-repeat;
+  background-position: 0 88%;
+  background-size: 100% 38%;
+  transition: background-size 1.1s var(--ww-ease) .35s;
+  -webkit-box-decoration-break: clone; box-decoration-break: clone;
+}
+
+/* ---------- parallax with a slow zoom ---------- */
 [data-parallax] { overflow: hidden; }
 [data-parallax] > img, [data-parallax] > picture > img, [data-parallax] > video {
   width: 100%; height: 100%; object-fit: cover;
@@ -93,9 +123,19 @@
   html.ww-motion [data-parallax] > img,
   html.ww-motion [data-parallax] > picture > img,
   html.ww-motion [data-parallax] > video {
-    transform: translate3d(0, var(--ww-py, 0px), 0) scale(1.16);
+    transform: translate3d(0, var(--ww-py, 0px), 0);
+    scale: 1.16;
+    animation: ww-kenburns 22s ease-in-out infinite alternate;
     will-change: transform;
   }
+  @keyframes ww-kenburns { from { scale: 1.16; } to { scale: 1.27; } }
+}
+
+/* ---------- a band of big text that slides as the page scrolls ---------- */
+[data-scroll-x] { overflow: hidden; white-space: nowrap; }
+[data-scroll-x] > * { display: inline-block; will-change: transform; }
+@media (prefers-reduced-motion: no-preference) {
+  html.ww-motion [data-scroll-x] > * { transform: translate3d(var(--ww-sx, 0%), 0, 0); }
 }
 
 /* ---------- gentle background shift across a section ---------- */
@@ -108,7 +148,7 @@
       110% 70% at calc(15% + var(--ww-p, 0) * 70%) calc(110% - var(--ww-p, 0) * 120%),
       var(--ww-shift), transparent 68%
     );
-  opacity: calc(.25 + var(--ww-p, 0) * .75);
+  opacity: calc(.35 + var(--ww-p, 0) * .65);
 }
 @media (prefers-reduced-motion: reduce) {
   [data-bg-shift]::before { opacity: .5; }
@@ -116,34 +156,58 @@
 
 /* ---------- ambient field behind the page ---------- */
 .ww-ambient {
-  position: fixed; inset: -20vh 0; z-index: -1; pointer-events: none;
+  position: fixed; inset: -20vh -10vw; z-index: -1; pointer-events: none;
   opacity: var(--ww-ambient-opacity);
   background:
-    radial-gradient(70% 60% at calc(18% + var(--ww-progress) * 40%) calc(22% + var(--ww-progress) * 30%), var(--ww-ambient-a), transparent 72%),
-    radial-gradient(65% 65% at calc(84% - var(--ww-progress) * 40%) calc(78% - var(--ww-progress) * 40%), var(--ww-ambient-b), transparent 72%);
+    radial-gradient(60% 55% at calc(14% + var(--ww-progress) * 46% + var(--ww-mx) * 8%) calc(20% + var(--ww-progress) * 34% + var(--ww-my) * 6%), var(--ww-ambient-a), transparent 70%),
+    radial-gradient(58% 60% at calc(88% - var(--ww-progress) * 44% - var(--ww-mx) * 6%) calc(80% - var(--ww-progress) * 42%), var(--ww-ambient-b), transparent 70%),
+    radial-gradient(42% 40% at calc(52% + var(--ww-mx) * 14% - 7%) calc(48% + var(--ww-my) * 12% - 6%), var(--ww-shift), transparent 72%);
   /* no filter here on purpose: a blurred full screen layer re-rasterises every
-     frame and can freeze weaker machines. The soft gradient stops do the job. */
+     frame and froze a real Chrome tab. The soft gradient stops do the job. */
   transform: translate3d(0, 0, 0);
 }
 @media (prefers-reduced-motion: no-preference) {
-  .ww-ambient { animation: ww-drift 26s ease-in-out infinite alternate; }
+  .ww-ambient { animation: ww-drift 17s ease-in-out infinite alternate; }
   @keyframes ww-drift {
-    from { transform: translate3d(-2%, -1%, 0) scale(1.02); }
-    to   { transform: translate3d(2%, 1.5%, 0) scale(1.06); }
+    0%   { transform: translate3d(-3%, -2%, 0) scale(1.02) rotate(-2deg); }
+    50%  { transform: translate3d(2%, 1%, 0) scale(1.08) rotate(1deg); }
+    100% { transform: translate3d(4%, 3%, 0) scale(1.05) rotate(3deg); }
   }
 }
 
-/* ---------- hover ---------- */
+/* ---------- hover: lift, zoom, tilt, spotlight, magnetic ----------
+   All of these use the individual translate / rotate / scale properties, never
+   transform. Cards are usually children of a [data-reveal-stagger] grid, whose
+   reveal rule owns transform with a higher specificity, so a transform based
+   hover silently did nothing on exactly the cards it was meant for (v1.0).
+   The individual properties compose with transform instead of fighting it. */
 @media (hover: hover) and (prefers-reduced-motion: no-preference) {
-  [data-lift] { transition: transform .35s var(--ww-ease), box-shadow .35s var(--ww-ease); }
-  [data-lift]:hover { transform: translateY(-4px); box-shadow: 0 18px 40px -18px rgba(0, 0, 0, .35); }
+  [data-lift] { transition: translate .45s var(--ww-ease), rotate .22s ease-out, box-shadow .45s var(--ww-ease); }
+  [data-lift]:hover { translate: 0 -6px; box-shadow: 0 26px 52px -24px rgba(0, 0, 0, .5); }
   [data-zoom] { overflow: hidden; }
-  [data-zoom] img { transition: transform .7s var(--ww-ease); }
-  [data-zoom]:hover img { transform: scale(1.045); }
+  [data-zoom] img, [data-lift] img { transition: scale .9s var(--ww-ease); }
+  [data-zoom]:hover img, [data-lift]:hover img { scale: 1.06; }
+  .ww-tilt { transition: translate .45s var(--ww-ease), rotate .22s ease-out, box-shadow .45s var(--ww-ease); }
+  /* spotlight: a soft light that follows the cursor across a card */
+  .ww-spot::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit; z-index: 2;
+    background: radial-gradient(380px circle at var(--ww-px, 50%) var(--ww-py2, 50%), rgba(255, 255, 255, .18), transparent 48%);
+    opacity: 0; transition: opacity .35s ease;
+  }
+  .ww-spot:hover::after { opacity: 1; }
+  .ww-mag { transition: translate .5s var(--ww-ease); }
+  .ww-mag.ww-pulling { transition: translate .14s ease-out; }
+}
+
+/* ---------- float ---------- */
+@media (prefers-reduced-motion: no-preference) {
+  [data-float] { animation: ww-float 5.5s ease-in-out infinite; }
+  [data-float]:nth-of-type(2n) { animation-duration: 6.5s; animation-delay: -2s; }
+  @keyframes ww-float { 0%, 100% { translate: 0 0; } 50% { translate: 0 -10px; } }
 }
 
 /* ---------- nav and reading progress ---------- */
-[data-nav] { transition: box-shadow .3s var(--ww-ease), background-color .3s var(--ww-ease); }
+[data-nav] { transition: box-shadow .3s var(--ww-ease), background-color .3s var(--ww-ease), padding .3s var(--ww-ease); }
 [data-nav].is-scrolled { box-shadow: 0 10px 30px -12px rgba(0, 0, 0, .25); }
 [data-progress] {
   position: fixed; top: 0; left: 0; z-index: 9999; height: 3px; width: 100%;
@@ -166,6 +230,6 @@
 
 /* ---------- print: everything visible, nothing moving ---------- */
 @media print {
-  [data-reveal], [data-reveal-stagger] > *, [data-words] .ww-w { opacity: 1 !important; transform: none !important; clip-path: none !important; }
+  [data-reveal], [data-reveal-stagger] > *, [data-words] .ww-w, [data-words] .ww-wi { opacity: 1 !important; transform: none !important; clip-path: none !important; }
   .ww-ambient, [data-progress] { display: none !important; }
 }

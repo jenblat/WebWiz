@@ -149,6 +149,16 @@ function collectDesktopFacts() {
   out.imgBroken = imgs.filter((i) => vis(i) && i.complete && i.naturalWidth === 0).map((i) => (i.currentSrc || i.src || '').slice(0, 160));
   out.imgNoSize = imgs.filter((i) => !(i.getAttribute('width') && i.getAttribute('height')) && !/\d/.test(String(getComputedStyle(i).aspectRatio || ''))).length;
   out.imgSrcs = [...new Set(imgs.map((i) => i.currentSrc || i.src).filter(Boolean))];
+  // photographs cropped so hard most of the picture is thrown away: a landscape
+  // photo squeezed into a tall sliver, usually from a height attribute that
+  // overrides the CSS aspect-ratio (the MRC project grid, 2026-10-07)
+  out.heavyCrops = imgs.filter((i) => vis(i) && i.naturalWidth > 200 && i.naturalHeight > 120).map((i) => {
+    const r = i.getBoundingClientRect(); if (r.width < 160 || r.height < 120) return null;
+    const fit = getComputedStyle(i).objectFit; if (fit !== 'cover') return null;
+    const a = r.width / r.height, n = i.naturalWidth / i.naturalHeight;
+    const kept = Math.min(a, n) / Math.max(a, n);
+    return kept < 0.45 ? { src: (i.currentSrc || i.src).split('/').pop().slice(0, 60), box: Math.round(r.width) + 'x' + Math.round(r.height), kept: Math.round(kept * 100) } : null;
+  }).filter(Boolean);
   // every place an image URL can be written, for the image-source check
   const proxied = [];
   for (const i of imgs) {
@@ -256,6 +266,14 @@ function collectDesktopFacts() {
     counters: q('[data-count]').length,
     hover: q('[data-lift], [data-zoom]').length,
     marquee: q('[data-marquee]').length,
+    scrollX: q('[data-scroll-x]').length,
+    highlight: q('[data-highlight]').length,
+    float: q('[data-float]').length,
+    magnetic: q('[data-magnetic]').length,
+    progress: q('[data-progress]').length,
+    curtain: q('[data-reveal="curtain"]').length,
+    rise: q('[data-reveal="rise"]').length,
+    words: q('[data-words]').length,
   };
   // any animation library at all, for sites that are not ours
   out.otherMotion = q('[data-aos], .aos-init, .wow, [data-scroll], .gsap, .fade-up, .fade-in, .reveal').length;
@@ -559,6 +577,8 @@ function runChecks(f, sf) {
   add('sticky-nav', 'design', 1, warn(d.stickyNav), d.stickyNav ? 'Header stays reachable while scrolling' : 'Header scrolls away');
   add('contrast', 'design', 2, d.lowContrastCount === 0 ? 'pass' : (d.lowContrastCount <= 3 ? 'warn' : 'fail'), d.lowContrastCount ? `${d.lowContrastCount} low contrast text samples, e.g. ` + (d.lowContrast || []).slice(0, 3).map((x) => `"${x.text}" ${x.ratio}:1`).join('; ') : 'Text contrast passes on every sample');
   add('hover-feedback', 'design', 1, warn((d.transitions || 0) >= 3), `${d.transitions || 0} interactive elements with transitions`);
+  const crops = d.heavyCrops || [];
+  add('image-crop', 'design', 2, crops.length === 0 ? 'pass' : (crops.length === 1 ? 'warn' : 'fail'), crops.length ? `${crops.length} photo(s) cropped to under 45% of the picture, e.g. ` + crops.slice(0, 3).map((c) => `${c.src} in a ${c.box} box keeps ${c.kept}%`).join('; ') : 'No photo is cropped to a sliver');
 
   // ---- motion ----
   const anyMotion = k.reveals + k.parallax + k.bgShift + (k.ambient ? 1 : 0) + (d.otherMotion || 0);
@@ -567,6 +587,9 @@ function runChecks(f, sf) {
   add('stagger-groups', 'motion', 2, warn(k.staggers >= 1), `${k.staggers} staggered groups (cards, lists, logos)`);
   add('depth', 'motion', 4, (k.parallax || k.ambient || k.bgShift) ? 'pass' : 'fail', `parallax ${k.parallax}, ambient ${k.ambient ? 'on' : 'off'}, background shift ${k.bgShift}`);
   add('hover-motion', 'motion', 1, warn(k.hover >= 1), `${k.hover} lift or zoom hover elements`);
+  const effects = { words: k.words, reveals: k.reveals, stagger: k.staggers, parallax: k.parallax, 'bg-shift': k.bgShift, ambient: k.ambient ? 1 : 0, curtain: k.curtain, rise: k.rise, 'scroll-x': k.scrollX, marquee: k.marquee, highlight: k.highlight, float: k.float, hover: k.hover, magnetic: k.magnetic, progress: k.progress, count: k.counters };
+  const used = Object.keys(effects).filter((e) => effects[e] > 0);
+  add('motion-variety', 'motion', 2, used.length >= 6 ? 'pass' : 'warn', `${used.length} distinct effects: ${used.join(', ')} (aim 6 or more)`);
   add('reduced-motion', 'motion', 2, ok(d.reducedMotionRule), d.reducedMotionRule ? 'prefers-reduced-motion honoured' : 'No prefers-reduced-motion rule');
   add('nothing-stuck-hidden', 'motion', 3, ok(!d.hiddenAfterLoad), d.hiddenAfterLoad ? `${d.hiddenAfterLoad} elements still invisible after load and scroll` : 'Everything visible after load');
 
@@ -665,6 +688,61 @@ function saveTheirCache(file, a) {
 }
 
 /**
+ * What is wrong with a site, in words a business owner reads in two seconds. Only
+ * real measurements from the audit go in; a check with no sentence here is left
+ * out rather than described vaguely. Ordered by how much a visitor would notice.
+ */
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+const PROBLEM_TEXT = {
+  'no-horizontal-scroll': (c, f) => 'The page slides sideways on a phone, it does not fit the screen',
+  'viewport': () => 'Not built for phones, it is a desktop page shrunk down',
+  'tap-targets': (c, f) => { const m = /(\d+) of (\d+)/.exec(c.detail); return m ? `${m[1]} of ${m[2]} buttons and links are too small to tap on a phone` : 'Buttons and links are too small to tap on a phone'; },
+  'mobile-cta': () => 'On a phone, the first screen has no button to call or get in touch',
+  'cta-above-fold': () => 'No call to action on the first screen a visitor sees',
+  'load-time': (c, f) => (f.desktop && f.desktop.timing && f.desktop.timing.load) ? `Takes ${(f.desktop.timing.load / 1000).toFixed(1)} seconds to load` : 'Slow to load',
+  'page-weight': (c, f) => `${(((f.resources || {}).bytes || 0) / 1048576).toFixed(1)} MB to download, heavy on a phone signal`,
+  'largest-image': (c, f) => { const li = (f.resources || {}).largestImage; return li ? `One image alone is ${(li.bytes / 1048576).toFixed(1)} MB` : 'Oversized images'; },
+  'images-load': (c, f) => plural(((f.desktop || {}).imgBroken || []).length, 'image is broken', 'images are broken'),
+  'no-failed-requests': (c, f) => plural(((f.resources || {}).failed || []).length, 'file on the page fails to load', 'files on the page fail to load'),
+  'nothing-stuck-hidden': (c, f) => `${(f.desktop || {}).hiddenAfterLoad} parts of the page stay invisible after it loads`,
+  'contrast': (c, f) => `${(f.desktop || {}).lowContrastCount} pieces of text are hard to read against their background`,
+  'body-size': (c, f) => `Body text is ${(f.desktop || {}).bodyPx}px, small and tiring to read`,
+  'mobile-text-size': (c, f) => `${(f.mobile || {}).tinyText} bits of text are under 13px on a phone`,
+  'mobile-nav': () => 'On a phone there is no way to reach the menu',
+  'phone-link': () => 'The phone number is not tap to call',
+  'no-empty-links': (c, f) => plural(((f.desktop || {}).hashOnly || 0) + ((f.desktop || {}).jsHref || 0), 'link goes nowhere', 'links go nowhere'),
+  'anchors-resolve': () => 'Some menu links point at sections that do not exist',
+  'meta-description': () => 'Google has no description to show under your name',
+  'one-h1': (c, f) => `${((f.desktop || {}).h1 || []).length} main headlines, so search engines cannot tell what the page is about`,
+  'title': () => 'The page title search engines show is missing or the wrong length',
+  'alt-text': (c, f) => plural((f.desktop || {}).imgNoAlt, 'image has', 'images have') + ' no description for screen readers or Google Images',
+  'link-names': (c, f) => plural((f.desktop || {}).linksNoText, 'link has', 'links have') + ' no name a screen reader can say',
+  'open-graph': () => 'A shared link shows no preview image',
+  'motion-kit': () => 'Nothing on the page moves, it reads as static',
+  'depth': () => 'Flat from top to bottom, no depth or movement as you scroll',
+  'sticky-nav': () => 'The menu scrolls away as soon as you read down',
+  'hero-imagery': () => 'No photo on the first screen',
+  'no-dead-sections': () => 'Large empty bands with nothing in them',
+  'no-placeholder': () => 'Placeholder text is still on the page',
+  'image-crop': () => 'Photos are cropped so hard most of the picture is lost',
+};
+const PROBLEM_ORDER = Object.keys(PROBLEM_TEXT);
+function theirProblems(theirs, ours) {
+  const out = [];
+  for (const id of PROBLEM_ORDER) {
+    const tc = theirs.checks.find((c) => c.id === id);
+    const oc = ours.checks.find((c) => c.id === id);
+    if (!tc || tc.status === 'pass' || !oc || oc.status !== 'pass') continue;
+    let txt = '';
+    try { txt = PROBLEM_TEXT[id](tc, theirs.facts || {}); } catch { txt = ''; }
+    if (!txt || /undefined|NaN/.test(txt)) continue;
+    out.push({ id, severity: tc.status, text: txt });
+  }
+  // failures first, then warnings, keeping the visitor-impact order inside each
+  return out.filter((p) => p.severity === 'fail').concat(out.filter((p) => p.severity !== 'fail'));
+}
+
+/**
  * Audit both sites and decide whether ours beats theirs.
  * opts: { facts, theirCache, ourLabel, theirLabel, full }
  */
@@ -722,7 +800,14 @@ async function compareSites(ourUrl, theirUrl, opts = {}) {
     what_theirs_does_better: losing.map((g) => ({ group: g, label: groups[g].label, their_passes: theirs.checks.filter((c) => c.group === g && c.status === 'pass' && ours.checks.find((o) => o.id === c.id && o.status !== 'pass')).map((c) => ({ id: c.id, ours: (pick(ours, c.id).detail || '') })) })),
     our_fails: ours.checks.filter((c) => c.status === 'fail').map((c) => ({ id: c.id, detail: c.detail })),
     their_fails: theirs.checks.filter((c) => c.status === 'fail').map((c) => ({ id: c.id, detail: c.detail })),
-    screenshots: { desktop: composite, mobile: mobileComposite },
+    their_problems: theirProblems(theirs, ours),
+    checks_run: ours.checks.length,
+    screenshots: {
+      desktop: composite, mobile: mobileComposite,
+      // each site on its own, for the report on the reveal page
+      'theirs-desktop': theirs.screenshots.desktop || null, 'ours-desktop': ours.screenshots.desktop || null,
+      'theirs-mobile': theirs.screenshots.mobile || null, 'ours-mobile': ours.screenshots.mobile || null,
+    },
     full: opts.full ? { ours, theirs } : undefined,
     ours_audit: ours,
   };

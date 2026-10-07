@@ -125,6 +125,16 @@ Minimum on every site:
 | The header | `data-nav` | shadow appears once scrolled |
 | Cards and project tiles | `data-lift`, `data-zoom` | hover feedback |
 | Real numbers only | `data-count` | counts up on reveal |
+| Section headlines | `data-reveal="rise"` | headlines lift and straighten into place |
+| Feature photos outside cards | `data-reveal="curtain"` | the photo is unveiled from its bottom edge |
+| One band of big type from real words on the page | `data-scroll-x="0.3"` | slides sideways as the page scrolls |
+| One phrase | `data-highlight` | a marker sweep paints in behind it |
+| Primary buttons | `data-magnetic` | they lean toward the cursor |
+| A badge or icon | `data-float` | a gentle bob |
+
+On generated pages the kit adds curtain, rise, card tilt and magnetic buttons by itself
+(`body[data-ww-auto="off"]` turns that off). After changing a kit file, run
+`sudo -u www-data php private/kit-bump.php` so existing previews load the new version.
 
 Set the colour hooks from the prospect's palette, soft tints only:
 

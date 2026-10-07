@@ -783,3 +783,39 @@ the chat ever comes back.
 
 Private `require`s in `worker.php` are now `__DIR__` relative so a worktree can run the
 pipeline against its own libraries; data paths stay absolute.
+
+### 2026-10-07 (later): kit v1.1, the comparison report, and the kit bump
+
+Omar on the first version: the reveal felt busy and the motion was not dramatic enough.
+
+- **Kit v1.1.** Headlines rise word by word from behind a mask; `rise` (headlines) and
+  `curtain` (photos unveiled from the bottom edge while settling from a zoom) reveal
+  types; the parallax hero also slow zooms; `data-scroll-x` bands of big type slide
+  sideways with the scroll (stacked bands alternate direction); `data-highlight` paints
+  a marker behind a phrase; `data-float`; cards tilt toward the cursor under a soft
+  spotlight; buttons are magnetic; the ambient field is stronger and drifts toward the
+  cursor. Pointer effects only on fine pointers, everything behind reduced motion, still
+  no `filter`.
+- **Auto layer.** On pages with `body[data-ambient]` (every generated page) the kit adds
+  `curtain` to content photos, `rise` to bare `h2`s, tilt to `[data-lift]` and magnetic to
+  buttons, so existing previews gain the motion without regeneration.
+  `body[data-ww-auto="off"]` disables it.
+- **Hover effects use the individual `translate` / `rotate` / `scale` properties, never
+  `transform`.** Cards are usually children of a stagger grid whose reveal rule owns
+  `transform` at higher specificity, so v1.0's transform based lift silently did nothing on
+  exactly the cards it was for.
+- **`private/kit-bump.php`** (run as www-data after changing a kit file). Pages bake in
+  `?v=<filemtime at generation>` and the kit is cached immutable for a year, so without
+  the bump an existing preview keeps the old kit forever.
+- **Audit:** `image-crop` (design) fails photos cropped to under 45% of the picture; the MRC
+  grid had six because `width`/`height` attributes from the WebP conversion overrode the
+  CSS `aspect-ratio` (fix: `img{height:auto}`). `motion-variety` (warn) wants six distinct
+  effects. 61 checks with facts.
+- **Reveal page comparison** is now a slim bar (both scores as red and green pills, one
+  problem from their site at a time) plus a report modal that opens by itself once per
+  preview (localStorage `wwcmp_<token>`): graded score rings (Poor / Needs work / Good /
+  Excellent), each site's own screenshot, "What we found on <their host> today" in plain
+  words each marked Fixed, a bar per category, and a Launch button that opens the offer.
+  The sentences come from `PROBLEM_TEXT` in audit.js, written only from measured values,
+  and are stored as `problems` in `compare-v<N>.json` along with per site screenshots
+  (`compare-v<N>-theirs-desktop.jpg` and friends).

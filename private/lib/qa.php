@@ -438,7 +438,7 @@ function ww_compare_variant(string $token, int $v, string $their_url, ?array $fa
     }
     // move the composites into the preview dir (same owner as showcase.jpg: whoever runs this)
     $saved = [];
-    foreach (['desktop', 'mobile'] as $k) {
+    foreach (['desktop', 'mobile', 'theirs-desktop', 'ours-desktop', 'theirs-mobile', 'ours-mobile'] as $k) {
         $src = $tmp . '/compare-' . $k . '.jpg';
         $dst = $pdir . '/compare-v' . $v . '-' . $k . '.jpg';
         if (is_file($src) && @rename($src, $dst)) { @chmod($dst, 0644); $saved[$k] = '/preview/' . $token . '/compare-v' . $v . '-' . $k . '.jpg?v=' . (@filemtime($dst) ?: time()); }
@@ -454,6 +454,8 @@ function ww_compare_variant(string $token, int $v, string $their_url, ?array $fa
         'theirs'  => ['score' => $res['theirs']['score'] ?? null, 'url' => $their_url, 'host' => preg_replace('~^www\.~', '', (string)parse_url($their_url, PHP_URL_HOST))],
         'groups'  => $res['groups'] ?? [], 'winning' => $res['winning'] ?? [], 'losing' => $res['losing'] ?? [], 'tied' => $res['tied'] ?? [],
         'facts'   => array_slice((array)($res['facts'] ?? []), 0, 6),
+        'problems'=> array_slice((array)($res['their_problems'] ?? []), 0, 10),
+        'checks_run' => (int)($res['checks_run'] ?? 0),
         'verdict' => $res['verdict'], 'verdict_reason' => $res['verdict_reason'] ?? '',
         'images'  => $saved, 'at' => $res['at'], 'variant' => $v,
     ];
@@ -568,7 +570,7 @@ function ww_compare_for_db(?array $cmp): ?string {
         'verdict' => $cmp['verdict'] ?? null, 'verdict_reason' => $cmp['verdict_reason'] ?? null,
         'ours' => $cmp['ours']['score'] ?? null, 'theirs' => $cmp['theirs']['score'] ?? null, 'their_url' => $cmp['theirs']['url'] ?? null,
         'groups' => $cmp['groups'] ?? [], 'winning' => $cmp['winning'] ?? [], 'losing' => $cmp['losing'] ?? [], 'tied' => $cmp['tied'] ?? [],
-        'facts' => $cmp['facts'] ?? [], 'images' => $cmp['images'] ?? [], 'their_fails' => array_slice((array)($cmp['their_fails'] ?? []), 0, 20),
+        'facts' => $cmp['facts'] ?? [], 'problems' => array_slice((array)($cmp['their_problems'] ?? []), 0, 10), 'images' => $cmp['images'] ?? [], 'their_fails' => array_slice((array)($cmp['their_fails'] ?? []), 0, 20),
         'at' => $cmp['at'] ?? gmdate('c'),
     ];
     return json_encode($keep, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
